@@ -30,6 +30,9 @@ coverage-internal.out
 /dist/
 .deps/
 
+# Legacy cmake debug artifacts
+*-configure-err.log
+
 # OS
 .DS_Store
 Thumbs.db

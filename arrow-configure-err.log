@@ -1,9 +1,0 @@
-CMake Error at cmake_modules/ThirdpartyToolchain.cmake:1739 (message):
-  Require CMake 3.26 or later for building bundled Apache Thrift
-Call Stack (most recent call first):
-  cmake_modules/ThirdpartyToolchain.cmake:219 (build_thrift)
-  cmake_modules/ThirdpartyToolchain.cmake:308 (build_dependency)
-  cmake_modules/ThirdpartyToolchain.cmake:1808 (resolve_dependency)
-  CMakeLists.txt:511 (include)
-
-
