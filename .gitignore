@@ -1,0 +1,37 @@
+# Binaries
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+/vendor/
+*.test
+*.out
+coverage.out
+coverage-internal.out
+/coverage
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Install / runtime data (target projects)
+.mcp-semantic-search-zvec-go/data/
+.mcp-semantic-search-zvec-go/bin/
+.mcp-semantic-search-zvec-go/models/
+
+# Local dev
+/data/
+/models/
+/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+/.cursor/*
+/.roo/*

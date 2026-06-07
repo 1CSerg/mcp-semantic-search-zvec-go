@@ -1,0 +1,200 @@
+# mcp-semantic-search-zvec-go — эталонный конфиг
+#
+# После install: .mcp-semantic-search-zvec-go/config.yaml в корне целевого проекта.
+# Путь можно переопределить переменной окружения CONFIG_PATH.
+#
+# Семантический поиск использует модели ЭМБЕДДИНГОВ (векторизация текста), не чат-LLM.
+# Провайдеры openai_compatible отдают API /v1/embeddings (OpenAI-совместимый формат).
+#
+# active_profile — имя профиля из секции profiles, который используется для индексации и поиска.
+# dimensions в профиле должны совпадать с размерностью вектора, который возвращает модель.
+#
+# Секреты (API-ключи, токены) — в .mcp-semantic-search-zvec-go/.env (создаётся при install).
+# В config.yaml только api_key_env: ИМЯ_ПЕРЕМЕННОЙ; значение — в .env. Свои переменные в .env можно добавлять.
+# Поле api_key в yaml устарело — не используйте.
+#
+# После смены active_profile или dimensions выполните reindex с force=true.
+#
+# Переключение провайдера (раскомментируйте одну строку):
+# active_profile: lmstudio_qwen
+# active_profile: routerai_bge_m3
+# active_profile: routerai_openai_small
+# active_profile: dashscope_beijing
+# active_profile: dashscope_intl
+
+# Имя активного профиля эмбеддингов (ключ из profiles ниже).
+active_profile: openai_local
+
+# Профили подключения к моделям эмбеддингов.
+profiles:
+  # Профиль по умолчанию: локальный LM Studio (https://lmstudio.ai/docs/developer/openai-compat/embeddings).
+  openai_local:
+    # Человекочитаемое описание профиля (для логов и index_status).
+    description: LM Studio — локальный OpenAI-compatible API (профиль по умолчанию)
+    # Тип провайдера: openai_compatible (HTTP API) или onnx (локальная модель, Phase 4).
+    provider: openai_compatible
+    # Идентификатор модели — как в LM Studio (Developer → Loaded model) или в API провайдера.
+    model: text-embedding-3-small
+    # Базовый URL API без завершающего слэша; для LM Studio — локальный сервер.
+    base_url: http://127.0.0.1:1234/v1
+    # Размерность вектора; сверьте с документацией загруженной модели.
+    dimensions: 1536
+    # Сколько текстов отправлять за один запрос при индексации.
+    batch_size: 32
+    # Таймаут HTTP-запроса к API эмбеддингов (секунды).
+    timeout_seconds: 60
+
+  # LM Studio: популярная open-source модель Qwen3 Embedding (имя модели — из LM Studio).
+  lmstudio_qwen:
+    description: LM Studio — text-embedding-qwen3-embedding-0.6b
+    provider: openai_compatible
+    model: text-embedding-qwen3-embedding-0.6b
+    base_url: http://127.0.0.1:1234/v1
+    dimensions: 1024
+    batch_size: 10
+    timeout_seconds: 200
+    # Ключ не нужен; при авторизации в LM Studio: api_key_env: LM_STUDIO_API_KEY и значение в .env
+
+  # RouterAI (https://routerai.ru/) — мультиязычные эмбеддинги BAAI/bge-m3.
+  routerai_bge_m3:
+    description: RouterAI — baai/bge-m3 (оплата в рублях, без VPN)
+    provider: openai_compatible
+    model: baai/bge-m3
+    base_url: https://routerai.ru/api/v1
+    dimensions: 1024
+    # Имя переменной в .env (значение ключа — там же).
+    api_key_env: ROUTERAI_API_KEY
+    batch_size: 32
+    timeout_seconds: 60
+
+  # RouterAI — OpenAI text-embedding-3-small через единый API RouterAI.
+  routerai_openai_small:
+    description: RouterAI — openai/text-embedding-3-small
+    provider: openai_compatible
+    model: openai/text-embedding-3-small
+    base_url: https://routerai.ru/api/v1
+    dimensions: 1536
+    # Значение ROUTERAI_API_KEY — в .env.
+    api_key_env: ROUTERAI_API_KEY
+    batch_size: 32
+    timeout_seconds: 60
+
+  # Alibaba Model Studio / DashScope — регион Китай (Пекин).
+  # Документация: https://www.alibabacloud.com/help/en/model-studio/embedding-interfaces-compatible-with-openai
+  # Ключ API: https://modelstudio.console.alibabacloud.com/
+  dashscope_beijing:
+    description: DashScope Beijing — text-embedding-v4
+    provider: openai_compatible
+    model: text-embedding-v4
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    # text-embedding-v4 поддерживает 64–1024; укажите выбранную размерность.
+    dimensions: 1024
+    # Значение DASHSCOPE_API_KEY — в .env.
+    api_key_env: DASHSCOPE_API_KEY
+    batch_size: 32
+    timeout_seconds: 60
+
+  # Alibaba Model Studio — международный регион (Сингапур).
+  dashscope_intl:
+    description: DashScope International — text-embedding-v3
+    provider: openai_compatible
+    model: text-embedding-v3
+    base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+    dimensions: 1024
+    # Значение DASHSCOPE_API_KEY — в .env.
+    api_key_env: DASHSCOPE_API_KEY
+    batch_size: 32
+    timeout_seconds: 60
+
+  # Локальная ONNX-модель без сети (Phase 4).
+  local_multilingual:
+    description: Локальная multilingual ONNX (Phase 4)
+    provider: onnx
+    model: paraphrase-multilingual-MiniLM-L12-v2
+    dimensions: 384
+    # Каталог с model_optimized.onnx относительно корня workspace.
+    model_path: .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
+
+# Параметры сканирования и индексации файлов проекта.
+indexing:
+  # Расширения файлов, которые попадают в индекс.
+  extensions:
+    - .py
+    - .go
+    - .js
+    - .ts
+    - .tsx
+    - .jsx
+    - .md
+    - .yaml
+    - .yml
+    - .json
+    - .toml
+    - .rs
+    - .java
+    - .kt
+    - .cs
+    - .cpp
+    - .h
+    - .hpp
+    - .sql
+    - .sh
+    - .ps1
+  # Имена каталогов, которые обход индексатора пропускает.
+  skip_dirs:
+    - .git
+    - node_modules
+    - vendor
+    - dist
+    - build
+    - __pycache__
+    - .venv
+    - venv
+    - .mcp-semantic-search-zvec-go
+    - .mcp-semantic-search-zvec
+  # Через сколько секунд index.lock считается устаревшим и может быть перехвачен.
+  lock_stale_seconds: 300
+  # Нет прогресса индексации дольше этого времени — попытка восстановления (секунды).
+  stall_seconds: 120
+  # Интервал обновления heartbeat в index.lock при длительной индексации (секунды).
+  heartbeat_seconds: 15
+
+# Метрики и пороги «медленного» семантического поиска.
+search:
+  # Абсолютный порог: поиск дольше N секунд помечается как медленный.
+  slow_threshold_seconds: 5
+  # Относительный порог: текущее время > медиана × ratio → деградация.
+  degrade_ratio: 2.0
+  # Размер скользящего окна последних замеров времени поиска.
+  stats_window: 20
+  # Минимум замеров в окне, прежде чем сравнивать с медианой для degrade.
+  stats_min_samples: 5
+
+# Автоматическая переиндексация при изменении файлов на диске.
+file_watcher:
+  # Включить отслеживание файлов и фоновую переиндексацию.
+  enabled: true
+  # Пауза после последнего события перед запуском индексации (секунды).
+  debounce_seconds: 2
+  # Запускать watcher отдельным процессом (Phase 3).
+  run_as_daemon: false
+  # Режим: auto, inotify (Linux) или polling (Windows Docker bind-mount).
+  backend: auto
+  # Интервал опроса каталогов при backend=polling (секунды).
+  poll_interval_seconds: 10
+
+# Параметры файлового логирования сервера (Phase 3 — ротация).
+logging:
+  # Уровень: DEBUG, INFO, WARNING, ERROR.
+  level: INFO
+  # Подробный вывод в лог (диагностика).
+  verbose: false
+  # Максимальный размер одного log-файла перед ротацией (байты).
+  max_bytes: 5242880
+  # Сколько архивных log-файлов хранить.
+  backup_count: 3
+
+# HTTP REST API (при запуске с флагом --http).
+server:
+  # Адрес прослушивания; переопределяется переменной HTTP_ADDR.
+  http_addr: ":8080"

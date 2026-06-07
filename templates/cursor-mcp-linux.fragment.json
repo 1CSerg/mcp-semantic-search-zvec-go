@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "semantic-search-zvec-go": {
+      "command": "${workspaceFolder}/.mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go",
+      "args": ["--stdio"],
+      "env": {
+        "WORKSPACE_ROOT": "${workspaceFolder}",
+        "WORKSPACE_ID": "${workspaceFolder}",
+        "INDEX_DIR": "${workspaceFolder}/.mcp-semantic-search-zvec-go/data/index",
+        "CONFIG_PATH": "${workspaceFolder}/.mcp-semantic-search-zvec-go/config.yaml",
+        "AUTO_INDEX_ON_START": "true"
+      }
+    }
+  }
+}
