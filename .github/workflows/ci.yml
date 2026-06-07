@@ -32,6 +32,25 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+  zvec-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.3"
+          cache: true
+
+      - name: Fetch zvec-go vendor libs
+        run: bash scripts/fetch-zvec-libs.sh >> "$GITHUB_ENV"
+
+      - name: Integration tests (zvec)
+        env:
+          CGO_ENABLED: "1"
+          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
+        run: go test -tags "integration,zvec" -v -count=1 ./internal/store/zvec/...
+
   lint:
     runs-on: ubuntu-latest
     steps:

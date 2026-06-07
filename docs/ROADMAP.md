@@ -15,19 +15,19 @@
 
 ---
 
-## Phase 1 — zvec-go spike + read path
+## Phase 1 — zvec-go spike + read path ✅
 
 **Goal:** Real `semantic_search` and `index_status` for existing indexes.
 
-| Task | Criteria |
-|------|----------|
-| zvec-go spike | Open Python-compatible collection; query returns chunks — [ZVEC_SPIKE.md](ZVEC_SPIKE.md) |
-| `internal/store/zvec` | insert/query/delete, idempotent open |
-| `internal/embeddings/openai` | OpenAI-compatible HTTP batch embed |
-| `internal/store/manifest` | Read SQLite manifest |
-| Wire `service` | Replace stub for search + status |
+| Task | Criteria | Status |
+|------|----------|--------|
+| zvec-go spike | Open collection; query returns chunks — [ZVEC_SPIKE.md](ZVEC_SPIKE.md) | Done |
+| `internal/store/zvec` | insert/query/delete, idempotent open (`-tags zvec`) | Done |
+| `internal/embeddings/openai` | OpenAI-compatible HTTP batch embed | Done |
+| `internal/store/manifest` | Read SQLite manifest | Done |
+| Wire `service` | Phase1 search + status | Done |
 
-**Gate:** Search returns ranked results against index built manually or imported.
+**Gate:** `make seed-index` + `make build-zvec` → HTTP `/v1/search` returns ranked results.
 
 ---
 

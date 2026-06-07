@@ -30,7 +30,26 @@ if [[ -x "$REPO_ROOT/bin/$BINARY_NAME" ]]; then
   cp -f "$REPO_ROOT/bin/$BINARY_NAME" "$DST_BIN"
   chmod +x "$DST_BIN"
 else
-  (cd "$REPO_ROOT" && go build -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go)
+  bash "$REPO_ROOT/scripts/fetch-zvec-libs.sh" > "$REPO_ROOT/.deps/zvec-lib.env"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/.deps/zvec-lib.env"
+  (
+    cd "$REPO_ROOT"
+    CGO_ENABLED=1 LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
+      go build -tags zvec -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
+    case "$(uname -s)" in
+      Linux*)
+        if [[ -f "$ZVEC_LIB_DIR/libzvec_c_api.so" ]]; then
+          cp -f "$ZVEC_LIB_DIR/libzvec_c_api.so" "$BIN_DIR/"
+        fi
+        ;;
+      Darwin*)
+        if [[ -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" ]]; then
+          cp -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" "$BIN_DIR/"
+        fi
+        ;;
+    esac
+  )
 fi
 
 cat > "$INSTALL_DIR/install-manifest.json" <<EOF

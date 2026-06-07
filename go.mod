@@ -3,7 +3,9 @@ module github.com/1CSerg/mcp-semantic-search-zvec-go
 go 1.26.3
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.9.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
+	github.com/zvec-ai/zvec-go v0.3.1
 	golang.org/x/sys v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.52.0
@@ -24,3 +26,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+replace github.com/zvec-ai/zvec-go => ./.deps/zvec-go

@@ -23,7 +23,7 @@
 # active_profile: dashscope_intl
 
 # Имя активного профиля эмбеддингов (ключ из profiles ниже).
-active_profile: openai_local
+active_profile: lmstudio_qwen
 
 # Профили подключения к моделям эмбеддингов.
 profiles:

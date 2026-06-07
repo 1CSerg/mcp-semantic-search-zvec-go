@@ -28,6 +28,7 @@ coverage-internal.out
 /data/
 /models/
 /dist/
+.deps/
 
 # OS
 .DS_Store
@@ -35,3 +36,4 @@ Thumbs.db
 
 /.cursor/*
 /.roo/*
+/docs/instr/*

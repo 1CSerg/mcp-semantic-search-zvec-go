@@ -1,29 +1,36 @@
 package zvec
 
 import (
-	"errors"
+	"os"
 	"testing"
 )
 
-func TestStubStore(t *testing.T) {
-	s := NewStub()
-	if err := s.Close(); err != nil {
-		t.Fatalf("Close: %v", err)
+func TestCollectionPath(t *testing.T) {
+	cfg := Config{
+		IndexDir:      "/data/index",
+		WorkspaceRoot: "/workspace",
+		ProfileName:   "openai_local",
+		Dimensions:    1536,
 	}
-	if err := s.Open(); !errors.Is(err, ErrNotLinked) {
-		t.Fatalf("Open: %v", err)
+	path := CollectionPath(cfg)
+	if path == "" {
+		t.Fatal("empty path")
 	}
-	if _, err := s.DocCount(); !errors.Is(err, ErrNotLinked) {
-		t.Fatalf("DocCount: %v", err)
+	if got := CollectionName(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions); got == "" {
+		t.Fatal("empty collection name")
 	}
-	if err := s.UpsertChunks(nil, nil); !errors.Is(err, ErrNotLinked) {
-		t.Fatalf("UpsertChunks: %v", err)
+}
+
+func TestIndexMetaPresent(t *testing.T) {
+	dir := t.TempDir()
+	if IndexMetaPresent(dir) {
+		t.Fatal("expected false")
 	}
-	if err := s.DeleteByIDs(nil); !errors.Is(err, ErrNotLinked) {
-		t.Fatalf("DeleteByIDs: %v", err)
+	if err := os.WriteFile(IndexMetaPath(dir), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := s.Search(nil, 1, ""); !errors.Is(err, ErrNotLinked) {
-		t.Fatalf("Search: %v", err)
+	if !IndexMetaPresent(dir) {
+		t.Fatal("expected true")
 	}
 }
 

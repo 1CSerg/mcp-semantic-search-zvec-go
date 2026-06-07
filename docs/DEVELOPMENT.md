@@ -63,15 +63,64 @@ templates/                          # MCP fragments
 
 ## zvec-go (Phase 1)
 
-Vector store uses community [zvec-go](https://github.com/danieleugenewilliams/zvec-go) (CGO).
+Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.3.1 (CGO, vendor pre-built libs).
 
-Before integration:
+### Build tags
 
-1. Complete spike checklist in [ZVEC_SPIKE.md](ZVEC_SPIKE.md).
-2. Build zvec native deps per zvec-go README (`make deps`).
-3. Set `CGO_ENABLED=1` for builds that link zvec.
+| Command | Tags | Result |
+|---------|------|--------|
+| `go test ./...` | default (`!zvec`) | Stub store, no native deps |
+| `make build-zvec` | `zvec` | Production binary with zvec |
+| `make test-integration` | `integration,zvec` | Spike gate tests |
 
-Collection schema (must match for index portability):
+### Native deps (one-time per machine / after clean)
+
+```bash
+make fetch-zvec-libs
+# writes .deps/zvec-lib.env with ZVEC_LIB_DIR
+```
+
+Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.3.1` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+
+Linux / macOS runtime:
+
+```bash
+source .deps/zvec-lib.env
+export LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
+```
+
+Windows: CGO via **WinLibs MinGW gcc** (recommended) or VS **clang-cl**; plain `cl` rejects cgo `-Werror`. Script:
+
+```powershell
+.\scripts\build-zvec-windows.ps1
+```
+
+`zvec_c_api.dll` must be next to the executable or on `PATH` (script copies to `bin/`).
+
+**Spike in Docker (Linux amd64):**
+
+```powershell
+docker run --rm -v "${PWD}:/src" -w /src golang:1.26.3-bookworm bash /src/scripts/run-spike-docker-inner.sh
+```
+
+First run ~2–3 min (clone + download libs). Results: [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
+
+Production build:
+
+```bash
+make build-zvec
+make seed-index
+./bin/mcp-semantic-search-zvec-go --http
+```
+
+Spike checklist: [ZVEC_SPIKE.md](ZVEC_SPIKE.md).
+
+### See also
+
+- [zvec-go examples](https://github.com/zvec-ai/zvec-go/tree/main/examples) — Go API reference
+- [zvec-agent-skills](https://github.com/zvec-ai/zvec-agent-skills) — product concepts (Python/Node); hybrid search ideas for Phase 2
+
+Collection schema:
 
 | Field | Type |
 |-------|------|
@@ -85,13 +134,13 @@ Collection schema (must match for index portability):
 
 ## Cross-compile
 
-Pure Go stub (Phase 0): `GOOS=linux GOARCH=amd64 go build ...`
+Default `go build` (no tags): pure Go stub — useful for CI coverage without CGO.
 
-With zvec CGO (Phase 1+): use CI matrix with native runners per OS; avoid naive cross-compile from Windows to Linux with CGO.
+With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile with CGO.
 
 ## CI
 
-- `.github/workflows/ci.yml` — `go test -race`, проверка покрытия (≥80% `./internal/...`), `go vet`, `golangci-lint` on push/PR
+- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥80% `./internal/...`), `go vet`, job `zvec-integration` (`-tags integration,zvec`), golangci-lint on push/PR
 - `.github/workflows/release.yml` — tag `v*` → binaries + Docker
 
 ## Testing MCP locally

@@ -1,9 +1,12 @@
-.PHONY: build test test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks
+.PHONY: build build-zvec fetch-zvec-libs test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
 COVERAGE_MIN ?= 80
 COVERAGE_PACKAGES ?= ./internal/...
+ZVEC_TAGS := -tags zvec
+INTEGRATION_TAGS := -tags "integration,zvec"
+ZVEC_ENV := .deps/zvec-lib.env
 
 setup-hooks:
 	@git config core.autocrlf false
@@ -13,11 +16,40 @@ setup-hooks:
 	@-git config --unset alias.stage
 	@echo "Git: core.autocrlf=false, core.safecrlf=false, alias.addnorm=scripts/git-add.sh"
 
+fetch-zvec-libs:
+	bash scripts/fetch-zvec-libs.sh > $(ZVEC_ENV)
+
+copy-zvec-runtime: fetch-zvec-libs
+	@. $(ZVEC_ENV) && \
+	case "$$(uname -s)" in \
+	  MINGW*|MSYS*|CYGWIN*) \
+	    mkdir -p bin && cp -f "$$ZVEC_LIB_DIR/zvec_c_api.dll" bin/ ;; \
+	  Darwin*) \
+	    mkdir -p bin && cp -f "$$ZVEC_LIB_DIR/libzvec_c_api.dylib" bin/ 2>/dev/null || true ;; \
+	  Linux*) \
+	    mkdir -p bin && cp -f "$$ZVEC_LIB_DIR/libzvec_c_api.so" bin/ 2>/dev/null || true ;; \
+	esac
+
 build:
 	go build -o bin/$(BINARY) $(CMD)
 
+build-zvec: fetch-zvec-libs copy-zvec-runtime
+	. $(ZVEC_ENV) && \
+	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$LD_LIBRARY_PATH" \
+	go build $(ZVEC_TAGS) -o bin/$(BINARY) $(CMD)
+
+seed-index: fetch-zvec-libs
+	. $(ZVEC_ENV) && \
+	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$LD_LIBRARY_PATH" \
+	go run $(ZVEC_TAGS) ./cmd/seed-index
+
 test:
 	go test ./...
+
+test-integration: fetch-zvec-libs
+	. $(ZVEC_ENV) && \
+	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$LD_LIBRARY_PATH" \
+	go test $(INTEGRATION_TAGS) -v ./internal/store/zvec/...
 
 test-cover:
 	go test -coverprofile=coverage.out $(COVERAGE_PACKAGES)

@@ -3,9 +3,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings/openai"
@@ -14,23 +16,37 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
-// Phase1 wires manifest read, optional OpenAI embed, and zvec stub/real store.
+// Phase1 wires manifest read, optional OpenAI embed, and zvec store.
 type Phase1 struct {
 	Settings *config.Settings
 	embed    *openai.Client
 	zvec     zvec.Store
+	zvecCfg  zvec.Config
 }
 
-// NewPhase1 creates a Phase 1 service (search requires zvec-go integration).
+// NewPhase1 creates a Phase 1 service.
 func NewPhase1(settings *config.Settings) (*Phase1, error) {
-	p := &Phase1{
-		Settings: settings,
-		zvec:     zvec.NewStub(),
-	}
+	p := &Phase1{Settings: settings}
+
 	profile, err := settings.ActiveProfile()
 	if err != nil {
+		p.zvecCfg = zvec.Config{
+			IndexDir:      settings.IndexDir,
+			WorkspaceRoot: settings.WorkspaceRoot,
+			ProfileName:   settings.App.ActiveProfile,
+		}
+		p.zvec = zvec.New(p.zvecCfg)
 		return p, nil
 	}
+
+	p.zvecCfg = zvec.Config{
+		IndexDir:      settings.IndexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	p.zvec = zvec.New(p.zvecCfg)
+
 	if profile.Provider == "openai_compatible" {
 		c, err := openai.NewClient(profile)
 		if err != nil {
@@ -59,6 +75,7 @@ func (p *Phase1) manifestStats() (files, chunks int) {
 }
 
 func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
+	start := time.Now()
 	limit := req.Limit
 	if limit == 0 && req.TopK != nil {
 		limit = *req.TopK
@@ -71,7 +88,7 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 		return marshal(map[string]any{
 			"query":   req.Query,
 			"results": []any{},
-			"message": "embedding provider not configured or unsupported in Phase 1 bootstrap",
+			"message": "embedding provider not configured or unsupported in Phase 1",
 		})
 	}
 
@@ -87,13 +104,24 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 
 	hits, err := p.zvec.Search(vector, limit, derefString(req.PathGlob))
 	if err != nil {
+		if errors.Is(err, zvec.ErrCollectionMissing) {
+			return marshal(map[string]any{
+				"query":   req.Query,
+				"results": []any{},
+				"message": "index not found — run reindex (Phase 2) or seed a collection for testing",
+			})
+		}
+		if errors.Is(err, zvec.ErrNotLinked) {
+			return marshal(map[string]any{
+				"query":   req.Query,
+				"results": []any{},
+				"message": fmt.Sprintf("vector store unavailable: %v", err),
+			})
+		}
 		return marshal(map[string]any{
 			"query":   req.Query,
 			"results": []any{},
-			"message": fmt.Sprintf("vector search pending zvec-go integration: %v", err),
-			"indexing": map[string]any{
-				"state": "idle",
-			},
+			"message": fmt.Sprintf("vector search failed: %v", err),
 		})
 	}
 
@@ -107,21 +135,37 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 			"snippet":    h.Snippet,
 		})
 	}
-	return marshal(map[string]any{
+	payload := map[string]any{
 		"query":   req.Query,
 		"results": results,
-	})
+		"timing": map[string]any{
+			"total_ms": float64(time.Since(start).Milliseconds()),
+		},
+	}
+	return marshal(payload)
 }
 
 func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 	files, chunks := p.manifestStats()
-	profile, _ := p.Settings.ActiveProfile()
+	profile, profileErr := p.Settings.ActiveProfile()
+
+	collectionName := zvec.CollectionName(p.zvecCfg.WorkspaceRoot, p.zvecCfg.ProfileName, p.zvecCfg.Dimensions)
+	collectionPath := zvec.CollectionPath(p.zvecCfg)
+
 	docCount := 0
+	zvecOpenOK := false
+	var zvecErr string
 	if err := p.zvec.Open(); err == nil {
+		zvecOpenOK = true
 		if n, err := p.zvec.DocCount(); err == nil {
 			docCount = n
+		} else {
+			zvecErr = err.Error()
 		}
+	} else {
+		zvecErr = err.Error()
 	}
+
 	payload := map[string]any{
 		"workspace_root":          p.Settings.WorkspaceRoot,
 		"index_dir":               p.Settings.IndexDir,
@@ -134,7 +178,11 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"indexed_files":           files,
 		"indexed_chunks_manifest": chunks,
 		"zvec_doc_count":          docCount,
-		"phase":                   "1-bootstrap",
+		"zvec_collection":         collectionName,
+		"zvec_collection_path":    collectionPath,
+		"zvec_open_ok":            zvecOpenOK,
+		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
+		"phase":                   "1",
 		"indexing": map[string]any{
 			"state":   "idle",
 			"running": false,
@@ -148,8 +196,14 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 			"log_dir": p.Settings.LogsDir(),
 		},
 	}
-	if p.embed == nil && profile.Provider == "openai_compatible" {
+	if zvecErr != "" {
+		payload["zvec_error"] = zvecErr
+	}
+	if p.embed == nil && profileErr == nil && profile.Provider == "openai_compatible" {
 		payload["message"] = "openai_compatible client failed to initialize"
+	}
+	if profileErr != nil {
+		payload["message"] = profileErr.Error()
 	}
 	return marshal(payload)
 }

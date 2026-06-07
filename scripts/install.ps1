@@ -75,7 +75,12 @@ if (Test-Path $srcBin) {
 } else {
     Push-Location $RepoRoot
     try {
-        go build -o $dstBin ./cmd/mcp-semantic-search-zvec-go
+        & "$RepoRoot\scripts\build-zvec-windows.ps1"
+        Copy-Item -Force (Join-Path $RepoRoot "bin\mcp-semantic-search-zvec-go.exe") $dstBin
+        $dllSrc = Join-Path $env:ZVEC_LIB_DIR "zvec_c_api.dll"
+        if (Test-Path $dllSrc) {
+            Copy-Item -Force $dllSrc (Join-Path $BinDir "zvec_c_api.dll")
+        }
         Write-Host "Built binary: $dstBin"
     } finally {
         Pop-Location

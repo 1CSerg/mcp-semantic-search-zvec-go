@@ -52,7 +52,7 @@ git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go $env:TEMP\mcp-se
 
 ## Статус
 
-**v0.1.0 — Phase 0 bootstrap.** MCP tools и HTTP API зарегистрированы; индексация и поиск — в Phase 1+.
+**v0.1.0 — Phase 1 read path.** `semantic_search` и `index_status` работают при сборке `-tags zvec` и наличии индекса (`make seed-index`). Индексация (`reindex`) — Phase 2.
 
 ## Лицензия
 

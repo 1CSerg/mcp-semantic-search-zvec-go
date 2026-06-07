@@ -5,12 +5,12 @@ Phase 1 must not proceed until this checklist passes on **Windows amd64** and **
 ## Prerequisites
 
 ```bash
-git clone https://github.com/danieleugenewilliams/zvec-go
-cd zvec-go
-make deps   # per upstream README
+make fetch-zvec-libs   # clone .deps/zvec-go + download vendor libs (v0.3.1)
+export CGO_ENABLED=1
+# Linux/macOS: source .deps/zvec-lib.env && export LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
 ```
 
-Set `CGO_ENABLED=1`.
+Upstream: [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) (vendor mode, no `make deps`).
 
 ## Checklist
 
@@ -41,22 +41,24 @@ Vector field:
 
 ## Spike location
 
-Implement POC in branch `phase1/zvec-spike`:
-
 - `internal/store/zvec/store.go` — production wrapper
-- `internal/store/zvec/store_test.go` — integration tests (build tag `integration`)
+- `internal/store/zvec/store_integration_test.go` — integration tests (build tag `integration,zvec`)
+
+Run: `make test-integration`
 
 ## Go / no-go
 
 | Outcome | Action |
 |---------|--------|
 | All pass | Proceed Phase 1 |
-| Windows link fails | Document MSVC steps; consider vendoring zvec libs |
+| Windows link fails | MSVC + `zvec_c_api.dll` next to exe; see [DEVELOPMENT.md](DEVELOPMENT.md) |
 | Schema incompatible | Document migration; indexes require reindex |
-| zvec-go unmaintained | Fork or contribute upstream; track Alibaba official Go SDK |
+| Vendor libs GLIBC mismatch | Fallback: zvec-go source mode (`-tags source`) |
 
 ## References
 
-- [zvec-go](https://github.com/danieleugenewilliams/zvec-go)
+- [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go)
+- [zvec-go examples](https://github.com/zvec-ai/zvec-go/tree/main/examples)
 - [Alibaba zvec](https://github.com/alibaba/zvec)
 - [ROADMAP.md](ROADMAP.md) Phase 1
+- Build notes: [instr/ZVEC_BUILD.md](instr/ZVEC_BUILD.md)

@@ -14,7 +14,25 @@ import (
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
+
+type mockZvecStore struct {
+	hits []zvec.SearchHit
+	err  error
+}
+
+func (m *mockZvecStore) Open() error                                  { return nil }
+func (m *mockZvecStore) Close() error                                 { return nil }
+func (m *mockZvecStore) DocCount() (int, error)                       { return len(m.hits), nil }
+func (m *mockZvecStore) UpsertChunks([]zvec.Chunk, [][]float32) error { return nil }
+func (m *mockZvecStore) DeleteByIDs([]string) error                   { return nil }
+func (m *mockZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.hits, nil
+}
 
 func insertManifestRow(t *testing.T, indexDir, path string, chunks int) error {
 	t.Helper()
@@ -102,7 +120,7 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["phase"] != "1-bootstrap" {
+	if payload["phase"] != "1" {
 		t.Fatalf("phase=%v", payload["phase"])
 	}
 }
@@ -132,6 +150,50 @@ func TestPhase1SemanticSearch(t *testing.T) {
 	}
 	if payload["query"] != "hello" {
 		t.Fatalf("query=%v", payload["query"])
+	}
+	if _, ok := payload["message"]; !ok {
+		t.Fatalf("expected zvec stub message, payload=%v", payload)
+	}
+}
+
+func TestPhase1SemanticSearchWithMockZvec(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"index": 0, "embedding": []float64{0.1, 0.2, 0.3}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &mockZvecStore{
+		hits: []zvec.SearchHit{{
+			Path:      "internal/auth.go",
+			StartLine: 1,
+			EndLine:   10,
+			Score:     0.95,
+			Snippet:   "auth middleware",
+		}},
+	}
+
+	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
+	if err != nil {
+		t.Fatalf("SemanticSearch: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	results, ok := payload["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("results=%v", payload["results"])
+	}
+	if _, ok := payload["timing"]; !ok {
+		t.Fatalf("missing timing: %v", payload)
 	}
 }
 
