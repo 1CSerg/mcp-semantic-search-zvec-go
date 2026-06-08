@@ -90,7 +90,7 @@ func TestWatcherTriggersReindex(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if coord.starts > 0 {
+		if coord.Starts() > 0 {
 			st := w.Snapshot()
 			if st.Backend != "polling" {
 				t.Fatalf("backend=%q", st.Backend)
@@ -99,7 +99,7 @@ func TestWatcherTriggersReindex(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("starts=%d", coord.starts)
+	t.Fatalf("starts=%d", coord.Starts())
 }
 
 func TestNewBackendPolling(t *testing.T) {

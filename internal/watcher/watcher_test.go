@@ -14,21 +14,36 @@ import (
 )
 
 type mockCoordinator struct {
+	mu      sync.Mutex
 	running bool
 	starts  int
 }
 
 func (m *mockCoordinator) Start(bool) (indexer.Progress, error) {
+	m.mu.Lock()
 	m.starts++
 	m.running = true
+	m.mu.Unlock()
 	go func() {
 		time.Sleep(50 * time.Millisecond)
+		m.mu.Lock()
 		m.running = false
+		m.mu.Unlock()
 	}()
 	return indexer.StartRunning(false), nil
 }
 
-func (m *mockCoordinator) IsRunning() bool { return m.running }
+func (m *mockCoordinator) IsRunning() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.running
+}
+
+func (m *mockCoordinator) Starts() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.starts
+}
 
 func TestWatcherDisabled(t *testing.T) {
 	w, err := New(&config.Settings{App: config.AppConfig{FileWatcher: config.FileWatcherConfig{Enabled: false}}}, &mockCoordinator{})
@@ -128,6 +143,12 @@ func (d *delayedCoordinator) IsRunning() bool {
 	return d.running
 }
 
+func (d *delayedCoordinator) Starts() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.starts
+}
+
 type errorCoordinator struct{}
 
 func (errorCoordinator) Start(bool) (indexer.Progress, error) {
@@ -173,15 +194,15 @@ func TestWatcherWaitAndRetry(t *testing.T) {
 
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if coord.starts >= 1 {
+		if coord.Starts() >= 1 {
 			st := w.Snapshot()
-			if st.PendingEvents == 0 && coord.starts >= 1 {
+			if st.PendingEvents == 0 && coord.Starts() >= 1 {
 				return
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("starts=%d pending=%d", coord.starts, w.Snapshot().PendingEvents)
+	t.Fatalf("starts=%d pending=%d", coord.Starts(), w.Snapshot().PendingEvents)
 }
 
 type toggleCoordinator struct {
@@ -203,6 +224,12 @@ func (t *toggleCoordinator) IsRunning() bool {
 	return t.running
 }
 
+func (t *toggleCoordinator) Starts() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.starts
+}
+
 func (t *toggleCoordinator) setIdleAfter(d time.Duration) {
 	time.Sleep(d)
 	t.mu.Lock()
@@ -221,7 +248,7 @@ func TestWaitAndRetry(t *testing.T) {
 	defer cancel()
 	go coord.setIdleAfter(400 * time.Millisecond)
 	w.waitAndRetry(ctx, "main.go")
-	if coord.starts == 0 {
+	if coord.Starts() == 0 {
 		t.Fatal("expected reindex after coordinator became idle")
 	}
 }
@@ -244,12 +271,12 @@ func TestWatcherTriggerReindexWhileRunning(t *testing.T) {
 
 	deadline := time.Now().Add(1500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if coord.starts > 0 {
+		if coord.Starts() > 0 {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("starts=%d", coord.starts)
+	t.Fatalf("starts=%d", coord.Starts())
 }
 
 func (d *delayedCoordinator) setIdleAfter(delay time.Duration) {
@@ -293,12 +320,12 @@ func TestWatcherLoopSkipsIrrelevantFiles(t *testing.T) {
 	events <- "readme.txt"
 	events <- "pkg/main.go"
 	time.Sleep(100 * time.Millisecond)
-	if coord.starts != 0 {
-		t.Fatalf("starts=%d", coord.starts)
+	if coord.Starts() != 0 {
+		t.Fatalf("starts=%d", coord.Starts())
 	}
 	w.triggerReindex(ctx, "pkg/main.go")
-	if coord.starts != 1 {
-		t.Fatalf("starts=%d", coord.starts)
+	if coord.Starts() != 1 {
+		t.Fatalf("starts=%d", coord.Starts())
 	}
 }
 

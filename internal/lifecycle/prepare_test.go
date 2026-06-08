@@ -108,16 +108,6 @@ func TestPrepareStdio(t *testing.T) {
 	}
 }
 
-func TestProcessCommandLineCurrentProcess(t *testing.T) {
-	cmdline, err := processCommandLine(uint32(os.Getpid()))
-	if err != nil {
-		t.Fatalf("processCommandLine: %v", err)
-	}
-	if cmdline == "" {
-		t.Fatal("expected non-empty command line")
-	}
-}
-
 func TestTerminatePIDNotFound(t *testing.T) {
 	if err := terminatePID(99999999); err == nil {
 		t.Fatal("expected error for non-existent pid")

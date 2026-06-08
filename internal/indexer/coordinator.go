@@ -111,8 +111,8 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 
 	go func() {
-		defer func() { _ = c.lock.Release() }()
 		err := c.run(context.Background(), force)
+		_ = c.lock.Release()
 		c.mu.Lock()
 		c.running = false
 		if err != nil {
