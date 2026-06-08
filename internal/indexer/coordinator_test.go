@@ -70,6 +70,47 @@ func (s *memZvec) WipeCollection() error {
 	return nil
 }
 
+func TestCoordinatorStartRecoversStaleProgress(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	store := NewProgressStore(indexDir)
+	if err := store.Save(StartRunning(false)); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+				StallSeconds:     120,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, newMemZvec(), zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: root,
+		ProfileName:   "test",
+		Dimensions:    4,
+	})
+	pgr, err := c.Start(false)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if !pgr.Running {
+		t.Fatal("expected running progress")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestCoordinatorIndexesFile(t *testing.T) {
 	root := t.TempDir()
 	indexDir := filepath.Join(root, "index")
@@ -141,6 +182,63 @@ func TestCoordinatorIndexesFile(t *testing.T) {
 	}
 }
 
+func TestCoordinatorSkipsUnchangedFiles(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "auth.go"), []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	calls := 0
+	embed := &countingEmbedder{mockEmbedder: mockEmbedder{dims: 4}, calls: &calls}
+	c.Embed = embed
+	if _, err := c.Start(false); err != nil {
+		t.Fatal(err)
+	}
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no embed calls for unchanged file, got %d", calls)
+	}
+}
+
+type countingEmbedder struct {
+	mockEmbedder
+	calls *int
+}
+
+func (c *countingEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	*c.calls++
+	return c.mockEmbedder.Embed(ctx, texts)
+}
+
 func TestCoordinatorAlreadyRunning(t *testing.T) {
 	root := t.TempDir()
 	settings := &config.Settings{
@@ -183,6 +281,161 @@ func TestIsZvecUnavailable(t *testing.T) {
 		t.Fatal("expected available")
 	}
 }
+
+func TestCoordinatorCurrentProgressLoadError(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(indexDir, "progress.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{Extensions: []string{".go"}, LockStaleSeconds: 300},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, newMemZvec(), zvec.Config{
+		IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4,
+	})
+	p := c.CurrentProgress()
+	if p.Message == "" {
+		t.Fatalf("progress=%+v", p)
+	}
+}
+
+func TestCoordinatorStartProgressSaveFails(t *testing.T) {
+	root := t.TempDir()
+	blocked := filepath.Join(root, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexDir := filepath.Join(blocked, "index")
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	if _, err := c.Start(true); err == nil {
+		t.Fatal("expected progress save error")
+	}
+	if c.IsRunning() {
+		t.Fatal("coordinator should not be running")
+	}
+}
+
+func TestCoordinatorIncrementalRemovesDeletedFile(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "auth.go")
+	if err := os.WriteFile(path, []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Start(false); err != nil {
+		t.Fatal(err)
+	}
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	if _, err := man.Get("pkg/auth.go"); err == nil {
+		t.Fatal("expected deleted file removed from manifest")
+	}
+}
+
+func TestCoordinatorEmbedFailure(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.WriteFile(filepath.Join(root, "bad.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &failingEmbedder{}, store, cfg)
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	p := c.CurrentProgress()
+	if p.State != StateError {
+		t.Fatalf("progress=%+v", p)
+	}
+}
+
+type failingEmbedder struct{}
+
+func (failingEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, os.ErrInvalid
+}
+
+func (failingEmbedder) Dimensions() int { return 4 }
 
 func TestCoordinatorStartFailsWhenLockHeld(t *testing.T) {
 	root := t.TempDir()

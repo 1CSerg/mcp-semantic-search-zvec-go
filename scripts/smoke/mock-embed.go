@@ -16,6 +16,14 @@ func main() {
 	dims := flag.Int("dims", 128, "embedding dimensions")
 	flag.Parse()
 
+	http.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
 	http.HandleFunc("/v1/embeddings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -42,7 +42,7 @@ Dev mode uses repo `config.yaml` automatically when install tree is absent.
 ./bin/mcp-semantic-search-zvec-go --stdio --http
 ```
 
-Logs go to stderr. File logging — Phase 3.
+Logs go to stderr and `.mcp-semantic-search-zvec-go/data/logs/server.log` (rotation via `logging.max_bytes` / `logging.backup_count`). Fatal panics write `data/logs/last_crash.json`.
 
 ## Project layout
 
@@ -56,6 +56,9 @@ internal/
   store/zvec/                       # Phase 1 — zvec-go
   embeddings/                     # Phase 1/4
   indexer/                          # scan, chunk, coordinator (Phase 2)
+  watcher/                          # fsnotify + polling (Phase 3)
+  logging/                          # file log rotation (Phase 3)
+  crash/                            # last_crash.json (Phase 3)
 docs/
 scripts/                            # install
 templates/                          # MCP fragments
@@ -121,6 +124,14 @@ Linux: `make smoke-phase1`
 
 Linux: `make smoke-phase2`
 
+**Phase 3 gate smoke** (reconnect resilience, watcher, `/ready`, search metrics):
+
+```powershell
+.\scripts\smoke-phase3.ps1
+```
+
+Linux: `make smoke-phase3`
+
 Production build:
 
 ```bash
@@ -156,7 +167,7 @@ With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile w
 
 ## CI
 
-- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥80% `./internal/...`), `go vet`, job `zvec-integration` (`-tags integration,zvec`), golangci-lint on push/PR
+- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥88% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), golangci-lint on push/PR
 - `.github/workflows/release.yml` — tag `v*` → binaries + Docker
 
 ## Testing MCP locally
@@ -173,14 +184,19 @@ curl -s http://127.0.0.1:8080/v1/status | jq .
 
 ## Покрытие тестами
 
-Минимум **80%** для `./internal/...` (встроенный `go tool cover`).
+Пороги для `./internal/...` (встроенный `go tool cover`):
+
+- **88%** — суммарно по проекту (`COVERAGE_MIN`)
+- **50%** — минимум на каждый Go-пакет (`COVERAGE_PKG_MIN`)
 
 ```bash
 make test-cover          # отчёт по функциям
-make test-cover-check    # fail если < 80%
+make test-cover-check    # fail если ниже порогов
 ```
 
 Windows: `.\scripts\check-coverage.ps1`
+
+Переопределение: `COVERAGE_MIN=90 COVERAGE_PKG_MIN=60 make test-cover-check`
 
 HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 

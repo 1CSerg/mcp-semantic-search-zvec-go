@@ -48,19 +48,19 @@
 
 ---
 
-## Phase 3 — Resilience + watcher **(current)**
+## Phase 3 — Resilience + watcher
 
 **Goal:** Production stability per-project mode.
 
-| Task | Criteria |
-|------|----------|
-| File watcher | fsnotify + polling backend |
-| Search metrics | slow/degraded hints in responses |
-| Crash logging | `last_crash.json`, log rotation |
-| In-binary stale stdio cleanup | `internal/lifecycle` on `--stdio` startup (done) |
-| `/ready` | Fails until index + embeddings OK |
+| Task | Criteria | Status |
+|------|----------|--------|
+| File watcher | fsnotify + polling backend | Done |
+| Search metrics | slow/degraded hints in responses | Done |
+| Crash logging | `last_crash.json`, log rotation | Done |
+| In-binary stale stdio cleanup | `internal/lifecycle` on `--stdio` startup | Done |
+| `/ready` | Fails until index + embeddings OK | Done |
 
-**Gate:** 50× Cursor reconnect without orphan processes or stale locks.
+**Gate:** 50× reconnect without orphan processes or stale locks — ✅ scripted equivalent passed (2026-06-08, `.\scripts\smoke-phase3.ps1 -Reconnects 50`; details in [PHASE3_RESULTS.md](PHASE3_RESULTS.md)).
 
 ---
 

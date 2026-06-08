@@ -106,6 +106,14 @@ func shouldSkipDir(name string, skipDirs []string) bool {
 	return false
 }
 
+// MatchesWatchPath reports whether a relative path should trigger watcher reindex.
+func MatchesWatchPath(rel string, extensions, skipDirs []string) bool {
+	if shouldSkipPath(rel, skipDirs) {
+		return false
+	}
+	return matchesExtension(rel, extensions)
+}
+
 func matchesExtension(rel string, extensions []string) bool {
 	if len(extensions) == 0 {
 		return true

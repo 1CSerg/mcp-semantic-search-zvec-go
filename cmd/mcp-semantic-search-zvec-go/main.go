@@ -12,7 +12,9 @@ import (
 	"syscall"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/logging"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
 	httptransport "github.com/1CSerg/mcp-semantic-search-zvec-go/internal/transport/http"
 	mcptransport "github.com/1CSerg/mcp-semantic-search-zvec-go/internal/transport/mcp"
@@ -48,13 +50,25 @@ func run() int {
 		_ = os.Setenv("CONFIG_PATH", configPath)
 	}
 
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
-
 	settings, err := loadSettings()
 	if err != nil {
 		slog.Error("config load failed", "err", err)
 		return 1
 	}
+
+	_, logCloser, err := logging.Setup(settings)
+	if err != nil {
+		slog.Warn("file logging setup failed, using stderr only", "err", err)
+	} else {
+		defer logCloser.Close()
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			_ = crash.Write(settings.LogsDir(), version.Version, settings.WorkspaceRoot, r)
+			panic(r)
+		}
+	}()
 
 	if stdio {
 		if err := lifecycle.PrepareStdio(settings); err != nil {
@@ -63,7 +77,9 @@ func run() int {
 	}
 
 	var svc service.Service = service.NewStub(settings)
-	if phase1, err := service.NewPhase1(settings); err == nil {
+	var phase1 *service.Phase1
+	if p, err := service.NewPhase1(settings); err == nil {
+		phase1 = p
 		svc = phase1
 		if settings.AutoIndexOnStart {
 			phase1.StartAutoIndex()
@@ -73,6 +89,10 @@ func run() int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if phase1 != nil {
+		phase1.StartFileWatcher(ctx)
+	}
 
 	slog.Info("starting", "version", version.Version, "workspace", settings.WorkspaceRoot)
 

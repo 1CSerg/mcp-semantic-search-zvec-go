@@ -52,6 +52,35 @@ func TestLoadAppConfigMissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+
+	t.Setenv("WORKSPACE_ROOT", dir)
+	t.Setenv("CONFIG_PATH", "custom/config.yaml")
+	t.Setenv("INDEX_DIR", "custom/index")
+	if err := os.MkdirAll(filepath.Join(dir, "custom"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "custom", "config.yaml"), []byte(minimalConfigYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIndex := filepath.Join(dir, "custom", "index")
+	if settings.IndexDir != wantIndex {
+		t.Fatalf("index_dir=%q want %q", settings.IndexDir, wantIndex)
+	}
+	wantConfig := filepath.Join(dir, "custom", "config.yaml")
+	if settings.ConfigPath != wantConfig {
+		t.Fatalf("config_path=%q want %q", settings.ConfigPath, wantConfig)
+	}
+	_ = path
+}
+
 func TestLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestConfig(t, dir)
@@ -71,14 +100,33 @@ func TestLoad(t *testing.T) {
 	if settings.WorkspaceRoot != dir {
 		t.Fatalf("workspace=%q", settings.WorkspaceRoot)
 	}
-	if settings.HTTPAddr != ":9090" {
-		t.Fatalf("http_addr=%q", settings.HTTPAddr)
+	if settings.HTTPAddr != ":8081" {
+		t.Fatalf("http_addr=%q want :8081 from HTTP_ADDR env", settings.HTTPAddr)
 	}
 	if !settings.AutoIndexOnStart {
 		t.Fatal("expected auto index on start")
 	}
 	if settings.APIToken != "secret" {
 		t.Fatalf("api_token=%q", settings.APIToken)
+	}
+}
+
+func TestHTTPAddrConfigFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	indexDir := filepath.Join(dir, "data", "index")
+
+	t.Setenv("WORKSPACE_ROOT", dir)
+	t.Setenv("CONFIG_PATH", path)
+	t.Setenv("INDEX_DIR", indexDir)
+	t.Setenv("HTTP_ADDR", "")
+
+	settings, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if settings.HTTPAddr != ":9090" {
+		t.Fatalf("http_addr=%q want :9090 from config server.http_addr", settings.HTTPAddr)
 	}
 }
 
@@ -128,6 +176,75 @@ func TestParseBoolEnv(t *testing.T) {
 		if got := ParseBoolEnv(tc.in); got != tc.want {
 			t.Fatalf("ParseBoolEnv(%q)=%v want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestLoadPhase3EnvInvalidIgnored(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	t.Setenv("WORKSPACE_ROOT", dir)
+	t.Setenv("CONFIG_PATH", path)
+	t.Setenv("INDEX_DIR", filepath.Join(dir, "data", "index"))
+	t.Setenv("SEARCH_SLOW_THRESHOLD_SECONDS", "not-a-number")
+	t.Setenv("SEARCH_STATS_WINDOW", "bad")
+
+	settings, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.App.Search.SlowThresholdSeconds != DefaultSlowSearchSeconds {
+		t.Fatalf("slow=%v", settings.App.Search.SlowThresholdSeconds)
+	}
+}
+
+func TestLoadPhase3EnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	indexDir := filepath.Join(dir, "data", "index")
+
+	t.Setenv("WORKSPACE_ROOT", dir)
+	t.Setenv("CONFIG_PATH", path)
+	t.Setenv("INDEX_DIR", indexDir)
+	t.Setenv("SEARCH_SLOW_THRESHOLD_SECONDS", "9.5")
+	t.Setenv("SEARCH_DEGRADE_RATIO", "3.0")
+	t.Setenv("SEARCH_STATS_WINDOW", "15")
+	t.Setenv("FILE_WATCHER_ENABLED", "false")
+	t.Setenv("FILE_WATCHER_BACKEND", "polling")
+	t.Setenv("FILE_WATCHER_POLL_INTERVAL_SECONDS", "5")
+	t.Setenv("MCP_LOG_LEVEL", "debug")
+	t.Setenv("MCP_LOG_VERBOSE", "true")
+	t.Setenv("INDEXING_STALL_SECONDS", "90")
+
+	settings, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if settings.App.Search.SlowThresholdSeconds != 9.5 {
+		t.Fatalf("slow=%v", settings.App.Search.SlowThresholdSeconds)
+	}
+	if settings.App.Search.DegradeRatio != 3.0 {
+		t.Fatalf("ratio=%v", settings.App.Search.DegradeRatio)
+	}
+	if settings.App.Search.StatsWindow != 15 {
+		t.Fatalf("window=%d", settings.App.Search.StatsWindow)
+	}
+	if settings.App.FileWatcher.Enabled {
+		t.Fatal("expected watcher disabled")
+	}
+	if settings.App.FileWatcher.Backend != "polling" {
+		t.Fatalf("backend=%q", settings.App.FileWatcher.Backend)
+	}
+	if settings.App.FileWatcher.PollIntervalSeconds != 5 {
+		t.Fatalf("poll=%v", settings.App.FileWatcher.PollIntervalSeconds)
+	}
+	if settings.App.Logging.Level != "debug" {
+		t.Fatalf("level=%q", settings.App.Logging.Level)
+	}
+	if !settings.App.Logging.Verbose {
+		t.Fatal("expected verbose logging")
+	}
+	if settings.App.Indexing.StallSeconds != 90 {
+		t.Fatalf("stall=%v", settings.App.Indexing.StallSeconds)
 	}
 }
 

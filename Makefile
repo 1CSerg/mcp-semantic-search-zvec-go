@@ -1,8 +1,9 @@
-.PHONY: build build-zvec fetch-zvec-libs test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2
+.PHONY: build build-zvec fetch-zvec-libs test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
-COVERAGE_MIN ?= 80
+COVERAGE_MIN ?= 88
+COVERAGE_PKG_MIN ?= 50
 COVERAGE_PACKAGES ?= ./internal/...
 ZVEC_TAGS := -tags zvec
 INTEGRATION_TAGS := -tags "integration,zvec"
@@ -44,6 +45,9 @@ smoke-phase1: build-zvec
 smoke-phase2: build-zvec
 	bash scripts/smoke-phase2.sh
 
+smoke-phase3: build-zvec
+	bash scripts/smoke-phase3.sh
+
 seed-index: fetch-zvec-libs
 	. $(ZVEC_ENV) && \
 	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$LD_LIBRARY_PATH" \
@@ -62,7 +66,7 @@ test-cover:
 	go tool cover -func=coverage.out
 
 test-cover-check:
-	COVERAGE_MIN=$(COVERAGE_MIN) COVERAGE_PACKAGES="$(COVERAGE_PACKAGES)" bash scripts/check-coverage.sh
+	COVERAGE_MIN=$(COVERAGE_MIN) COVERAGE_PKG_MIN=$(COVERAGE_PKG_MIN) COVERAGE_PACKAGES="$(COVERAGE_PACKAGES)" bash scripts/check-coverage.sh
 
 lint:
 	@which golangci-lint >/dev/null 2>&1 || (echo "install golangci-lint for lint target" && exit 1)

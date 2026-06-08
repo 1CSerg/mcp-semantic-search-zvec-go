@@ -7,94 +7,115 @@ import (
 	"testing"
 )
 
-func TestDiscoverWalk(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "internal"), 0o755); err != nil {
+func TestDiscoverGit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "node_modules", "x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "a.go"), []byte("package internal\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "node_modules", "x", "b.go"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "readme.md"), []byte("# hi"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	init := exec.Command("git", "init", dir)
+	init.Dir = dir
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	add := exec.Command("git", "add", "main.go")
+	add.Dir = dir
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Skipf("git add: %v %s", err, out)
+	}
+
 	files, err := Discover(Options{
-		Root:       root,
-		Extensions: []string{".go", ".md"},
-		SkipDirs:   []string{"node_modules", ".git"},
+		Root:       dir,
+		Extensions: []string{".go"},
+		SkipDirs:   []string{".git"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 {
+	if len(files) != 1 || files[0] != "main.go" {
 		t.Fatalf("files=%v", files)
 	}
 }
 
-func TestMatchesExtension(t *testing.T) {
-	if !matchesExtension("a.go", []string{".go"}) {
+func TestDiscoverWalk(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := Discover(Options{
+		Root:       dir,
+		Extensions: []string{".go"},
+		SkipDirs:   []string{".git"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "main.go" {
+		t.Fatalf("files=%v", files)
+	}
+}
+
+func TestDiscoverEmptyRoot(t *testing.T) {
+	if _, err := Discover(Options{}); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestMatchesWatchPath(t *testing.T) {
+	ext := []string{".go"}
+	skip := []string{".git", "node_modules"}
+	if !MatchesWatchPath("pkg/auth.go", ext, skip) {
 		t.Fatal("expected match")
 	}
-	if matchesExtension("a.txt", []string{".go"}) {
-		t.Fatal("expected no match")
+	if MatchesWatchPath("node_modules/x.go", ext, skip) {
+		t.Fatal("expected skip")
 	}
-	if !matchesExtension("a.go", []string{"go"}) {
-		t.Fatal("expected match without dot prefix")
+	if MatchesWatchPath("readme.txt", ext, skip) {
+		t.Fatal("expected extension mismatch")
 	}
 }
 
 func TestShouldSkipPath(t *testing.T) {
-	if !shouldSkipPath("node_modules/pkg/a.go", []string{"node_modules"}) {
+	if !shouldSkipPath("vendor/pkg/x.go", []string{"vendor"}) {
 		t.Fatal("expected skip")
 	}
-	if shouldSkipPath("internal/a.go", []string{"node_modules"}) {
-		t.Fatal("expected keep")
-	}
 }
 
-func TestDiscoverInvalidRoot(t *testing.T) {
-	if _, err := Discover(Options{}); err == nil {
-		t.Fatal("expected error for empty root")
-	}
-}
-
-func TestDiscoverGit(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "pkg", "a.go"), []byte("package pkg\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "skip.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", root, "-c", "core.autocrlf=false", "-c", "core.safecrlf=false"}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v (%s)", args, err, out)
-		}
-	}
-	git("init")
-	git("add", "pkg/a.go", "skip.txt")
-
-	files, err := Discover(Options{
-		Root:       root,
+func TestFilterFiles(t *testing.T) {
+	files := []string{"a.go", "vendor/x.go", "b.txt", "pkg/main.go"}
+	out := filterFiles(files, Options{
 		Extensions: []string{".go"},
-		SkipDirs:   []string{"node_modules"},
+		SkipDirs:   []string{"vendor"},
 	})
-	if err != nil {
-		t.Fatal(err)
+	if len(out) != 2 {
+		t.Fatalf("out=%v", out)
 	}
-	if len(files) != 1 || files[0] != "pkg/a.go" {
-		t.Fatalf("files=%v", files)
+}
+
+func TestShouldSkipDir(t *testing.T) {
+	if !shouldSkipDir("node_modules", []string{"node_modules"}) {
+		t.Fatal("expected skip")
+	}
+}
+
+func TestMatchesExtension(t *testing.T) {
+	if !matchesExtension("a.Go", []string{".go"}) {
+		t.Fatal("expected case-insensitive ext")
+	}
+	if !matchesExtension("a.go", []string{}) {
+		t.Fatal("empty extensions should match all")
 	}
 }

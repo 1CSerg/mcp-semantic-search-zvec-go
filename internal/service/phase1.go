@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/watcher"
 )
 
 // Phase1 wires manifest read, optional OpenAI embed, zvec store, and Phase 2 indexer.
@@ -24,11 +26,16 @@ type Phase1 struct {
 	zvec        zvec.Store
 	zvecCfg     zvec.Config
 	coordinator *indexer.Coordinator
+	searchStats *SearchStats
+	watcherInst *watcher.Watcher
 }
 
 // NewPhase1 creates a Phase 1/2 service.
 func NewPhase1(settings *config.Settings) (*Phase1, error) {
-	p := &Phase1{Settings: settings}
+	p := &Phase1{
+		Settings:    settings,
+		searchStats: NewSearchStats(settings.App.Search),
+	}
 
 	profile, err := settings.ActiveProfile()
 	if err != nil {
@@ -171,12 +178,15 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 			"snippet":    h.Snippet,
 		})
 	}
+	totalMS := float64(time.Since(start).Milliseconds())
+	p.searchStats.Record(totalMS)
 	payload := map[string]any{
 		"query":   req.Query,
 		"results": results,
 		"timing": map[string]any{
-			"total_ms": float64(time.Since(start).Milliseconds()),
+			"total_ms": totalMS,
 		},
+		"performance": p.searchStats.Performance(totalMS),
 	}
 	return marshal(payload)
 }
@@ -219,13 +229,10 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"zvec_collection_path":    collectionPath,
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
-		"phase":                   "2",
+		"phase":                   "3",
 		"indexing":                idx.ToIndexingMap(),
-		"file_watcher": map[string]any{
-			"enabled_in_config": p.Settings.App.FileWatcher.Enabled,
-			"running":           false,
-		},
-		"search_performance": map[string]any{"samples": 0},
+		"file_watcher":            p.fileWatcherStatus(),
+		"search_performance":      p.searchStats.Snapshot(),
 		"diagnostics": map[string]any{
 			"log_dir": p.Settings.LogsDir(),
 		},
@@ -289,8 +296,21 @@ func (p *Phase1) Ready() error {
 	if p.isIndexingRunning() {
 		return fmt.Errorf("indexing in progress")
 	}
+	profile, err := p.Settings.ActiveProfile()
+	if err != nil {
+		return err
+	}
 	if p.embed == nil {
 		return fmt.Errorf("embedding provider not configured")
+	}
+	if !zvec.IndexMetaPresent(p.Settings.IndexDir) {
+		return fmt.Errorf("index not built yet")
+	}
+	if err := zvec.ValidateIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.App.ActiveProfile, profile.Dimensions); err != nil {
+		return err
+	}
+	if err := p.embed.HealthCheck(context.Background()); err != nil {
+		return fmt.Errorf("embeddings unreachable: %w", err)
 	}
 	if err := p.zvec.Open(); err != nil {
 		if errors.Is(err, zvec.ErrCollectionMissing) {
@@ -299,6 +319,23 @@ func (p *Phase1) Ready() error {
 		return err
 	}
 	return nil
+}
+
+// StartFileWatcher runs the background file watcher until ctx is cancelled.
+func (p *Phase1) StartFileWatcher(ctx context.Context) {
+	if p.coordinator == nil {
+		return
+	}
+	w, err := watcher.New(p.Settings, p.coordinator)
+	if err != nil {
+		slog.Warn("file watcher init failed", "err", err)
+		return
+	}
+	if w == nil {
+		return
+	}
+	p.watcherInst = w
+	go w.Start(ctx)
 }
 
 // StartAutoIndex triggers background indexing when AUTO_INDEX_ON_START is enabled.

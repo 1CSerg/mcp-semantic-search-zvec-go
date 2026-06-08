@@ -30,6 +30,29 @@ func TestChunkTypeForPath(t *testing.T) {
 	}
 }
 
+func TestFileChunksDefaultsAndEdges(t *testing.T) {
+	if got := FileChunks("a.go", nil, Options{}); len(got) != 0 {
+		t.Fatalf("nil content: %v", got)
+	}
+	if got := FileChunks("a.go", []byte("\n\n\n"), Options{WindowLines: 2, OverlapLines: 2}); len(got) != 0 {
+		t.Fatalf("whitespace only: %v", got)
+	}
+	chunks := FileChunks("cfg.yaml", []byte("k: v\n"), Options{})
+	if len(chunks) != 1 || chunks[0].ChunkType != "config" {
+		t.Fatalf("chunks=%+v", chunks)
+	}
+	if chunkTypeForPath("x.json") != "config" || chunkTypeForPath("x.toml") != "config" {
+		t.Fatal("expected config type")
+	}
+}
+
+func TestReadAndChunkMissingFile(t *testing.T) {
+	_, err := ReadAndChunk(t.TempDir(), "missing.go", Options{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestReadAndChunk(t *testing.T) {
 	root := t.TempDir()
 	rel := "pkg/a.go"

@@ -7,6 +7,49 @@ import (
 	"time"
 )
 
+func TestTryAcquireMkdirBlocked(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l := New(filepath.Join(blocked, "index"), 300)
+	if err := l.TryAcquire(); err == nil {
+		t.Fatal("expected mkdir error")
+	}
+}
+
+func TestNewDefaultStaleSeconds(t *testing.T) {
+	l := New(t.TempDir(), 0)
+	if l.staleSecs != 300 {
+		t.Fatalf("staleSecs=%v", l.staleSecs)
+	}
+}
+
+func TestIsStaleAliveProcess(t *testing.T) {
+	dir := t.TempDir()
+	l := New(dir, 300)
+	if err := l.TryAcquire(); err != nil {
+		t.Fatal(err)
+	}
+	_ = l.Release()
+
+	l2 := New(dir, 300)
+	if l2.isStale() {
+		t.Fatal("expected fresh lock from alive process")
+	}
+	if l2.ReclaimStale() {
+		t.Fatal("expected no reclaim for fresh lock")
+	}
+}
+
+func TestHeartbeatWithoutLock(t *testing.T) {
+	l := New(t.TempDir(), 300)
+	if err := l.Heartbeat(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestLockAcquireRelease(t *testing.T) {
 	dir := t.TempDir()
 	l := New(dir, 300)

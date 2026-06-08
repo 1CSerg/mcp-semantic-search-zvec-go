@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.9.1
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/zvec-ai/zvec-go v0.3.1
 	golang.org/x/sys v0.42.0

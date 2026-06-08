@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestOpenInvalidPath(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Open(filepath.Join(blocked, "manifest.db"))
+	if err == nil {
+		t.Fatal("expected open error")
+	}
+}
+
 func TestStatsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "manifest.db")

@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -51,6 +52,29 @@ func TestFinishError(t *testing.T) {
 	m := p.ToIndexingMap()
 	if m["error"] == nil || m["finished_at"] == nil {
 		t.Fatalf("map=%v", m)
+	}
+}
+
+func TestProgressLoadMissingFile(t *testing.T) {
+	store := NewProgressStore(t.TempDir())
+	p, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Running || p.State != StateIdle {
+		t.Fatalf("progress=%+v", p)
+	}
+}
+
+func TestProgressSaveBlocked(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewProgressStore(filepath.Join(blocked, "index"))
+	if err := store.Save(StartRunning(false)); err == nil {
+		t.Fatal("expected save error")
 	}
 }
 

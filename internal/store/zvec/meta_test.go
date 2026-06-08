@@ -34,6 +34,30 @@ func TestIndexMetaPathPresent(t *testing.T) {
 	}
 }
 
+func TestReadIndexMetaMissing(t *testing.T) {
+	_, err := ReadIndexMeta(t.TempDir())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestEnsureIndexMetaExisting(t *testing.T) {
+	dir := t.TempDir()
+	if err := EnsureIndexMeta(dir, "ws1", "/proj", "smoke", 128); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureIndexMeta(dir, "ws1", "/proj", "smoke", 128); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.WorkspaceID != "ws1" {
+		t.Fatalf("meta=%+v", meta)
+	}
+}
+
 func TestValidateIndexMetaDimensions(t *testing.T) {
 	dir := t.TempDir()
 	if err := EnsureIndexMeta(dir, "ws1", "/proj", "smoke", 128); err != nil {

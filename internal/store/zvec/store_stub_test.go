@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+func TestNewStubFactory(t *testing.T) {
+	s := New(Config{IndexDir: t.TempDir()})
+	if s == nil {
+		t.Fatal("nil store")
+	}
+	if err := s.WipeCollection(); !errors.Is(err, ErrNotLinked) {
+		t.Fatalf("WipeCollection: %v", err)
+	}
+}
+
 func TestStubStore(t *testing.T) {
 	s := NewStub()
 	if err := s.Close(); err != nil {

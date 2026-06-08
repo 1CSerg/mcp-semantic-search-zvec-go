@@ -136,6 +136,26 @@ func (failingService) Reindex(service.ReindexRequest) (json.RawMessage, error) {
 	return nil, errors.New("reindex failed")
 }
 
+type indexingConflictService struct {
+	service.Service
+}
+
+func (indexingConflictService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+	return json.RawMessage(`{"results":[],"indexing":{"running":true}}`), service.ErrIndexingInProgress
+}
+
+func TestHandlerSearchIndexingConflict(t *testing.T) {
+	settings := testSettings()
+	srv := New(settings, indexingConflictService{Service: service.NewStub(settings)})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/search", bytes.NewReader([]byte(`{"query":"x"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandlerServiceErrors(t *testing.T) {
 	settings := testSettings()
 	srv := New(settings, failingService{Service: service.NewStub(settings)})

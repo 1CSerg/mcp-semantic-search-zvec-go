@@ -12,6 +12,21 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
 )
 
+func TestRunCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	settings := &config.Settings{
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Profiles:      map[string]config.EmbeddingProfile{"test": {}},
+		},
+	}
+	err := Run(ctx, service.NewStub(settings))
+	if err == nil {
+		t.Fatal("expected error from cancelled context")
+	}
+}
+
 func TestTextResult(t *testing.T) {
 	res := textResult(`{"ok":true}`)
 	if len(res.Content) != 1 {
@@ -118,6 +133,43 @@ type failingMCPService struct {
 
 func (failingMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
 	return nil, errors.New("search failed")
+}
+
+type indexingMCPService struct {
+	service.Service
+}
+
+func (indexingMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+	return json.RawMessage(`{"results":[],"indexing":{"running":true}}`), service.ErrIndexingInProgress
+}
+
+func TestMCPToolHandlerIndexingConflict(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	registerTools(server, indexingMCPService{Service: service.NewStub(&config.Settings{
+		App: config.AppConfig{ActiveProfile: "x", Profiles: map[string]config.EmbeddingProfile{"x": {}}},
+	})})
+
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := client.Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "semantic_search",
+		Arguments: map[string]any{"query": "x"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatal("indexing conflict should return JSON payload, not tool error")
+	}
 }
 
 func TestMCPToolHandlerError(t *testing.T) {

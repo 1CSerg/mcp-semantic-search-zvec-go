@@ -72,6 +72,12 @@ func TestMatchesStaleStdio(t *testing.T) {
 	}
 }
 
+func TestCmdlineContainsWorkspaceEmpty(t *testing.T) {
+	if cmdlineContainsWorkspace("anything", "") {
+		t.Fatal("expected false for empty workspace")
+	}
+}
+
 func TestCmdlineContainsWorkspace(t *testing.T) {
 	ws := `/home/user/project`
 	if !cmdlineContainsWorkspace(`/home/user/project/bin/mcp-semantic-search-zvec-go --stdio`, ws) {

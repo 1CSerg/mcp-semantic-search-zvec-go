@@ -75,6 +75,33 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error)
 	return all, nil
 }
 
+// HealthCheck probes embeddings endpoint reachability with a short timeout.
+func (c *Client) HealthCheck(ctx context.Context) error {
+	base := strings.TrimRight(c.profile.BaseURL, "/")
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, base+"/models", nil)
+	if err != nil {
+		return err
+	}
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for k, v := range c.profile.ExtraHeaders {
+		req.Header.Set(k, v)
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("embeddings health probe: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("embeddings health probe HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // EmbedQuery embeds a single query string.
 func (c *Client) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 	vecs, err := c.Embed(ctx, []string{query})

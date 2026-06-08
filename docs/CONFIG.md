@@ -70,7 +70,7 @@ See profile `local_multilingual` in [config.yaml](../config.yaml).
 | `stall_seconds` | 120 | No progress → recovery |
 | `heartbeat_seconds` | 15 | Lock heartbeat interval |
 
-Planned env overrides (Phase 2+ indexer): `INDEX_LOCK_STALE_SECONDS`, `INDEXING_STALL_SECONDS` — not read in Phase 0 bootstrap.
+Env override: `INDEXING_STALL_SECONDS` (stall detection / stale progress recovery).
 
 ## search
 
@@ -81,7 +81,7 @@ Planned env overrides (Phase 2+ indexer): `INDEX_LOCK_STALE_SECONDS`, `INDEXING_
 | `stats_window` | 20 | Rolling metrics window |
 | `stats_min_samples` | 5 | Min samples before degrade compare |
 
-Planned env overrides (Phase 3 search metrics): `SEARCH_SLOW_THRESHOLD_SECONDS`, `SEARCH_DEGRADE_RATIO`, `SEARCH_STATS_WINDOW` — not read in Phase 0 bootstrap.
+Env overrides: `SEARCH_SLOW_THRESHOLD_SECONDS`, `SEARCH_DEGRADE_RATIO`, `SEARCH_STATS_WINDOW`.
 
 ## file_watcher
 
@@ -95,7 +95,7 @@ Planned env overrides (Phase 3 search metrics): `SEARCH_SLOW_THRESHOLD_SECONDS`,
 
 On Windows Docker bind-mounts use `backend: polling`.
 
-Planned env overrides (Phase 3 watcher): `FILE_WATCHER_ENABLED`, `FILE_WATCHER_BACKEND`, `FILE_WATCHER_POLL_INTERVAL_SECONDS` — not read in Phase 0 bootstrap.
+Env overrides: `FILE_WATCHER_ENABLED`, `FILE_WATCHER_BACKEND`, `FILE_WATCHER_POLL_INTERVAL_SECONDS`.
 
 ## logging
 
@@ -106,7 +106,7 @@ Planned env overrides (Phase 3 watcher): `FILE_WATCHER_ENABLED`, `FILE_WATCHER_B
 | `max_bytes` | 5242880 |
 | `backup_count` | 3 |
 
-Planned env overrides (Phase 3 file logging): `MCP_LOG_LEVEL`, `MCP_LOG_VERBOSE`, `MCP_LOG_MAX_BYTES`, `MCP_LOG_BACKUP_COUNT` — not read in Phase 0 bootstrap (logs go to stderr).
+Env overrides: `MCP_LOG_LEVEL`, `MCP_LOG_VERBOSE`, `MCP_LOG_MAX_BYTES`, `MCP_LOG_BACKUP_COUNT`. Logs: stderr + `data/logs/server.log`.
 
 ## server
 

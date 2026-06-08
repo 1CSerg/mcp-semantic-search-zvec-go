@@ -22,7 +22,24 @@ Liveness probe.
 
 #### `GET /ready`
 
-Readiness — index and embeddings reachable (Phase 3+).
+Readiness — index built, embeddings reachable, indexing idle.
+
+Success (`200`):
+
+```json
+{ "status": "ready" }
+```
+
+Not ready (`503`):
+
+```json
+{
+  "status": "not_ready",
+  "error": "indexing in progress"
+}
+```
+
+Common `error` values: `indexing in progress`, `embedding provider not configured`, `index not built yet`, `embeddings unreachable: ...`, `index_owner_mismatch: ...`.
 
 ---
 

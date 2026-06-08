@@ -76,6 +76,8 @@ func (c *Coordinator) CurrentProgress() Progress {
 
 // Start launches indexing in the background. Returns initial progress snapshot.
 func (c *Coordinator) Start(force bool) (Progress, error) {
+	_ = RecoverStalledProgress(c.Settings.IndexDir, c.Settings.App.Indexing.StallSeconds)
+
 	c.mu.Lock()
 	if c.running {
 		p := c.curProgress
@@ -166,11 +168,6 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		return err
 	}
 
-	c.updateProgress(func(p *Progress) {
-		p.FilesTotal = len(files)
-		p.Message = fmt.Sprintf("discovered %d files", len(files))
-	})
-
 	discovered := make(map[string]struct{}, len(files))
 	totalChunks := 0
 	heartbeat := time.Duration(c.Settings.App.Indexing.HeartbeatSeconds * float64(time.Second))
@@ -178,6 +175,13 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		heartbeat = 15 * time.Second
 	}
 	lastBeat := time.Now()
+	stallWatch := NewStallWatcher(c.Settings.App.Indexing.StallSeconds)
+
+	c.updateProgress(func(p *Progress) {
+		p.FilesTotal = len(files)
+		p.Message = fmt.Sprintf("discovered %d files", len(files))
+	})
+	stallWatch.Touch()
 
 	for i, rel := range files {
 		select {
@@ -185,12 +189,16 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 			return ctx.Err()
 		default:
 		}
+		if err := stallWatch.Check(); err != nil {
+			return err
+		}
 		discovered[rel] = struct{}{}
 		c.updateProgress(func(p *Progress) {
 			p.FilesDone = i
 			p.CurrentFile = rel
 			p.Message = fmt.Sprintf("indexing %s", rel)
 		})
+		stallWatch.Touch()
 
 		if err := c.indexFile(ctx, manStore, rel, force); err != nil {
 			return fmt.Errorf("%s: %w", rel, err)
@@ -201,6 +209,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 			c.updateProgress(func(p *Progress) {
 				p.ChunksIndexed = totalChunks
 			})
+			stallWatch.Touch()
 		}
 
 		if time.Since(lastBeat) >= heartbeat {
@@ -233,6 +242,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		p.FilesDone = len(files)
 		p.CurrentFile = ""
 	})
+	stallWatch.Touch()
 	return nil
 }
 

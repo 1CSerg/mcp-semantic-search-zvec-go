@@ -23,10 +23,11 @@ jobs:
       - name: Test
         run: go test -v -race -count=1 ./...
 
-      - name: Coverage check (min 80%)
+      - name: Coverage check (project min 88%, module min 50%)
         run: bash scripts/check-coverage.sh
         env:
-          COVERAGE_MIN: "80"
+          COVERAGE_MIN: "88"
+          COVERAGE_PKG_MIN: "50"
           COVERAGE_PACKAGES: "./internal/..."
 
       - name: go vet

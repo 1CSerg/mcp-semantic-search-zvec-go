@@ -123,11 +123,15 @@ func Load() (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
+	applyEnvOverrides(&app)
 
 	autoIndex := strings.EqualFold(envOr("AUTO_INDEX_ON_START", "false"), "true")
-	httpAddr := envOr("HTTP_ADDR", DefaultHTTPAddr)
+	httpAddr := DefaultHTTPAddr
 	if app.Server.HTTPAddr != "" {
 		httpAddr = app.Server.HTTPAddr
+	}
+	if v := os.Getenv("HTTP_ADDR"); v != "" {
+		httpAddr = v
 	}
 
 	return &Settings{
@@ -175,6 +179,18 @@ func applyAppDefaults(app *AppConfig) {
 	}
 	if app.Search.StatsWindow == 0 {
 		app.Search.StatsWindow = DefaultStatsWindow
+	}
+	if app.Search.StatsMinSamples == 0 {
+		app.Search.StatsMinSamples = 5
+	}
+	if app.Logging.Level == "" {
+		app.Logging.Level = "INFO"
+	}
+	if app.Logging.MaxBytes == 0 {
+		app.Logging.MaxBytes = 5242880
+	}
+	if app.Logging.BackupCount == 0 {
+		app.Logging.BackupCount = 3
 	}
 	if app.FileWatcher.DebounceSeconds == 0 {
 		app.FileWatcher.DebounceSeconds = DefaultWatcherDebounce
@@ -252,6 +268,50 @@ func ParseBoolEnv(v string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func applyEnvOverrides(app *AppConfig) {
+	if v := os.Getenv("SEARCH_SLOW_THRESHOLD_SECONDS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			app.Search.SlowThresholdSeconds = f
+		}
+	}
+	if v := os.Getenv("SEARCH_DEGRADE_RATIO"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			app.Search.DegradeRatio = f
+		}
+	}
+	if v := os.Getenv("SEARCH_STATS_WINDOW"); v != "" {
+		app.Search.StatsWindow = ParseIntEnv("SEARCH_STATS_WINDOW", app.Search.StatsWindow)
+	}
+	if v := os.Getenv("INDEXING_STALL_SECONDS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			app.Indexing.StallSeconds = f
+		}
+	}
+	if v := os.Getenv("FILE_WATCHER_ENABLED"); v != "" {
+		app.FileWatcher.Enabled = ParseBoolEnv(v)
+	}
+	if v := os.Getenv("FILE_WATCHER_BACKEND"); v != "" {
+		app.FileWatcher.Backend = v
+	}
+	if v := os.Getenv("FILE_WATCHER_POLL_INTERVAL_SECONDS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			app.FileWatcher.PollIntervalSeconds = f
+		}
+	}
+	if v := os.Getenv("MCP_LOG_LEVEL"); v != "" {
+		app.Logging.Level = v
+	}
+	if v := os.Getenv("MCP_LOG_VERBOSE"); v != "" {
+		app.Logging.Verbose = ParseBoolEnv(v)
+	}
+	if v := os.Getenv("MCP_LOG_MAX_BYTES"); v != "" {
+		app.Logging.MaxBytes = ParseIntEnv("MCP_LOG_MAX_BYTES", app.Logging.MaxBytes)
+	}
+	if v := os.Getenv("MCP_LOG_BACKUP_COUNT"); v != "" {
+		app.Logging.BackupCount = ParseIntEnv("MCP_LOG_BACKUP_COUNT", app.Logging.BackupCount)
 	}
 }
 

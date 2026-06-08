@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
 
 const killGrace = 300 * time.Millisecond
@@ -21,6 +23,13 @@ func PrepareStdio(settings *config.Settings) error {
 	}
 	for _, pid := range stopped {
 		slog.Info("stopped stale stdio mcp process", "pid", pid, "workspace", settings.WorkspaceRoot)
+	}
+	l := lock.New(settings.IndexDir, settings.App.Indexing.LockStaleSeconds)
+	if l.ReclaimStale() {
+		slog.Info("reclaimed stale index lock", "path", l.Path())
+	}
+	if err := indexer.RecoverStalledProgress(settings.IndexDir, settings.App.Indexing.StallSeconds); err != nil {
+		return err
 	}
 	return nil
 }
