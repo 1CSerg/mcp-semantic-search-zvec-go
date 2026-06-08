@@ -18,15 +18,22 @@ import (
 )
 
 type mockZvecStore struct {
-	hits []zvec.SearchHit
-	err  error
+	hits    []zvec.SearchHit
+	err     error
+	openErr error
 }
 
-func (m *mockZvecStore) Open() error                                  { return nil }
+func (m *mockZvecStore) Open() error {
+	if m.openErr != nil {
+		return m.openErr
+	}
+	return nil
+}
 func (m *mockZvecStore) Close() error                                 { return nil }
 func (m *mockZvecStore) DocCount() (int, error)                       { return len(m.hits), nil }
 func (m *mockZvecStore) UpsertChunks([]zvec.Chunk, [][]float32) error { return nil }
 func (m *mockZvecStore) DeleteByIDs([]string) error                   { return nil }
+func (m *mockZvecStore) WipeCollection() error                        { return nil }
 func (m *mockZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -120,7 +127,7 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["phase"] != "1" {
+	if payload["phase"] != "2" {
 		t.Fatalf("phase=%v", payload["phase"])
 	}
 }
@@ -245,6 +252,7 @@ func TestPhase1ReindexCheckUpdateReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	p.zvec = &mockZvecStore{}
 	if err := p.Ready(); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
@@ -317,5 +325,86 @@ func TestPhase1GetIndexStatusWithManifest(t *testing.T) {
 	}
 	if payload["indexed_files"] != float64(1) {
 		t.Fatalf("indexed_files=%v", payload["indexed_files"])
+	}
+}
+
+func TestSemanticSearchWhileIndexing(t *testing.T) {
+	p, err := NewPhase1(phase1Settings(t, "http://127.0.0.1:9/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &mockZvecStore{}
+	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
+	if err != ErrIndexingInProgress {
+		t.Fatalf("err=%v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := payload["indexing"].(map[string]any)
+	if idx == nil || idx["running"] != true {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestReindexNoCoordinator(t *testing.T) {
+	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
+	settings.App.ActiveProfile = ""
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := p.Reindex(ReindexRequest{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["started"] != false {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestReadyWhenIndexing(t *testing.T) {
+	p, err := NewPhase1(phase1Settings(t, "http://127.0.0.1:9/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &mockZvecStore{}
+	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Ready(); err == nil {
+		t.Fatal("expected indexing in progress error")
+	}
+}
+
+func TestStartAutoIndex(t *testing.T) {
+	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
+	settings.AutoIndexOnStart = true
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.StartAutoIndex()
+	if p.coordinator == nil {
+		t.Fatal("expected coordinator")
+	}
+}
+
+func TestReadyMissingCollection(t *testing.T) {
+	p, err := NewPhase1(phase1Settings(t, "http://127.0.0.1:9/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &mockZvecStore{openErr: zvec.ErrCollectionMissing}
+	if err := p.Ready(); err == nil || err.Error() != "index not built yet" {
+		t.Fatalf("Ready: %v", err)
 	}
 }

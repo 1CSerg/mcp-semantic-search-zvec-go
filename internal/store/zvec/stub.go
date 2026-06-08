@@ -21,3 +21,4 @@ func (s *StubStore) DeleteByIDs([]string) error              { return ErrNotLink
 func (s *StubStore) Search([]float32, int, string) ([]SearchHit, error) {
 	return nil, ErrNotLinked
 }
+func (s *StubStore) WipeCollection() error { return ErrNotLinked }

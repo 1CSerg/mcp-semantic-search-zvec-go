@@ -1,0 +1,94 @@
+package zvec
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+)
+
+// IndexMeta binds an index directory to a workspace owner.
+type IndexMeta struct {
+	WorkspaceID          string `json:"workspace_id"`
+	WorkspaceRoot        string `json:"workspace_root"`
+	WorkspaceFingerprint string `json:"workspace_fingerprint"`
+	EmbeddingProfile     string `json:"embedding_profile"`
+	EmbeddingDimensions  int    `json:"embedding_dimensions"`
+	CollectionName       string `json:"collection_name"`
+	CreatedAt            string `json:"created_at"`
+	UpdatedAt            string `json:"updated_at"`
+}
+
+// ReadIndexMeta loads index_meta.json.
+func ReadIndexMeta(indexDir string) (*IndexMeta, error) {
+	path := IndexMetaPath(indexDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var meta IndexMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, err
+	}
+	return &meta, nil
+}
+
+// WriteIndexMeta writes index_meta.json.
+func WriteIndexMeta(indexDir string, meta IndexMeta) error {
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if meta.CreatedAt == "" {
+		meta.CreatedAt = now
+	}
+	meta.UpdatedAt = now
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := IndexMetaPath(indexDir) + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, IndexMetaPath(indexDir))
+}
+
+// ValidateIndexMeta checks owner/profile/dimensions match.
+func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions int) error {
+	if !IndexMetaPresent(indexDir) {
+		return nil
+	}
+	meta, err := ReadIndexMeta(indexDir)
+	if err != nil {
+		return fmt.Errorf("read index_meta: %w", err)
+	}
+	if meta.WorkspaceID != "" && workspaceID != "" && meta.WorkspaceID != workspaceID {
+		return fmt.Errorf("index_owner_mismatch: index belongs to workspace_id %q, current is %q", meta.WorkspaceID, workspaceID)
+	}
+	if meta.EmbeddingProfile != "" && profile != "" && meta.EmbeddingProfile != profile {
+		return fmt.Errorf("index profile mismatch: %q vs %q", meta.EmbeddingProfile, profile)
+	}
+	if meta.EmbeddingDimensions > 0 && dimensions > 0 && meta.EmbeddingDimensions != dimensions {
+		return fmt.Errorf("index dimensions mismatch: %d vs %d", meta.EmbeddingDimensions, dimensions)
+	}
+	return nil
+}
+
+// EnsureIndexMeta creates or validates index_meta.json.
+func EnsureIndexMeta(indexDir, workspaceID, workspaceRoot, profile string, dimensions int) error {
+	if err := ValidateIndexMeta(indexDir, workspaceID, profile, dimensions); err != nil {
+		return err
+	}
+	if IndexMetaPresent(indexDir) {
+		return nil
+	}
+	return WriteIndexMeta(indexDir, IndexMeta{
+		WorkspaceID:          workspaceID,
+		WorkspaceRoot:        workspaceRoot,
+		WorkspaceFingerprint: CollectionName(workspaceRoot, profile, dimensions),
+		EmbeddingProfile:     profile,
+		EmbeddingDimensions:  dimensions,
+		CollectionName:       CollectionName(workspaceRoot, profile, dimensions),
+	})
+}

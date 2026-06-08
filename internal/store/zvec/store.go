@@ -46,6 +46,7 @@ type Store interface {
 	UpsertChunks(chunks []Chunk, vectors [][]float32) error
 	DeleteByIDs(ids []string) error
 	Search(vector []float32, topK int, pathGlob string) ([]SearchHit, error)
+	WipeCollection() error
 }
 
 // Config identifies a workspace zvec collection.

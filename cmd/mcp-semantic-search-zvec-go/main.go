@@ -65,6 +65,9 @@ func run() int {
 	var svc service.Service = service.NewStub(settings)
 	if phase1, err := service.NewPhase1(settings); err == nil {
 		svc = phase1
+		if settings.AutoIndexOnStart {
+			phase1.StartAutoIndex()
+		}
 	} else {
 		slog.Warn("phase1 service init failed, using stub", "err", err)
 	}

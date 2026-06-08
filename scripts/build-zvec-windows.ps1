@@ -38,7 +38,10 @@ Push-Location $RepoRoot
 try {
     New-Item -ItemType Directory -Force -Path bin | Out-Null
     go build -tags zvec -o bin\mcp-semantic-search-zvec-go.exe .\cmd\mcp-semantic-search-zvec-go
-    Copy-Item -Force (Join-Path $LibDir "zvec_c_api.dll") bin\
+    $dllDst = Join-Path $LibDir "zvec_c_api.dll"
+    if (Test-Path $dllDst) {
+        Copy-Item -Force $dllDst bin\ -ErrorAction SilentlyContinue
+    }
     Write-Host "Built bin\mcp-semantic-search-zvec-go.exe"
 } finally {
     Pop-Location

@@ -5,11 +5,52 @@
 | Способ | Результат | Примечание |
 |--------|-----------|------------|
 | Docker (`run-spike-docker-inner.sh`) | **PASS** | `fetch-zvec-libs` + integration tests ~16 с |
-| CI job `zvec-integration` | **PASS** (локально) | Эквивалент Docker spike; push на GitHub — после merge |
+| CI job `zvec-integration` | **PASS** | GitHub Actions + Docker spike |
 | Windows native (MinGW CGO) | **PASS** | `scripts/build-zvec-windows.ps1`; WinLibs gcc + vendor DLL |
+| Phase 1 gate smoke | **PASS** | `scripts/smoke-phase1.ps1` — seed-index → `/v1/search` |
+| Phase 2 gate smoke | **PASS** | `scripts/smoke-phase2.ps1` — empty project → reindex → `/v1/search` |
 | Legacy `make deps` (danieleugenewilliams) | Deprecated | Заменён vendor mode |
 
-**Вывод:** spike checklist (integration `-tags integration,zvec`) **пройден** в Docker/Linux и на Windows native.
+**Вывод:** spike checklist и Phase 1 gate **пройдены** (Docker/Linux, Windows native, HTTP search).
+
+---
+
+## Phase 1 gate smoke (2026-06-08)
+
+### Команда
+
+```powershell
+.\scripts\smoke-phase1.ps1
+```
+
+### Результат
+
+```
+seeded 100 chunks at .../mcp-zvec-smoke-index/zvec/ws_...
+PASS Phase 1 smoke: 5 results, top score=0
+  path=internal/module/file_0.go snippet=seed snippet 0 about authentication
+```
+
+Mock embeddings: `scripts/smoke/mock-embed.go` + `scripts/smoke/config.yaml` (128 dims, без внешнего API).
+
+---
+
+## Phase 2 gate smoke (2026-06-08)
+
+### Команда
+
+```powershell
+.\scripts\smoke-phase2.ps1
+```
+
+### Результат
+
+```
+PASS Phase 2 smoke: reindex + search (1 results)
+  path=pkg/auth.go
+```
+
+Пустой temp-проект с одним Go-файлом → `POST /v1/reindex` → poll `/v1/status` idle → `POST /v1/search` возвращает ranked chunk.
 
 ---
 

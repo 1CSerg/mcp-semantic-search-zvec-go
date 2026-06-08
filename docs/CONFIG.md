@@ -124,7 +124,7 @@ Override with `HTTP_ADDR` env.
 | `WORKSPACE_ID` | `WORKSPACE_ROOT` | Stable owner ID in index_meta |
 | `INDEX_DIR` | `.mcp-semantic-search-zvec-go/data/index` | Index storage |
 | `CONFIG_PATH` | `.mcp-semantic-search-zvec-go/config.yaml` | Config file |
-| `AUTO_INDEX_ON_START` | false / true at install | Background index on start (Phase 2 indexer; loaded but not wired in Phase 0) |
+| `AUTO_INDEX_ON_START` | false / true at install | Background index on start via `reindex` coordinator |
 | `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | For check_update |
 | `HTTP_ADDR` | `:8080` | HTTP bind |
 | `API_TOKEN` | — | HTTP Bearer auth (set in `.env`) |

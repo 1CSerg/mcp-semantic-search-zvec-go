@@ -1,6 +1,6 @@
 # Roadmap
 
-## Phase 0 — Bootstrap ✅ (current)
+## Phase 0 — Bootstrap ✅
 
 **Goal:** Compilable repo, docs, CI skeleton, MCP + HTTP stubs.
 
@@ -11,7 +11,7 @@
 | HTTP `/health`, `/v1/*` (stub) | Done |
 | docs/, config.yaml, install templates | Done |
 
-**Gate:** CI green on push.
+**Gate:** CI green on push — ✅ (2026-06-08).
 
 ---
 
@@ -27,28 +27,28 @@
 | `internal/store/manifest` | Read SQLite manifest | Done |
 | Wire `service` | Phase1 search + status | Done |
 
-**Gate:** `make seed-index` + `make build-zvec` → HTTP `/v1/search` returns ranked results.
+**Gate:** `make seed-index` + `make build-zvec` → HTTP `/v1/search` returns ranked results — ✅ (2026-06-08, `scripts/smoke-phase1.*`).
 
 ---
 
-## Phase 2 — Indexer write path
+## Phase 2 — Indexer write path ✅
 
 **Goal:** Full incremental indexing in Go.
 
-| Task | Criteria |
-|------|----------|
-| `internal/indexer/scan` | git ls-files + walk; gitignore |
-| `internal/indexer/chunk` | tree-sitter + markdown + window fallback |
-| `internal/lock` | index.lock + progress.json |
-| `reindex` MCP + HTTP | Background job, status polling |
-| Install scripts | Production binary download, Cursor wiring |
-| `check_update` | GitHub releases API |
+| Task | Criteria | Status |
+|------|----------|--------|
+| `internal/indexer/scan` | git ls-files + walk; extensions/skip_dirs | Done |
+| `internal/indexer/chunk` | window fallback (tree-sitter later) | Done |
+| `internal/lock` | index.lock + progress.json | Done |
+| `reindex` MCP + HTTP | Background job, status polling | Done |
+| Install scripts | Production binary download, Cursor wiring | Pending |
+| `check_update` | GitHub releases API | Stub |
 
-**Gate:** Empty project → `reindex` → searchable in IDE.
+**Gate:** Empty project → `reindex` → searchable in IDE — ✅ (`scripts/smoke-phase2.*`).
 
 ---
 
-## Phase 3 — Resilience + watcher
+## Phase 3 — Resilience + watcher **(current)**
 
 **Goal:** Production stability per-project mode.
 
@@ -72,7 +72,7 @@
 |------|----------|
 | `internal/embeddings/onnx` | onnxruntime_go + bundled model |
 | Docker multi-stage | GHCR image |
-| Release workflow | Windows/Linux/macOS binaries attached |
+| Release workflow | Windows/Linux/macOS binaries with zvec vendor libs |
 
 **Gate:** `local_multilingual` profile works without external API.
 

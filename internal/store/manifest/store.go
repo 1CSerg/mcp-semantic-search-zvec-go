@@ -80,3 +80,56 @@ func (s *Store) Get(relativePath string) (*FileEntry, error) {
 	_ = json.Unmarshal([]byte(docIDsJSON), &e.DocIDs)
 	return &e, nil
 }
+
+// Upsert inserts or replaces a manifest row.
+func (s *Store) Upsert(e FileEntry) error {
+	docIDs, err := json.Marshal(e.DocIDs)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO file_manifest (relative_path, mtime_ns, size, chunk_count, doc_ids)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(relative_path) DO UPDATE SET
+			mtime_ns = excluded.mtime_ns,
+			size = excluded.size,
+			chunk_count = excluded.chunk_count,
+			doc_ids = excluded.doc_ids
+	`, e.RelativePath, e.MtimeNs, e.Size, e.ChunkCount, string(docIDs))
+	return err
+}
+
+// Delete removes a manifest row.
+func (s *Store) Delete(relativePath string) error {
+	_, err := s.db.Exec(`DELETE FROM file_manifest WHERE relative_path = ?`, relativePath)
+	return err
+}
+
+// List returns all manifest entries.
+func (s *Store) List() ([]FileEntry, error) {
+	rows, err := s.db.Query(`
+		SELECT relative_path, mtime_ns, size, chunk_count, doc_ids
+		FROM file_manifest ORDER BY relative_path
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileEntry
+	for rows.Next() {
+		var e FileEntry
+		var docIDsJSON string
+		if err := rows.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(docIDsJSON), &e.DocIDs)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Clear removes all manifest rows.
+func (s *Store) Clear() error {
+	_, err := s.db.Exec(`DELETE FROM file_manifest`)
+	return err
+}

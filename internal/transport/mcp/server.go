@@ -2,6 +2,7 @@ package mcptransport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -41,7 +42,7 @@ func registerTools(server *mcp.Server, svc service.Service) {
 		_ = ctx
 		_ = req
 		raw, err := svc.SemanticSearch(input)
-		if err != nil {
+		if err != nil && !errors.Is(err, service.ErrIndexingInProgress) {
 			return toolError(err)
 		}
 		return textResult(string(raw)), nil, nil

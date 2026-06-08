@@ -1,4 +1,4 @@
-.PHONY: build build-zvec fetch-zvec-libs test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime
+.PHONY: build build-zvec fetch-zvec-libs test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
@@ -37,6 +37,12 @@ build-zvec: fetch-zvec-libs copy-zvec-runtime
 	. $(ZVEC_ENV) && \
 	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$LD_LIBRARY_PATH" \
 	go build $(ZVEC_TAGS) -o bin/$(BINARY) $(CMD)
+
+smoke-phase1: build-zvec
+	bash scripts/smoke-phase1.sh
+
+smoke-phase2: build-zvec
+	bash scripts/smoke-phase2.sh
 
 seed-index: fetch-zvec-libs
 	. $(ZVEC_ENV) && \

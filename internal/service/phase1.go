@@ -11,20 +11,22 @@ import (
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings/openai"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
-// Phase1 wires manifest read, optional OpenAI embed, and zvec store.
+// Phase1 wires manifest read, optional OpenAI embed, zvec store, and Phase 2 indexer.
 type Phase1 struct {
-	Settings *config.Settings
-	embed    *openai.Client
-	zvec     zvec.Store
-	zvecCfg  zvec.Config
+	Settings    *config.Settings
+	embed       *openai.Client
+	zvec        zvec.Store
+	zvecCfg     zvec.Config
+	coordinator *indexer.Coordinator
 }
 
-// NewPhase1 creates a Phase 1 service.
+// NewPhase1 creates a Phase 1/2 service.
 func NewPhase1(settings *config.Settings) (*Phase1, error) {
 	p := &Phase1{Settings: settings}
 
@@ -53,6 +55,7 @@ func NewPhase1(settings *config.Settings) (*Phase1, error) {
 			return nil, err
 		}
 		p.embed = c
+		p.coordinator = indexer.NewCoordinator(settings, profile, c, p.zvec, p.zvecCfg)
 	}
 	return p, nil
 }
@@ -74,6 +77,25 @@ func (p *Phase1) manifestStats() (files, chunks int) {
 	return f, c
 }
 
+func (p *Phase1) indexingProgress() indexer.Progress {
+	if p.coordinator != nil {
+		return p.coordinator.CurrentProgress()
+	}
+	store := indexer.NewProgressStore(p.Settings.IndexDir)
+	pgr, err := store.Load()
+	if err != nil {
+		return indexer.Progress{State: indexer.StateIdle, Running: false}
+	}
+	return pgr
+}
+
+func (p *Phase1) isIndexingRunning() bool {
+	if p.coordinator != nil {
+		return p.coordinator.IsRunning()
+	}
+	return p.indexingProgress().Running
+}
+
 func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 	start := time.Now()
 	limit := req.Limit
@@ -82,6 +104,20 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 	}
 	if limit == 0 {
 		limit = config.DefaultSearchLimit
+	}
+
+	idx := p.indexingProgress()
+	if idx.Running {
+		raw, mErr := marshal(map[string]any{
+			"query":    req.Query,
+			"results":  []any{},
+			"indexing": idx.ToIndexingMap(),
+			"message":  "indexing in progress",
+		})
+		if mErr != nil {
+			return nil, mErr
+		}
+		return raw, ErrIndexingInProgress
 	}
 
 	if p.embed == nil {
@@ -166,6 +202,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		zvecErr = err.Error()
 	}
 
+	idx := p.indexingProgress()
 	payload := map[string]any{
 		"workspace_root":          p.Settings.WorkspaceRoot,
 		"index_dir":               p.Settings.IndexDir,
@@ -182,11 +219,8 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"zvec_collection_path":    collectionPath,
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
-		"phase":                   "1",
-		"indexing": map[string]any{
-			"state":   "idle",
-			"running": false,
-		},
+		"phase":                   "2",
+		"indexing":                idx.ToIndexingMap(),
 		"file_watcher": map[string]any{
 			"enabled_in_config": p.Settings.App.FileWatcher.Enabled,
 			"running":           false,
@@ -209,10 +243,36 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 }
 
 func (p *Phase1) Reindex(req ReindexRequest) (json.RawMessage, error) {
+	if p.coordinator == nil {
+		return marshal(map[string]any{
+			"started": false,
+			"force":   req.Force,
+			"message": "embedding provider not configured for indexing",
+		})
+	}
+	if p.coordinator.IsRunning() {
+		idx := p.coordinator.CurrentProgress()
+		return marshal(map[string]any{
+			"started":  false,
+			"force":    req.Force,
+			"message":  "indexing already running",
+			"progress": idx.ToIndexingMap(),
+		})
+	}
+	pgr, err := p.coordinator.Start(req.Force)
+	if err != nil {
+		return marshal(map[string]any{
+			"started":  false,
+			"force":    req.Force,
+			"message":  err.Error(),
+			"progress": pgr.ToIndexingMap(),
+		})
+	}
 	return marshal(map[string]any{
-		"started": false,
-		"force":   req.Force,
-		"message": "indexer write path — Phase 2",
+		"started":  true,
+		"force":    req.Force,
+		"message":  "indexing started",
+		"progress": pgr.ToIndexingMap(),
 	})
 }
 
@@ -226,7 +286,27 @@ func (p *Phase1) CheckUpdate() (json.RawMessage, error) {
 }
 
 func (p *Phase1) Ready() error {
+	if p.isIndexingRunning() {
+		return fmt.Errorf("indexing in progress")
+	}
+	if p.embed == nil {
+		return fmt.Errorf("embedding provider not configured")
+	}
+	if err := p.zvec.Open(); err != nil {
+		if errors.Is(err, zvec.ErrCollectionMissing) {
+			return fmt.Errorf("index not built yet")
+		}
+		return err
+	}
 	return nil
+}
+
+// StartAutoIndex triggers background indexing when AUTO_INDEX_ON_START is enabled.
+func (p *Phase1) StartAutoIndex() {
+	if p.coordinator == nil || !p.Settings.AutoIndexOnStart {
+		return
+	}
+	_, _ = p.coordinator.Start(false)
 }
 
 func derefString(p *string) string {

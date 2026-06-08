@@ -55,7 +55,7 @@ internal/
   transport/http/                   # REST
   store/zvec/                       # Phase 1 — zvec-go
   embeddings/                     # Phase 1/4
-  indexer/                          # Phase 2
+  indexer/                          # scan, chunk, coordinator (Phase 2)
 docs/
 scripts/                            # install
 templates/                          # MCP fragments
@@ -104,6 +104,22 @@ docker run --rm -v "${PWD}:/src" -w /src golang:1.26.3-bookworm bash /src/script
 ```
 
 First run ~2–3 min (clone + download libs). Results: [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
+
+**Phase 1 gate smoke** (seed-index → HTTP search, mock embeddings):
+
+```powershell
+.\scripts\smoke-phase1.ps1
+```
+
+Linux: `make smoke-phase1`
+
+**Phase 2 gate smoke** (empty project → reindex → HTTP search):
+
+```powershell
+.\scripts\smoke-phase2.ps1
+```
+
+Linux: `make smoke-phase2`
 
 Production build:
 

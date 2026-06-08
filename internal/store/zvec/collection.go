@@ -208,6 +208,19 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 	return hits, nil
 }
 
+// WipeCollection removes the on-disk collection directory.
+func (s *CollectionStore) WipeCollection() error {
+	if err := s.Close(); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(s.path); err != nil {
+		return fmt.Errorf("remove collection: %w", err)
+	}
+	s.open = false
+	s.readOnly = false
+	return nil
+}
+
 func (s *CollectionStore) ensureWritable() error {
 	if err := s.openCollection(false); err != nil {
 		return err

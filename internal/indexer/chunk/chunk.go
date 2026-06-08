@@ -1,0 +1,103 @@
+package chunk
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+)
+
+const defaultWindowLines = 40
+const defaultOverlapLines = 8
+
+// Options configures chunk splitting.
+type Options struct {
+	WindowLines  int
+	OverlapLines int
+}
+
+// FileChunks splits a file into searchable chunks.
+func FileChunks(relativePath string, content []byte, opts Options) []zvec.Chunk {
+	window := opts.WindowLines
+	if window <= 0 {
+		window = defaultWindowLines
+	}
+	overlap := opts.OverlapLines
+	if overlap <= 0 {
+		overlap = defaultOverlapLines
+	}
+	if overlap >= window {
+		overlap = window / 4
+	}
+
+	lines := strings.Split(string(content), "\n")
+	if len(lines) == 0 {
+		return nil
+	}
+	chunkType := chunkTypeForPath(relativePath)
+	var chunks []zvec.Chunk
+	for start := 0; start < len(lines); start += window - overlap {
+		end := start + window
+		if end > len(lines) {
+			end = len(lines)
+		}
+		if start >= end {
+			break
+		}
+		snippet := strings.Join(lines[start:end], "\n")
+		if strings.TrimSpace(snippet) == "" {
+			if end == len(lines) {
+				break
+			}
+			continue
+		}
+		startLine := int64(start + 1)
+		endLine := int64(end)
+		docID := docID(relativePath, startLine, endLine)
+		name := filepath.Base(relativePath)
+		chunks = append(chunks, zvec.Chunk{
+			DocID:        docID,
+			RelativePath: filepath.ToSlash(relativePath),
+			StartLine:    startLine,
+			EndLine:      endLine,
+			ChunkType:    chunkType,
+			Name:         name,
+			Snippet:      snippet,
+		})
+		if end == len(lines) {
+			break
+		}
+	}
+	return chunks
+}
+
+// ReadAndChunk reads a file from disk and returns chunks.
+func ReadAndChunk(root, relativePath string, opts Options) ([]zvec.Chunk, error) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relativePath)))
+	if err != nil {
+		return nil, err
+	}
+	return FileChunks(relativePath, data, opts), nil
+}
+
+func docID(relativePath string, startLine, endLine int64) string {
+	raw := fmt.Sprintf("%s:%d:%d", relativePath, startLine, endLine)
+	sum := sha256.Sum256([]byte(raw))
+	return "doc_" + hex.EncodeToString(sum[:])[:16]
+}
+
+func chunkTypeForPath(rel string) string {
+	ext := strings.ToLower(filepath.Ext(rel))
+	switch ext {
+	case ".md", ".markdown":
+		return "markdown"
+	case ".yaml", ".yml", ".json", ".toml":
+		return "config"
+	default:
+		return "code"
+	}
+}
