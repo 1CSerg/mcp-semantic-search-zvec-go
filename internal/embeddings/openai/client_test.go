@@ -153,9 +153,9 @@ func TestHealthCheck(t *testing.T) {
 func TestNewClientAPIKeyEnv(t *testing.T) {
 	t.Setenv("TEST_EMBED_KEY", "secret-key")
 	c, err := NewClient(config.EmbeddingProfile{
-		Model:      "test",
-		BaseURL:    "http://127.0.0.1:9/v1",
-		APIKeyEnv:  "TEST_EMBED_KEY",
+		Model:          "test",
+		BaseURL:        "http://127.0.0.1:9/v1",
+		APIKeyEnv:      "TEST_EMBED_KEY",
 		TimeoutSeconds: 30,
 	})
 	if err != nil {

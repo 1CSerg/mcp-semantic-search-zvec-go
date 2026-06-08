@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestAddWatchTree(t *testing.T) {

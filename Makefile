@@ -1,4 +1,4 @@
-.PHONY: build build-zvec fetch-zvec-libs test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3
+.PHONY: build build-zvec fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
@@ -6,8 +6,10 @@ COVERAGE_MIN ?= 88
 COVERAGE_PKG_MIN ?= 50
 COVERAGE_PACKAGES ?= ./internal/...
 ZVEC_TAGS := -tags zvec
+PRODUCTION_TAGS := -tags "zvec,onnx"
 INTEGRATION_TAGS := -tags "integration,zvec"
 ZVEC_ENV := .deps/zvec-lib.env
+ORT_ENV := .deps/onnxruntime.env
 
 setup-hooks:
 	@git config core.autocrlf false
@@ -19,6 +21,12 @@ setup-hooks:
 
 fetch-zvec-libs:
 	bash scripts/fetch-zvec-libs.sh > $(ZVEC_ENV)
+
+fetch-onnx-model:
+	bash scripts/fetch-onnx-model.sh
+
+fetch-onnx-runtime:
+	bash scripts/fetch-onnx-runtime.sh > $(ORT_ENV)
 
 copy-zvec-runtime: fetch-zvec-libs
 	@. $(ZVEC_ENV) && \
@@ -34,10 +42,11 @@ copy-zvec-runtime: fetch-zvec-libs
 build:
 	go build -o bin/$(BINARY) $(CMD)
 
-build-zvec: fetch-zvec-libs copy-zvec-runtime
-	. $(ZVEC_ENV) && \
-	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$LD_LIBRARY_PATH" \
-	go build $(ZVEC_TAGS) -o bin/$(BINARY) $(CMD)
+build-zvec: fetch-zvec-libs fetch-onnx-runtime copy-zvec-runtime
+	. $(ZVEC_ENV) && . $(ORT_ENV) && \
+	CGO_ENABLED=1 LD_LIBRARY_PATH="$$ZVEC_LIB_DIR:$$ORT_LIB_DIR:$$LD_LIBRARY_PATH" \
+	go build $(PRODUCTION_TAGS) -o bin/$(BINARY) $(CMD)
+	. $(ORT_ENV) && cp -f "$$ONNXRUNTIME_SHARED_LIBRARY_PATH" bin/ 2>/dev/null || true
 
 smoke-phase1: build-zvec
 	bash scripts/smoke-phase1.sh
@@ -47,6 +56,9 @@ smoke-phase2: build-zvec
 
 smoke-phase3: build-zvec
 	bash scripts/smoke-phase3.sh
+
+smoke-phase4: build-zvec fetch-onnx-model
+	bash scripts/smoke-phase4.sh
 
 seed-index: fetch-zvec-libs
 	. $(ZVEC_ENV) && \

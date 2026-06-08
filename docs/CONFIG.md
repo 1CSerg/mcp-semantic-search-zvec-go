@@ -58,7 +58,37 @@ Docker → host LM Studio: `http://host.docker.internal:1234/v1`
 
 ### onnx (Phase 4)
 
-See profile `local_multilingual` in [config.yaml](../config.yaml).
+Profile `local_multilingual` in [config.yaml](../config.yaml) runs fully offline after the model bundle is downloaded.
+
+| Item | Value |
+|------|-------|
+| Provider | `onnx` |
+| Model bundle dir | `model_path` in profile (default `.mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2`) |
+| Required files | `model_optimized.onnx`, `tokenizer.json` |
+| Dimensions | Must match model output (384 for default bundle) |
+| Runtime | ONNX Runtime shared library next to binary or via `ONNXRUNTIME_SHARED_LIBRARY_PATH` / `ORT_LIB_DIR` |
+
+Download model bundle:
+
+```powershell
+.\scripts\fetch-onnx-model.ps1 -DestDir .\.mcp-semantic-search-zvec-go\models\paraphrase-multilingual-MiniLM-L12-v2
+```
+
+```bash
+bash scripts/fetch-onnx-model.sh .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
+```
+
+Install with model fetch (when `active_profile: local_multilingual` or explicit flag):
+
+```powershell
+& scripts\install.ps1 -FetchONNXModel
+```
+
+```bash
+FETCH_ONNX_MODEL=1 bash scripts/install.sh
+```
+
+Production build tags: `-tags "zvec,onnx"`. Default unit tests use stub ONNX (`go test ./...`); smoke/release use production tags.
 
 ## indexing
 

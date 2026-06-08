@@ -2,6 +2,7 @@
 set -euo pipefail
 
 TARGET_ROOT="${TARGET_ROOT:-$(pwd)}"
+FETCH_ONNX_MODEL="${FETCH_ONNX_MODEL:-0}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INSTALL_DIR="$TARGET_ROOT/.mcp-semantic-search-zvec-go"
 BIN_DIR="$INSTALL_DIR/bin"
@@ -19,6 +20,11 @@ echo "Installing mcp-semantic-search-zvec-go v${VERSION} into ${INSTALL_DIR}"
 mkdir -p "$BIN_DIR" "$INSTALL_DIR/data/index" "$INSTALL_DIR/data/logs" "$INSTALL_DIR/models"
 cp -f "$REPO_ROOT/config.yaml" "$INSTALL_DIR/config.yaml"
 
+MODEL_DIR="$INSTALL_DIR/models/paraphrase-multilingual-MiniLM-L12-v2"
+if [[ "$FETCH_ONNX_MODEL" == "1" ]] || grep -q 'active_profile: local_multilingual' "$INSTALL_DIR/config.yaml" 2>/dev/null; then
+  bash "$REPO_ROOT/scripts/fetch-onnx-model.sh" "$MODEL_DIR"
+fi
+
 ENV_FILE="$INSTALL_DIR/.env"
 if [[ ! -f "$ENV_FILE" && -f "$TEMPLATES/env.example" ]]; then
   cp -f "$TEMPLATES/env.example" "$ENV_FILE"
@@ -31,21 +37,30 @@ if [[ -x "$REPO_ROOT/bin/$BINARY_NAME" ]]; then
   chmod +x "$DST_BIN"
 else
   bash "$REPO_ROOT/scripts/fetch-zvec-libs.sh" > "$REPO_ROOT/.deps/zvec-lib.env"
+  bash "$REPO_ROOT/scripts/fetch-onnx-runtime.sh" > "$REPO_ROOT/.deps/onnxruntime.env"
   # shellcheck disable=SC1091
   . "$REPO_ROOT/.deps/zvec-lib.env"
+  # shellcheck disable=SC1091
+  . "$REPO_ROOT/.deps/onnxruntime.env"
   (
     cd "$REPO_ROOT"
-    CGO_ENABLED=1 LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
-      go build -tags zvec -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
+    CGO_ENABLED=1 LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
+      go build -tags "zvec,onnx" -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
     case "$(uname -s)" in
       Linux*)
         if [[ -f "$ZVEC_LIB_DIR/libzvec_c_api.so" ]]; then
           cp -f "$ZVEC_LIB_DIR/libzvec_c_api.so" "$BIN_DIR/"
         fi
+        if [[ -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" ]]; then
+          cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" "$BIN_DIR/"
+        fi
         ;;
       Darwin*)
         if [[ -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" ]]; then
           cp -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" "$BIN_DIR/"
+        fi
+        if [[ -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" ]]; then
+          cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" "$BIN_DIR/"
         fi
         ;;
     esac
@@ -90,3 +105,4 @@ fi
 
 echo "Done. Restart Cursor. MCP server key: $SERVER_KEY"
 echo "Fill in $ENV_FILE for cloud embedding profiles (RouterAI, DashScope, etc.)."
+echo "For offline ONNX: set active_profile: local_multilingual and run reindex with force=true."

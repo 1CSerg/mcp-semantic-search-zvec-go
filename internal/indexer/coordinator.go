@@ -16,7 +16,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
-// Embedder batches text into vectors.
+// Embedder batches text into vectors during indexing.
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
 	Dimensions() int

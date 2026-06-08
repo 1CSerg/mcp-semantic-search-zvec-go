@@ -36,13 +36,18 @@ if (Test-Path "$mingw\gcc.exe") {
 
 Push-Location $RepoRoot
 try {
+    & "$RepoRoot\scripts\fetch-onnx-runtime.ps1" | Out-Null
     New-Item -ItemType Directory -Force -Path bin | Out-Null
-    go build -tags zvec -o bin\mcp-semantic-search-zvec-go.exe .\cmd\mcp-semantic-search-zvec-go
+    go build -tags "zvec,onnx" -o bin\mcp-semantic-search-zvec-go.exe .\cmd\mcp-semantic-search-zvec-go
     $dllDst = Join-Path $LibDir "zvec_c_api.dll"
     if (Test-Path $dllDst) {
         Copy-Item -Force $dllDst bin\ -ErrorAction SilentlyContinue
     }
-    Write-Host "Built bin\mcp-semantic-search-zvec-go.exe"
+    $ortDll = Join-Path $env:ORT_LIB_DIR "onnxruntime.dll"
+    if (Test-Path $ortDll) {
+        Copy-Item -Force $ortDll bin\ -ErrorAction SilentlyContinue
+    }
+    Write-Host "Built bin\mcp-semantic-search-zvec-go.exe (tags: zvec,onnx)"
 } finally {
     Pop-Location
 }

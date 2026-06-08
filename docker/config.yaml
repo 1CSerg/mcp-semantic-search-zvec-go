@@ -1,0 +1,72 @@
+# Docker default: offline local ONNX profile with bundled model.
+active_profile: local_multilingual
+
+profiles:
+  local_multilingual:
+    description: Local multilingual ONNX (Docker default)
+    provider: onnx
+    model: paraphrase-multilingual-MiniLM-L12-v2
+    dimensions: 384
+    model_path: /opt/models/paraphrase-multilingual-MiniLM-L12-v2
+    batch_size: 16
+    timeout_seconds: 60
+
+indexing:
+  extensions:
+    - .py
+    - .go
+    - .js
+    - .ts
+    - .tsx
+    - .jsx
+    - .md
+    - .yaml
+    - .yml
+    - .json
+    - .toml
+    - .rs
+    - .java
+    - .kt
+    - .cs
+    - .cpp
+    - .h
+    - .hpp
+    - .sql
+    - .sh
+    - .ps1
+  skip_dirs:
+    - .git
+    - node_modules
+    - vendor
+    - dist
+    - build
+    - __pycache__
+    - .venv
+    - venv
+    - .mcp-semantic-search-zvec-go
+    - .mcp-semantic-search-zvec
+  lock_stale_seconds: 300
+  stall_seconds: 120
+  heartbeat_seconds: 15
+
+search:
+  slow_threshold_seconds: 5
+  degrade_ratio: 2.0
+  stats_window: 20
+  stats_min_samples: 5
+
+file_watcher:
+  enabled: true
+  debounce_seconds: 2
+  run_as_daemon: false
+  backend: polling
+  poll_interval_seconds: 10
+
+logging:
+  level: INFO
+  verbose: false
+  max_bytes: 5242880
+  backup_count: 3
+
+server:
+  http_addr: ":8080"

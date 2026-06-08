@@ -41,16 +41,16 @@
 | `internal/indexer/chunk` | window fallback (tree-sitter later) | Done |
 | `internal/lock` | index.lock + progress.json | Done |
 | `reindex` MCP + HTTP | Background job, status polling | Done |
-| Install scripts | Production binary download, Cursor wiring | Pending |
+| Install scripts | Production binary download, Cursor wiring | Done |
 | `check_update` | GitHub releases API | Stub |
 
 **Gate:** Empty project → `reindex` → searchable in IDE — ✅ (`scripts/smoke-phase2.*`).
 
 ---
 
-## Phase 3 — Resilience + watcher
+## Phase 3 — Resilience + watcher ✅
 
-**Goal:** Production stability per-project mode.
+**Goal:** Production stability per-project mode. Deliverables and gate evidence: [PHASE3_RESULTS.md](PHASE3_RESULTS.md).
 
 | Task | Criteria | Status |
 |------|----------|--------|
@@ -60,21 +60,22 @@
 | In-binary stale stdio cleanup | `internal/lifecycle` on `--stdio` startup | Done |
 | `/ready` | Fails until index + embeddings OK | Done |
 
-**Gate:** 50× reconnect without orphan processes or stale locks — ✅ scripted equivalent passed (2026-06-08, `.\scripts\smoke-phase3.ps1 -Reconnects 50`; details in [PHASE3_RESULTS.md](PHASE3_RESULTS.md)).
+**Gate:** 50× reconnect without orphan processes or stale locks — ✅ scripted equivalent passed (2026-06-08, `.\scripts\smoke-phase3.ps1 -Reconnects 50`); CI green on push — ✅ (2026-06-08).
 
 ---
 
-## Phase 4 — Local ONNX + Docker
+## Phase 4 — Local ONNX + Docker ✅
 
-**Goal:** Offline default profile; container release.
+**Goal:** Offline default profile; container release. Deliverables and gate evidence: [PHASE4_RESULTS.md](PHASE4_RESULTS.md).
 
-| Task | Criteria |
-|------|----------|
-| `internal/embeddings/onnx` | onnxruntime_go + bundled model |
-| Docker multi-stage | GHCR image |
-| Release workflow | Windows/Linux/macOS binaries with zvec vendor libs |
+| Task | Criteria | Status |
+|------|----------|--------|
+| `internal/embeddings/onnx` | onnxruntime_go + bundled model | Done |
+| Docker multi-stage | GHCR image | Done |
+| Release workflow | Windows/Linux/macOS binaries with zvec vendor libs | Done |
+| Install scripts | Production binary + optional model fetch | Done |
 
-**Gate:** `local_multilingual` profile works without external API.
+**Gate:** `local_multilingual` profile works without external API — ✅ (`scripts/smoke-phase4.*`, Docker offline config).
 
 ---
 

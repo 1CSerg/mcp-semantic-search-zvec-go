@@ -164,7 +164,7 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["phase"] != "3" {
+	if payload["phase"] != "4" {
 		t.Fatalf("phase=%v", payload["phase"])
 	}
 }
@@ -246,7 +246,7 @@ func TestPhase1SemanticSearchWithMockZvec(t *testing.T) {
 
 func TestPhase1SemanticSearchNoEmbed(t *testing.T) {
 	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
-	settings.App.Profiles["test"] = config.EmbeddingProfile{Provider: "onnx"}
+	settings.App.ActiveProfile = ""
 	p, err := NewPhase1(settings)
 	if err != nil {
 		t.Fatal(err)

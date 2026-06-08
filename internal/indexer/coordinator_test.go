@@ -297,7 +297,7 @@ func TestCoordinatorCurrentProgressLoadError(t *testing.T) {
 		IndexDir:      indexDir,
 		App: config.AppConfig{
 			ActiveProfile: "test",
-			Indexing: config.IndexingConfig{Extensions: []string{".go"}, LockStaleSeconds: 300},
+			Indexing:      config.IndexingConfig{Extensions: []string{".go"}, LockStaleSeconds: 300},
 		},
 	}
 	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}

@@ -1,5 +1,6 @@
 param(
-    [string]$TargetRoot = (Get-Location).Path
+    [string]$TargetRoot = (Get-Location).Path,
+    [switch]$FetchONNXModel
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +60,12 @@ Write-Host "Installing mcp-semantic-search-zvec-go v$version into $InstallDir"
 
 Copy-Item -Force (Join-Path $RepoRoot "config.yaml") (Join-Path $InstallDir "config.yaml")
 
+$modelDir = Join-Path $InstallDir "models\paraphrase-multilingual-MiniLM-L12-v2"
+$configText = Get-Content -Raw (Join-Path $InstallDir "config.yaml")
+if ($FetchONNXModel -or ($configText -match 'active_profile:\s*local_multilingual')) {
+    & "$RepoRoot\scripts\fetch-onnx-model.ps1" -DestDir $modelDir
+}
+
 $envFile = Join-Path $InstallDir ".env"
 $envExample = Join-Path $Templates "env.example"
 if (-not (Test-Path $envFile) -and (Test-Path $envExample)) {
@@ -80,6 +87,10 @@ if (Test-Path $srcBin) {
         $dllSrc = Join-Path $env:ZVEC_LIB_DIR "zvec_c_api.dll"
         if (Test-Path $dllSrc) {
             Copy-Item -Force $dllSrc (Join-Path $BinDir "zvec_c_api.dll")
+        }
+        $ortSrc = Join-Path $env:ORT_LIB_DIR "onnxruntime.dll"
+        if (Test-Path $ortSrc) {
+            Copy-Item -Force $ortSrc (Join-Path $BinDir "onnxruntime.dll")
         }
         Write-Host "Built binary: $dstBin"
     } finally {
@@ -118,3 +129,4 @@ if (Test-Path $gitignore) {
 
 Write-Host "Done. Restart Cursor. MCP server key: $ServerKey"
 Write-Host "Fill in $envFile for cloud embedding profiles (RouterAI, DashScope, etc.)."
+Write-Host "For offline ONNX: set active_profile: local_multilingual and run reindex with force=true."

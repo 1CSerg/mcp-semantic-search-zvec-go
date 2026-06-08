@@ -1,0 +1,28 @@
+# Phase 4 smoke config — local ONNX profile (no external embedding API).
+active_profile: local_multilingual
+
+profiles:
+  local_multilingual:
+    description: Local multilingual ONNX smoke profile
+    provider: onnx
+    model: paraphrase-multilingual-MiniLM-L12-v2
+    dimensions: 384
+    model_path: .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
+    batch_size: 8
+    timeout_seconds: 60
+
+indexing:
+  extensions: [".go", ".md"]
+  skip_dirs: [".git", "node_modules", "vendor", ".deps", ".mcp-semantic-search-zvec-go"]
+
+search:
+  slow_threshold_seconds: 30.0
+
+file_watcher:
+  enabled: false
+
+logging:
+  level: info
+
+server:
+  http_addr: ":8080"

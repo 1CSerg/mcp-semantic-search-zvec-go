@@ -9,6 +9,7 @@ Install into a **target project** (your codebase), not only this repository.
 | Go 1.26+ | Only for building from source |
 | Git | Recommended |
 | Prebuilt binary | From GitHub Release (install script) |
+| ONNX Runtime + model | Required only for `local_multilingual` profile |
 
 No Python, Docker, or uv required.
 
@@ -111,6 +112,13 @@ Edit `.mcp-semantic-search-zvec-go/config.yaml` and `.env`:
 2. For cloud providers: put API keys in `.env` (names from `api_key_env` in the profile).
 3. For LM Studio: usually no `.env` keys; adjust `base_url`, `model`, `dimensions` in `config.yaml`.
 4. Run MCP tool `reindex` after profile change.
+
+### Offline ONNX (`local_multilingual`)
+
+1. Set `active_profile: local_multilingual` in `config.yaml`.
+2. Download model bundle into `.mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2/` (see [CONFIG.md](CONFIG.md)).
+3. Re-run install or ensure production binary includes `-tags "zvec,onnx"` and ships `onnxruntime` + `zvec` runtime libraries next to the executable.
+4. Run `reindex` with `force: true`.
 
 See [CONFIG.md](CONFIG.md).
 

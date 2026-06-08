@@ -73,7 +73,7 @@ Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go)
 | Command | Tags | Result |
 |---------|------|--------|
 | `go test ./...` | default (`!zvec`) | Stub store, no native deps |
-| `make build-zvec` | `zvec` | Production binary with zvec |
+| `make build-zvec` | `zvec,onnx` | Production binary with zvec + local ONNX |
 | `make test-integration` | `integration,zvec` | Spike gate tests |
 
 ### Native deps (one-time per machine / after clean)
@@ -84,6 +84,26 @@ make fetch-zvec-libs
 ```
 
 Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.3.1` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+
+### ONNX (Phase 4)
+
+Local embeddings use [onnxruntime_go](https://github.com/yalue/onnxruntime_go) with build tag `onnx`.
+
+```bash
+make fetch-onnx-runtime   # .deps/onnxruntime.env
+make fetch-onnx-model     # default bundle under .mcp-semantic-search-zvec-go/models/...
+make build-zvec           # -tags "zvec,onnx"
+```
+
+Env:
+
+| Variable | Description |
+|----------|-------------|
+| `ONNXRUNTIME_SHARED_LIBRARY_PATH` | Path to `libonnxruntime.so` / `.dylib` / `.dll` |
+| `ORT_LIB_DIR` | Directory containing ONNX Runtime library |
+| `ONNXRUNTIME_VERSION` | Override runtime version in fetch scripts (default `1.26.0`) |
+| `ONNX_MODEL_SHA256` | Optional checksum for `model_optimized.onnx` |
+| `ONNX_TOKENIZER_SHA256` | Optional checksum for `tokenizer.json` |
 
 Linux / macOS runtime:
 
@@ -131,6 +151,14 @@ Linux: `make smoke-phase2`
 ```
 
 Linux: `make smoke-phase3`
+
+**Phase 4 gate smoke** (local ONNX `local_multilingual`, no external embedding API):
+
+```powershell
+.\scripts\smoke-phase4.ps1
+```
+
+Linux: `make smoke-phase4`
 
 Production build:
 

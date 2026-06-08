@@ -1,5 +1,8 @@
 services:
   semantic-search:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: ghcr.io/1cserg/mcp-semantic-search-zvec-go:latest
     container_name: mcp-semantic-search-zvec-go
     ports:
@@ -7,12 +10,11 @@ services:
     volumes:
       - ${WORKSPACE_ABS:-../}:/workspace:ro
       - ./data:/data
-      - ./config.yaml:/workspace/.mcp-semantic-search-zvec-go/config.yaml:ro
     environment:
       WORKSPACE_ROOT: /workspace
       WORKSPACE_ID: ${WORKSPACE_ID:-/workspace}
       INDEX_DIR: /data/index
-      CONFIG_PATH: /workspace/.mcp-semantic-search-zvec-go/config.yaml
+      CONFIG_PATH: /etc/mcp-semantic-search-zvec-go/config.yaml
       AUTO_INDEX_ON_START: "${AUTO_INDEX_ON_START:-true}"
       HTTP_ADDR: ":8080"
       FILE_WATCHER_BACKEND: polling

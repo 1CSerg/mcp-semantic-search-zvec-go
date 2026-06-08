@@ -1,6 +1,7 @@
 package chunk
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -22,6 +23,8 @@ type Options struct {
 
 // FileChunks splits a file into searchable chunks.
 func FileChunks(relativePath string, content []byte, opts Options) []zvec.Chunk {
+	content = stripUTF8BOM(content)
+	content = normalizeLineEndings(content)
 	window := opts.WindowLines
 	if window <= 0 {
 		window = defaultWindowLines
@@ -82,6 +85,18 @@ func ReadAndChunk(root, relativePath string, opts Options) ([]zvec.Chunk, error)
 		return nil, err
 	}
 	return FileChunks(relativePath, data, opts), nil
+}
+
+func stripUTF8BOM(content []byte) []byte {
+	if len(content) >= 3 && content[0] == 0xEF && content[1] == 0xBB && content[2] == 0xBF {
+		return content[3:]
+	}
+	return content
+}
+
+func normalizeLineEndings(content []byte) []byte {
+	content = bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(content, []byte("\r"), []byte("\n"))
 }
 
 func docID(relativePath string, startLine, endLine int64) string {

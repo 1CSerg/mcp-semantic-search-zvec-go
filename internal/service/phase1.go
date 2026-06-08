@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings/openai"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
@@ -22,7 +22,7 @@ import (
 // Phase1 wires manifest read, optional OpenAI embed, zvec store, and Phase 2 indexer.
 type Phase1 struct {
 	Settings    *config.Settings
-	embed       *openai.Client
+	embed       embeddings.Embedder
 	zvec        zvec.Store
 	zvecCfg     zvec.Config
 	coordinator *indexer.Coordinator
@@ -56,14 +56,12 @@ func NewPhase1(settings *config.Settings) (*Phase1, error) {
 	}
 	p.zvec = zvec.New(p.zvecCfg)
 
-	if profile.Provider == "openai_compatible" {
-		c, err := openai.NewClient(profile)
-		if err != nil {
-			return nil, err
-		}
-		p.embed = c
-		p.coordinator = indexer.NewCoordinator(settings, profile, c, p.zvec, p.zvecCfg)
+	embed, err := embeddings.NewEmbedder(profile, settings.WorkspaceRoot)
+	if err != nil {
+		return nil, err
 	}
+	p.embed = embed
+	p.coordinator = indexer.NewCoordinator(settings, profile, embed, p.zvec, p.zvecCfg)
 	return p, nil
 }
 
@@ -229,7 +227,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"zvec_collection_path":    collectionPath,
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
-		"phase":                   "3",
+		"phase":                   "4",
 		"indexing":                idx.ToIndexingMap(),
 		"file_watcher":            p.fileWatcherStatus(),
 		"search_performance":      p.searchStats.Snapshot(),
@@ -240,8 +238,11 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 	if zvecErr != "" {
 		payload["zvec_error"] = zvecErr
 	}
-	if p.embed == nil && profileErr == nil && profile.Provider == "openai_compatible" {
-		payload["message"] = "openai_compatible client failed to initialize"
+	if p.embed == nil && profileErr == nil {
+		payload["message"] = "embedding client failed to initialize"
+	}
+	if profileErr == nil && profile.Provider == "onnx" && profile.ModelPath != "" {
+		payload["embedding_model_path"] = profile.ModelPath
 	}
 	if profileErr != nil {
 		payload["message"] = profileErr.Error()

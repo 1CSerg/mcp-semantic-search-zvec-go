@@ -3,6 +3,7 @@ package chunk
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,28 @@ func TestFileChunksDefaultsAndEdges(t *testing.T) {
 	}
 	if chunkTypeForPath("x.json") != "config" || chunkTypeForPath("x.toml") != "config" {
 		t.Fatal("expected config type")
+	}
+}
+
+func TestFileChunksStripsUTF8BOM(t *testing.T) {
+	content := []byte{0xEF, 0xBB, 0xBF, 'p', 'a', 'c', 'k', 'a', 'g', 'e', ' ', 'm', 'a', 'i', 'n', '\n'}
+	chunks := FileChunks("main.go", content, Options{WindowLines: 10})
+	if len(chunks) != 1 {
+		t.Fatalf("chunks=%d", len(chunks))
+	}
+	if strings.HasPrefix(chunks[0].Snippet, "\ufeff") {
+		t.Fatalf("snippet still has BOM: %q", chunks[0].Snippet)
+	}
+}
+
+func TestFileChunksNormalizesCRLF(t *testing.T) {
+	content := []byte("line1\r\nline2\r\n")
+	chunks := FileChunks("a.go", content, Options{WindowLines: 10})
+	if len(chunks) != 1 {
+		t.Fatalf("chunks=%d", len(chunks))
+	}
+	if strings.Contains(chunks[0].Snippet, "\r") {
+		t.Fatalf("snippet has CR: %q", chunks[0].Snippet)
 	}
 }
 
