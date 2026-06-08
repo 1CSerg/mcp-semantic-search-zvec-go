@@ -26,7 +26,7 @@ curl http://127.0.0.1:8080/health
 
 ```powershell
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go $env:TEMP\mcp-semantic-search-zvec-go
-& "$env:TEMP\mcp-semantic-search-zvec-go\scripts\install.ps1" -TargetRoot (Get-Location).Path
+& "$env:TEMP\mcp-semantic-search-zvec-go\scripts\install\install.ps1" -TargetRoot (Get-Location).Path
 ```
 
 Подробнее: [docs/INSTALL.md](docs/INSTALL.md), [AGENTS.md](AGENTS.md).
@@ -41,7 +41,10 @@ git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go $env:TEMP\mcp-se
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Фазы разработки 0–5 |
 | [docs/API.md](docs/API.md) | HTTP REST и MCP tools |
 | [docs/CONFIG.md](docs/CONFIG.md) | config.yaml и переменные окружения |
-| [docs/ZVEC_SPIKE.md](docs/ZVEC_SPIKE.md) | Gate Phase 1: проверка zvec-go |
+| [docs/spike/ZVEC_SPIKE.md](docs/spike/ZVEC_SPIKE.md) | Gate Phase 1: проверка zvec-go |
+| [docs/phases/PHASE3_RESULTS.md](docs/phases/PHASE3_RESULTS.md) | Gate evidence Phase 3 (resilience, watcher) |
+| [docs/phases/PHASE4_RESULTS.md](docs/phases/PHASE4_RESULTS.md) | Gate evidence Phase 4 (local ONNX) |
+| [docs/phases/PHASE5_RESULTS.md](docs/phases/PHASE5_RESULTS.md) | Gate evidence Phase 5 (shared daemon) |
 
 ## Режимы multi-project
 

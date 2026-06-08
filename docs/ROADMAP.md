@@ -21,13 +21,13 @@
 
 | Task | Criteria | Status |
 |------|----------|--------|
-| zvec-go spike | Open collection; query returns chunks — [ZVEC_SPIKE.md](ZVEC_SPIKE.md) | Done |
+| zvec-go spike | Open collection; query returns chunks — [ZVEC_SPIKE.md](spike/ZVEC_SPIKE.md) | Done |
 | `internal/store/zvec` | insert/query/delete, idempotent open (`-tags zvec`) | Done |
 | `internal/embeddings/openai` | OpenAI-compatible HTTP batch embed | Done |
 | `internal/store/manifest` | Read SQLite manifest | Done |
 | Wire `service` | Phase1 search + status | Done |
 
-**Gate:** `make seed-index` + `make build-zvec` → HTTP `/v1/search` returns ranked results — ✅ (2026-06-08, `scripts/smoke-phase1.*`).
+**Gate:** `make seed-index` + `make build-zvec` → HTTP `/v1/search` returns ranked results — ✅ (2026-06-08, `scripts/smoke/run-phase1.*`).
 
 ---
 
@@ -44,13 +44,13 @@
 | Install scripts | Production binary download, Cursor wiring | Done |
 | `check_update` | GitHub releases API | Stub |
 
-**Gate:** Empty project → `reindex` → searchable in IDE — ✅ (`scripts/smoke-phase2.*`).
+**Gate:** Empty project → `reindex` → searchable in IDE — ✅ (`scripts/smoke/run-phase2.*`).
 
 ---
 
 ## Phase 3 — Resilience + watcher ✅
 
-**Goal:** Production stability per-project mode. Deliverables and gate evidence: [PHASE3_RESULTS.md](PHASE3_RESULTS.md).
+**Goal:** Production stability per-project mode. Deliverables and gate evidence: [PHASE3_RESULTS.md](phases/PHASE3_RESULTS.md).
 
 | Task | Criteria | Status |
 |------|----------|--------|
@@ -60,13 +60,13 @@
 | In-binary stale stdio cleanup | `internal/lifecycle` on `--stdio` startup | Done |
 | `/ready` | Fails until index + embeddings OK | Done |
 
-**Gate:** 50× reconnect without orphan processes or stale locks — ✅ scripted equivalent passed (2026-06-08, `.\scripts\smoke-phase3.ps1 -Reconnects 50`); CI green on push — ✅ (2026-06-08).
+**Gate:** 50× reconnect without orphan processes or stale locks — ✅ scripted equivalent passed (2026-06-08, `.\scripts\smoke\run-phase3.ps1 -Reconnects 50`); CI green on push — ✅ (2026-06-08).
 
 ---
 
 ## Phase 4 — Local ONNX + Docker ✅
 
-**Goal:** Offline default profile; container release. Deliverables and gate evidence: [PHASE4_RESULTS.md](PHASE4_RESULTS.md).
+**Goal:** Offline default profile; container release. Deliverables and gate evidence: [PHASE4_RESULTS.md](phases/PHASE4_RESULTS.md).
 
 | Task | Criteria | Status |
 |------|----------|--------|
@@ -75,13 +75,13 @@
 | Release workflow | Windows/Linux/macOS binaries with zvec vendor libs | Done |
 | Install scripts | Production binary + optional model fetch | Done |
 
-**Gate:** `local_multilingual` profile works without external API — ✅ (`scripts/smoke-phase4.*`, Docker offline config).
+**Gate:** `local_multilingual` profile works without external API — ✅ (`scripts/smoke/run-phase4.*`, Docker offline config).
 
 ---
 
 ## Phase 5 — Shared daemon + v1.0 ✅
 
-**Goal:** One HTTP service, multiple projects; hardening. Deliverables and gate evidence: [PHASE5_RESULTS.md](PHASE5_RESULTS.md).
+**Goal:** One HTTP service, multiple projects; hardening. Deliverables and gate evidence: [PHASE5_RESULTS.md](phases/PHASE5_RESULTS.md).
 
 | Task | Criteria | Status |
 |------|----------|--------|
@@ -91,7 +91,7 @@
 | `GET /v1/workspaces` | List registered workspaces | Done |
 | Load tests, API auth | v1.0.0 tag | Done |
 
-**Gate:** 3 workspaces on one daemon; MCP proxy from 2 Cursor projects — ✅ (`scripts/smoke-phase5.*`).
+**Gate:** 3 workspaces on one daemon; MCP proxy from 2 Cursor projects — ✅ (`scripts/smoke/run-phase5.*`).
 
 ---
 

@@ -56,15 +56,15 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          bash scripts/fetch-zvec-libs.sh >> "$GITHUB_ENV"
-          bash scripts/fetch-onnx-runtime.sh >> "$GITHUB_ENV"
+          bash scripts/fetch/fetch-zvec-libs.sh >> "$GITHUB_ENV"
+          bash scripts/fetch/fetch-onnx-runtime.sh >> "$GITHUB_ENV"
 
       - name: Fetch native deps (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & scripts/fetch-zvec-libs.ps1 | Out-Null
-          & scripts/fetch-onnx-runtime.ps1 | Out-Null
+          & scripts/fetch/fetch-zvec-libs.ps1 | Out-Null
+          & scripts/fetch/fetch-onnx-runtime.ps1 | Out-Null
           Get-Content .deps/zvec-lib.env | ForEach-Object {
             if ($_ -match '^(.*?)=(.*)$') { Add-Content -Path $env:GITHUB_ENV -Value "$($matches[1])=$($matches[2])" }
           }

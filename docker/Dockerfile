@@ -20,9 +20,9 @@ RUN go mod download
 
 COPY . .
 
-RUN bash scripts/fetch-zvec-libs.sh > .deps/zvec-lib.env \
-    && bash scripts/fetch-onnx-runtime.sh > .deps/onnxruntime.env \
-    && bash scripts/fetch-onnx-model.sh /opt/models/paraphrase-multilingual-MiniLM-L12-v2
+RUN bash scripts/fetch/fetch-zvec-libs.sh > .deps/zvec-lib.env \
+    && bash scripts/fetch/fetch-onnx-runtime.sh > .deps/onnxruntime.env \
+    && bash scripts/fetch/fetch-onnx-model.sh /opt/models/paraphrase-multilingual-MiniLM-L12-v2
 
 RUN . .deps/zvec-lib.env \
     && . .deps/onnxruntime.env \

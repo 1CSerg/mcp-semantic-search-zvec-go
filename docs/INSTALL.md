@@ -19,14 +19,14 @@ No Python, Docker, or uv required.
 
 ```powershell
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go $env:TEMP\mcp-semantic-search-zvec-go
-& "$env:TEMP\mcp-semantic-search-zvec-go\scripts\install.ps1" -TargetRoot (Get-Location).Path
+& "$env:TEMP\mcp-semantic-search-zvec-go\scripts\install\install.ps1" -TargetRoot (Get-Location).Path
 ```
 
 ### Linux / macOS
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go /tmp/mcp-semantic-search-zvec-go
-TARGET_ROOT="$PWD" bash /tmp/mcp-semantic-search-zvec-go/scripts/install.sh
+TARGET_ROOT="$PWD" bash /tmp/mcp-semantic-search-zvec-go/scripts/install/install.sh
 ```
 
 ## What install creates

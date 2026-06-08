@@ -14,19 +14,19 @@ ORT_ENV := .deps/onnxruntime.env
 setup-hooks:
 	@git config core.autocrlf false
 	@git config core.safecrlf false
-	@git config alias.addnorm '!bash scripts/git-add.sh'
+	@git config alias.addnorm '!bash scripts/dev/git-add.sh'
 	@-git config --unset alias.add
 	@-git config --unset alias.stage
-	@echo "Git: core.autocrlf=false, core.safecrlf=false, alias.addnorm=scripts/git-add.sh"
+	@echo "Git: core.autocrlf=false, core.safecrlf=false, alias.addnorm=scripts/dev/git-add.sh"
 
 fetch-zvec-libs:
-	bash scripts/fetch-zvec-libs.sh > $(ZVEC_ENV)
+	bash scripts/fetch/fetch-zvec-libs.sh > $(ZVEC_ENV)
 
 fetch-onnx-model:
-	bash scripts/fetch-onnx-model.sh
+	bash scripts/fetch/fetch-onnx-model.sh
 
 fetch-onnx-runtime:
-	bash scripts/fetch-onnx-runtime.sh > $(ORT_ENV)
+	bash scripts/fetch/fetch-onnx-runtime.sh > $(ORT_ENV)
 
 copy-zvec-runtime: fetch-zvec-libs
 	@. $(ZVEC_ENV) && \
@@ -49,19 +49,19 @@ build-zvec: fetch-zvec-libs fetch-onnx-runtime copy-zvec-runtime
 	. $(ORT_ENV) && cp -f "$$ONNXRUNTIME_SHARED_LIBRARY_PATH" bin/ 2>/dev/null || true
 
 smoke-phase1: build-zvec
-	bash scripts/smoke-phase1.sh
+	bash scripts/smoke/run-phase1.sh
 
 smoke-phase2: build-zvec
-	bash scripts/smoke-phase2.sh
+	bash scripts/smoke/run-phase2.sh
 
 smoke-phase3: build-zvec
-	bash scripts/smoke-phase3.sh
+	bash scripts/smoke/run-phase3.sh
 
 smoke-phase4: build-zvec fetch-onnx-model
-	bash scripts/smoke-phase4.sh
+	bash scripts/smoke/run-phase4.sh
 
 smoke-phase5: build-zvec
-	bash scripts/smoke-phase5.sh
+	bash scripts/smoke/run-phase5.sh
 
 seed-index: fetch-zvec-libs
 	. $(ZVEC_ENV) && \
@@ -81,7 +81,7 @@ test-cover:
 	go tool cover -func=coverage.out
 
 test-cover-check:
-	COVERAGE_MIN=$(COVERAGE_MIN) COVERAGE_PKG_MIN=$(COVERAGE_PKG_MIN) COVERAGE_PACKAGES="$(COVERAGE_PACKAGES)" bash scripts/check-coverage.sh
+	COVERAGE_MIN=$(COVERAGE_MIN) COVERAGE_PKG_MIN=$(COVERAGE_PKG_MIN) COVERAGE_PACKAGES="$(COVERAGE_PACKAGES)" bash scripts/dev/check-coverage.sh
 
 lint:
 	@which golangci-lint >/dev/null 2>&1 || (echo "install golangci-lint for lint target" && exit 1)

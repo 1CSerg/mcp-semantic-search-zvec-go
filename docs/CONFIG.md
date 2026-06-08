@@ -75,7 +75,7 @@ Download model bundle:
 ```
 
 ```bash
-bash scripts/fetch-onnx-model.sh .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
+bash scripts/fetch/fetch-onnx-model.sh .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
 ```
 
 Install with model fetch (when `active_profile: local_multilingual` or explicit flag):
@@ -85,7 +85,7 @@ Install with model fetch (when `active_profile: local_multilingual` or explicit 
 ```
 
 ```bash
-FETCH_ONNX_MODEL=1 bash scripts/install.sh
+FETCH_ONNX_MODEL=1 bash scripts/install/install.sh
 ```
 
 Production build tags: `-tags "zvec,onnx"`. Default unit tests use stub ONNX (`go test ./...`); smoke/release use production tags.

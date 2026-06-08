@@ -23,7 +23,7 @@ Windows (PowerShell): `.\scripts\setup-git-hooks.ps1` вместо `make setup-h
 
 - `.gitattributes` (`eol=lf`) — при `git add` в индекс попадает LF (clean-фильтр Git).
 - `setup-hooks` выставляет `core.autocrlf=false` и `core.safecrlf=false` **для этого репо** — без этого на Windows `git add` падает с `LF/CRLF would be replaced`.
-- `git addnorm` (= `scripts/git-add.sh`) дополнительно приводит рабочую копию к LF перед индексацией. Обычный `git add` после `setup-hooks` тоже работает; встроенные `add`/`stage` через alias переопределить нельзя.
+- `git addnorm` (= `scripts/dev/git-add.sh`) дополнительно приводит рабочую копию к LF перед индексацией. Обычный `git add` после `setup-hooks` тоже работает; встроенные `add`/`stage` через alias переопределить нельзя.
 
 Dev mode uses repo `config.yaml` automatically when install tree is absent.
 
@@ -61,7 +61,7 @@ internal/
   crash/                            # last_crash.json (Phase 3)
   daemon/                           # multi-workspace registry (Phase 5)
 docs/
-scripts/                            # install
+scripts/                            # install, fetch, dev, smoke, spike (see scripts/README.md)
 templates/                          # MCP fragments
 ```
 
@@ -116,7 +116,7 @@ export LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
 Windows: CGO via **WinLibs MinGW gcc** (recommended) or VS **clang-cl**; plain `cl` rejects cgo `-Werror`. Script:
 
 ```powershell
-.\scripts\build-zvec-windows.ps1
+.\scripts\dev\build-zvec-windows.ps1
 ```
 
 `zvec_c_api.dll` must be next to the executable or on `PATH` (script copies to `bin/`).
@@ -124,15 +124,15 @@ Windows: CGO via **WinLibs MinGW gcc** (recommended) or VS **clang-cl**; plain `
 **Spike in Docker (Linux amd64):**
 
 ```powershell
-docker run --rm -v "${PWD}:/src" -w /src golang:1.26.3-bookworm bash /src/scripts/run-spike-docker-inner.sh
+docker run --rm -v "${PWD}:/src" -w /src golang:1.26.3-bookworm bash /src/scripts/spike/run-docker-inner.sh
 ```
 
-First run ~2–3 min (clone + download libs). Results: [SPIKE_RESULTS.md](SPIKE_RESULTS.md).
+First run ~2–3 min (clone + download libs). Results: [SPIKE_RESULTS.md](spike/SPIKE_RESULTS.md).
 
 **Phase 1 gate smoke** (seed-index → HTTP search, mock embeddings):
 
 ```powershell
-.\scripts\smoke-phase1.ps1
+.\scripts\smoke\run-phase1.ps1
 ```
 
 Linux: `make smoke-phase1`
@@ -140,7 +140,7 @@ Linux: `make smoke-phase1`
 **Phase 2 gate smoke** (empty project → reindex → HTTP search):
 
 ```powershell
-.\scripts\smoke-phase2.ps1
+.\scripts\smoke\run-phase2.ps1
 ```
 
 Linux: `make smoke-phase2`
@@ -148,7 +148,7 @@ Linux: `make smoke-phase2`
 **Phase 3 gate smoke** (reconnect resilience, watcher, `/ready`, search metrics):
 
 ```powershell
-.\scripts\smoke-phase3.ps1
+.\scripts\smoke\run-phase3.ps1
 ```
 
 Linux: `make smoke-phase3`
@@ -156,7 +156,7 @@ Linux: `make smoke-phase3`
 **Phase 4 gate smoke** (local ONNX `local_multilingual`, no external embedding API):
 
 ```powershell
-.\scripts\smoke-phase4.ps1
+.\scripts\smoke\run-phase4.ps1
 ```
 
 Linux: `make smoke-phase4`
@@ -164,7 +164,7 @@ Linux: `make smoke-phase4`
 **Phase 5 gate smoke** (shared daemon, 3 workspaces, MCP proxy unit check):
 
 ```powershell
-.\scripts\smoke-phase5.ps1
+.\scripts\smoke\run-phase5.ps1
 ```
 
 Linux: `make smoke-phase5`
@@ -177,7 +177,7 @@ make seed-index
 ./bin/mcp-semantic-search-zvec-go --http
 ```
 
-Spike checklist: [ZVEC_SPIKE.md](ZVEC_SPIKE.md).
+Spike checklist: [ZVEC_SPIKE.md](spike/ZVEC_SPIKE.md).
 
 ### See also
 
@@ -231,7 +231,7 @@ make test-cover          # отчёт по функциям
 make test-cover-check    # fail если ниже порогов
 ```
 
-Windows: `.\scripts\check-coverage.ps1`
+Windows: `.\scripts\dev\check-coverage.ps1`
 
 Переопределение: `COVERAGE_MIN=90 COVERAGE_PKG_MIN=60 make test-cover-check`
 
@@ -251,6 +251,6 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 ## Version bump
 
 - Единственный источник версии: `internal/version/version.go`.
-- `scripts/install.sh` и `scripts/install.ps1` читают версию из клона; install собирает бинарник (`go build`) или копирует готовый из `bin/`. Не добавляйте захардкоженный fallback в скрипты.
+- `scripts/install/install.sh` и `scripts/install/install.ps1` читают версию из клона; install собирает бинарник (`go build`) или копирует готовый из `bin/`. Не добавляйте захардкоженный fallback в скрипты.
 - Перед тегом `v*`: отредактируйте `version.go`; release workflow проверяет совпадение с git-тегом.
 - Примеры установки в `AGENTS.md`, `README.md`, `docs/INSTALL.md` — из актуального клона или release-тега.
