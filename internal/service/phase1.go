@@ -227,7 +227,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"zvec_collection_path":    collectionPath,
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
-		"phase":                   "4",
+		"phase":                   "5",
 		"indexing":                idx.ToIndexingMap(),
 		"file_watcher":            p.fileWatcherStatus(),
 		"search_performance":      p.searchStats.Snapshot(),
@@ -345,6 +345,14 @@ func (p *Phase1) StartAutoIndex() {
 		return
 	}
 	_, _ = p.coordinator.Start(false)
+}
+
+// Close releases workspace resources (zvec collection handle).
+func (p *Phase1) Close() error {
+	if p.zvec != nil {
+		return p.zvec.Close()
+	}
+	return nil
 }
 
 func derefString(p *string) string {

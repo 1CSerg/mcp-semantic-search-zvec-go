@@ -12,19 +12,42 @@ import (
 // Does not override variables already set in the process environment.
 // Missing files are skipped without error.
 func LoadDotEnv(paths ...string) error {
+	parsed, err := ParseDotEnv(paths...)
+	if err != nil {
+		return err
+	}
+	for key, value := range parsed {
+		if os.Getenv(key) != "" {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ParseDotEnv reads KEY=VALUE pairs from the first existing path into a map.
+// Does not mutate the process environment.
+func ParseDotEnv(paths ...string) (map[string]string, error) {
+	out := make(map[string]string)
 	for _, path := range paths {
 		if path == "" {
 			continue
 		}
-		if err := loadDotEnvFile(path); err != nil {
+		parsed, err := parseDotEnvFile(path)
+		if err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return fmt.Errorf("load %s: %w", path, err)
+			return nil, fmt.Errorf("load %s: %w", path, err)
 		}
-		return nil
+		for k, v := range parsed {
+			out[k] = v
+		}
+		return out, nil
 	}
-	return nil
+	return out, nil
 }
 
 func loadDotEnvCandidates(workspace, configPath string) error {
@@ -39,47 +62,52 @@ func loadDotEnvCandidates(workspace, configPath string) error {
 	return LoadDotEnv(paths...)
 }
 
-func loadDotEnvFile(path string) error {
+func parseDotEnvFile(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
+	out := make(map[string]string)
 	scanner := bufio.NewScanner(f)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		if err := applyDotEnvLine(scanner.Text()); err != nil {
-			return fmt.Errorf("line %d: %w", lineNo, err)
+		key, value, err := parseDotEnvLine(scanner.Text())
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
+		if key == "" {
+			continue
+		}
+		out[key] = value
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
-func applyDotEnvLine(line string) error {
+func parseDotEnvLine(line string) (key, value string, err error) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
-		return nil
+		return "", "", nil
 	}
 	if strings.HasPrefix(line, "export ") {
 		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
 	}
 
-	key, value, ok := strings.Cut(line, "=")
+	k, v, ok := strings.Cut(line, "=")
 	if !ok {
-		return fmt.Errorf("invalid line %q", line)
+		return "", "", fmt.Errorf("invalid line %q", line)
 	}
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return fmt.Errorf("empty key")
+	k = strings.TrimSpace(k)
+	if k == "" {
+		return "", "", fmt.Errorf("empty key")
 	}
-	value = strings.TrimSpace(unquoteDotEnvValue(value))
-
-	if os.Getenv(key) != "" {
-		return nil
-	}
-	return os.Setenv(key, value)
+	v = strings.TrimSpace(unquoteDotEnvValue(v))
+	return k, v, nil
 }
 
 func unquoteDotEnvValue(v string) string {

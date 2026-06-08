@@ -2,5 +2,5 @@ package version
 
 const (
 	Name    = "mcp-semantic-search-zvec-go"
-	Version = "0.1.0"
+	Version = "1.0.0"
 )

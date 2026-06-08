@@ -150,4 +150,10 @@ Indexes are separate unless you intentionally share paths.
 
 ## Shared daemon (Phase 5)
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) — one HTTP service, multiple projects via `daemon.yaml`.
+One HTTP process serves multiple projects via `workspace_id`. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+1. Create `daemon.yaml` (template: [templates/daemon.yaml](../templates/daemon.yaml)).
+2. Start daemon: `--daemon --daemon-config /path/to/daemon.yaml --http-addr :8080`
+3. Point each Cursor project MCP entry to `--stdio-proxy --workspace-id=<id> --daemon-url=http://127.0.0.1:8080` (templates: [cursor-mcp-proxy.fragment.json](../templates/cursor-mcp-proxy.fragment.json)).
+
+Per-project install (`--stdio`) remains the default and does not require a daemon.

@@ -164,7 +164,7 @@ Planned (Phase 1+): `EMBEDDING_PROFILE` to override `active_profile` from yaml �
 
 ## daemon.yaml (Phase 5)
 
-Shared daemon registration:
+Shared daemon registration. Template: [templates/daemon.yaml](../templates/daemon.yaml).
 
 ```yaml
 max_open_workspaces: 10
@@ -176,4 +176,22 @@ workspaces:
     config_path: /path/to/my-app/.mcp-semantic-search-zvec-go/config.yaml
 ```
 
+| Key | Default | Description |
+|-----|---------|-------------|
+| `max_open_workspaces` | 10 | LRU cap on concurrently opened workspace handles |
+| `workspaces[].id` | — | Stable workspace ID (used in HTTP/MCP proxy) |
+| `workspaces[].root` | — | Project root (`WORKSPACE_ROOT`) |
+| `workspaces[].index_dir` | `<root>/.mcp-…/data/index` | Index storage |
+| `workspaces[].config_path` | `<root>/.mcp-…/config.yaml` | Per-workspace YAML config |
+
+Run daemon:
+
+```bash
+.mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go --daemon --daemon-config /path/to/daemon.yaml --http-addr :8080
+```
+
 Env alternative: `WORKSPACES_CONFIG=/path/to/daemon.yaml`.
+
+Cursor MCP proxy wiring: [templates/cursor-mcp-proxy.fragment.json](../templates/cursor-mcp-proxy.fragment.json) — replace `MY_WORKSPACE_ID` with the workspace `id` from `daemon.yaml`.
+
+Secrets remain per-project in each workspace `.env`; daemon loads them without mutating global process env.

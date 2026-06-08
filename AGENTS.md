@@ -86,6 +86,18 @@ curl -X POST http://127.0.0.1:8080/v1/search -H "Content-Type: application/json"
 | Empty search, indexing idle | `reindex`; check `index_status` |
 | `index_owner_mismatch` | Re-run install; separate `INDEX_DIR` per project |
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
+| Shared daemon: `workspace_id` required | Use `--stdio-proxy --workspace-id=<id>` or HTTP `X-Workspace-ID` |
+| Shared daemon: unknown workspace | Check `daemon.yaml` id matches proxy `--workspace-id` |
+
+## Shared daemon (optional)
+
+Default install uses per-project `--stdio`. For one daemon serving multiple projects:
+
+1. Register workspaces in `daemon.yaml` (see [docs/CONFIG.md](docs/CONFIG.md)).
+2. Run daemon with `--daemon --daemon-config …`.
+3. Wire Cursor MCP with `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
+
+Per-project mode is unchanged and needs no daemon.
 
 ## Обновление
 

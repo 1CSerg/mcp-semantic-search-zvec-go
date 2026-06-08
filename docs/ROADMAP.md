@@ -79,19 +79,19 @@
 
 ---
 
-## Phase 5 — Shared daemon + v1.0
+## Phase 5 — Shared daemon + v1.0 ✅
 
-**Goal:** One HTTP service, multiple projects; hardening.
+**Goal:** One HTTP service, multiple projects; hardening. Deliverables and gate evidence: [PHASE5_RESULTS.md](PHASE5_RESULTS.md).
 
-| Task | Criteria |
-|------|----------|
-| `internal/daemon` | WorkspaceRegistry, `daemon.yaml` |
-| HTTP `workspace_id` | All v1 routes multi-tenant |
-| MCP `--stdio-proxy` | Cursor → shared daemon |
-| `GET /v1/workspaces` | List registered workspaces |
-| Load tests, API auth | v1.0.0 tag |
+| Task | Criteria | Status |
+|------|----------|--------|
+| `internal/daemon` | WorkspaceRegistry, `daemon.yaml` | Done |
+| HTTP `workspace_id` | All v1 routes multi-tenant | Done |
+| MCP `--stdio-proxy` | Cursor → shared daemon | Done |
+| `GET /v1/workspaces` | List registered workspaces | Done |
+| Load tests, API auth | v1.0.0 tag | Done |
 
-**Gate:** 3 workspaces on one daemon; MCP proxy from 2 Cursor projects.
+**Gate:** 3 workspaces on one daemon; MCP proxy from 2 Cursor projects — ✅ (`scripts/smoke-phase5.*`).
 
 ---
 

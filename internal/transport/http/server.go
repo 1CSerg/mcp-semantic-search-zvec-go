@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
@@ -18,16 +20,31 @@ import (
 // Server exposes REST endpoints backed by the shared service layer.
 type Server struct {
 	svc      service.Service
+	registry *daemon.Registry
 	settings *config.Settings
 	mux      *http.ServeMux
+	daemon   bool
 }
 
-// New creates an HTTP server with v1 routes and health probes.
+// New creates an HTTP server with v1 routes and health probes (per-project mode).
 func New(settings *config.Settings, svc service.Service) *Server {
 	s := &Server{
 		svc:      svc,
 		settings: settings,
 		mux:      http.NewServeMux(),
+		daemon:   false,
+	}
+	s.routes()
+	return s
+}
+
+// NewDaemon creates an HTTP server for shared multi-workspace daemon mode.
+func NewDaemon(settings *config.Settings, registry *daemon.Registry) *Server {
+	s := &Server{
+		registry: registry,
+		settings: settings,
+		mux:      http.NewServeMux(),
+		daemon:   true,
 	}
 	s.routes()
 	return s
@@ -40,7 +57,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/search", s.handleSearch)
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
 	s.mux.HandleFunc("POST /v1/reindex", s.handleReindex)
-	s.mux.HandleFunc("GET /v1/workspaces", s.handleWorkspacesNotImplemented)
+	s.mux.HandleFunc("GET /v1/workspaces", s.handleWorkspaces)
 }
 
 // Handler returns the root http.Handler with middleware.
@@ -95,8 +112,13 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
-	if err := s.svc.Ready(); err != nil {
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	svc, err := s.resolveService(r, r.URL.Query().Get("workspace_id"))
+	if err != nil {
+		writeWorkspaceError(w, err)
+		return
+	}
+	if err := svc.Ready(); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
 			"error":  err.Error(),
@@ -125,7 +147,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"})
 		return
 	}
-	raw, err := s.svc.SemanticSearch(req)
+	workspaceID := firstNonEmpty(req.WorkspaceID, r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
+	svc, err := s.resolveService(r, workspaceID)
+	if err != nil {
+		writeWorkspaceError(w, err)
+		return
+	}
+	raw, err := svc.SemanticSearch(req)
 	if errors.Is(err, service.ErrIndexingInProgress) {
 		writeRawJSON(w, http.StatusConflict, raw)
 		return
@@ -137,8 +165,14 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeRawJSON(w, http.StatusOK, raw)
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
-	raw, err := s.svc.GetIndexStatus()
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	workspaceID := firstNonEmpty(r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
+	svc, err := s.resolveService(r, workspaceID)
+	if err != nil {
+		writeWorkspaceError(w, err)
+		return
+	}
+	raw, err := svc.GetIndexStatus()
 	if err != nil {
 		writeError(w, err)
 		return
@@ -154,7 +188,13 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	raw, err := s.svc.Reindex(req)
+	workspaceID := firstNonEmpty(req.WorkspaceID, r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
+	svc, err := s.resolveService(r, workspaceID)
+	if err != nil {
+		writeWorkspaceError(w, err)
+		return
+	}
+	raw, err := svc.Reindex(req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -162,11 +202,53 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 	writeRawJSON(w, http.StatusOK, raw)
 }
 
-func (s *Server) handleWorkspacesNotImplemented(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusNotImplemented, map[string]string{
-		"error":   "shared daemon workspace list — Phase 5",
-		"message": "Use per-project mode or see docs/ARCHITECTURE.md",
+func (s *Server) handleWorkspaces(w http.ResponseWriter, _ *http.Request) {
+	if !s.daemon || s.registry == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error":   "shared daemon workspace list — per-project mode",
+			"message": "Use --daemon mode or see docs/ARCHITECTURE.md",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"workspaces": s.registry.ListWorkspaces(),
 	})
+}
+
+func (s *Server) resolveService(r *http.Request, workspaceID string) (service.Service, error) {
+	if s.daemon {
+		if strings.TrimSpace(workspaceID) == "" {
+			return nil, errWorkspaceIDRequired
+		}
+		return s.registry.GetService(workspaceID)
+	}
+	if s.svc == nil {
+		return nil, fmt.Errorf("service not configured")
+	}
+	return s.svc, nil
+}
+
+var errWorkspaceIDRequired = errors.New("workspace_id is required in shared daemon mode")
+
+func writeWorkspaceError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errWorkspaceIDRequired) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, daemon.ErrUnknownWorkspace) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeError(w, err)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func decodeJSON(r *http.Request, v any) error {

@@ -59,9 +59,10 @@ One OS process bound to one `WORKSPACE_ROOT`. Each target project has `.mcp-sema
 One long-running HTTP server serves multiple workspaces via `workspace_id`.
 
 - `daemon.yaml` registers workspaces: `id`, `root`, `index_dir`, `config_path`.
-- HTTP: header `X-Workspace-ID` or JSON field `workspace_id`.
+- HTTP: header `X-Workspace-ID` or JSON/query field `workspace_id`.
 - `internal/daemon.WorkspaceRegistry` with LRU eviction (`max_open_workspaces`).
 - MCP: thin `--stdio-proxy --workspace-id=... --daemon-url=...` for Cursor.
+- CLI: `--daemon --daemon-config daemon.yaml` starts HTTP only; no per-project stdio cleanup.
 
 ## Package layout
 

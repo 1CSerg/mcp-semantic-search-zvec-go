@@ -59,6 +59,7 @@ internal/
   watcher/                          # fsnotify + polling (Phase 3)
   logging/                          # file log rotation (Phase 3)
   crash/                            # last_crash.json (Phase 3)
+  daemon/                           # multi-workspace registry (Phase 5)
 docs/
 scripts/                            # install
 templates/                          # MCP fragments
@@ -159,6 +160,14 @@ Linux: `make smoke-phase3`
 ```
 
 Linux: `make smoke-phase4`
+
+**Phase 5 gate smoke** (shared daemon, 3 workspaces, MCP proxy unit check):
+
+```powershell
+.\scripts\smoke-phase5.ps1
+```
+
+Linux: `make smoke-phase5`
 
 Production build:
 

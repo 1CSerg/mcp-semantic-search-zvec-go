@@ -50,6 +50,17 @@ func TestLoadDotEnvMissingFile(t *testing.T) {
 	}
 }
 
+func TestParseDotEnvInvalidLine(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("INVALID LINE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseDotEnv(path); err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
 func TestLoadDotEnvCandidates(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

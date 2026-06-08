@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
 )
 
@@ -204,6 +205,60 @@ func TestHandlerServiceErrors(t *testing.T) {
 			t.Fatalf("status=%d", rec.Code)
 		}
 	})
+}
+
+func TestDaemonModeWorkspaceRouting(t *testing.T) {
+	settings := testSettings()
+	registry := daemon.NewRegistry(daemon.Config{
+		MaxOpenWorkspaces: 2,
+		Workspaces: []daemon.WorkspaceSpec{{
+			ID:   "ws-a",
+			Root: t.TempDir(),
+		}},
+	}, t.Context())
+	defer registry.Close()
+	srv := NewDaemon(settings, registry)
+	handler := srv.Handler()
+
+	t.Run("workspaces list", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/workspaces", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("status missing workspace", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/status", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("status unknown workspace", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/status?workspace_id=missing", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestDaemonModeSearchRequiresWorkspace(t *testing.T) {
+	settings := testSettings()
+	registry := daemon.NewRegistry(daemon.Config{
+		Workspaces: []daemon.WorkspaceSpec{{ID: "ws-a", Root: t.TempDir()}},
+	}, t.Context())
+	defer registry.Close()
+	srv := NewDaemon(settings, registry)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/search", bytes.NewReader([]byte(`{"query":"auth"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 func TestListenAndServeShutdown(t *testing.T) {

@@ -48,7 +48,7 @@ git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go $env:TEMP\mcp-se
 | Режим | Описание |
 |-------|----------|
 | **Per-project** (по умолчанию) | Один процесс на workspace; изоляция индексов |
-| **Shared daemon** (Phase 5) | Один HTTP-сервис, несколько workspace через `workspace_id` |
+| **Shared daemon** (Phase 5) | Один HTTP-сервис, несколько workspace через `workspace_id` и `--stdio-proxy` |
 
 ## Статус
 

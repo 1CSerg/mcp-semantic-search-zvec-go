@@ -1,0 +1,13 @@
+# Shared daemon registration (Phase 5).
+# Env alternative: WORKSPACES_CONFIG=/path/to/daemon.yaml
+max_open_workspaces: 10
+
+workspaces:
+  - id: my-app
+    root: /path/to/my-app
+    index_dir: /path/to/my-app/.mcp-semantic-search-zvec-go/data/index
+    config_path: /path/to/my-app/.mcp-semantic-search-zvec-go/config.yaml
+  - id: other-app
+    root: /path/to/other-app
+    index_dir: /path/to/other-app/.mcp-semantic-search-zvec-go/data/index
+    config_path: /path/to/other-app/.mcp-semantic-search-zvec-go/config.yaml

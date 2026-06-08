@@ -1,4 +1,4 @@
-.PHONY: build build-zvec fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4
+.PHONY: build build-zvec fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4 smoke-phase5
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
@@ -59,6 +59,9 @@ smoke-phase3: build-zvec
 
 smoke-phase4: build-zvec fetch-onnx-model
 	bash scripts/smoke-phase4.sh
+
+smoke-phase5: build-zvec
+	bash scripts/smoke-phase5.sh
 
 seed-index: fetch-zvec-libs
 	. $(ZVEC_ENV) && \

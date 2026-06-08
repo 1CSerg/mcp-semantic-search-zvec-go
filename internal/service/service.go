@@ -13,15 +13,17 @@ var ErrNotImplemented = fmt.Errorf("not implemented yet (see docs/ROADMAP.md)")
 
 // SearchRequest is shared by MCP and HTTP.
 type SearchRequest struct {
-	Query    string  `json:"query"`
-	Limit    int     `json:"limit,omitempty"`
-	PathGlob *string `json:"path_glob,omitempty"`
-	TopK     *int    `json:"top_k,omitempty"` // deprecated alias
+	Query       string  `json:"query"`
+	Limit       int     `json:"limit,omitempty"`
+	PathGlob    *string `json:"path_glob,omitempty"`
+	TopK        *int    `json:"top_k,omitempty"` // deprecated alias
+	WorkspaceID string  `json:"workspace_id,omitempty"`
 }
 
 // ReindexRequest triggers background indexing.
 type ReindexRequest struct {
-	Force bool `json:"force,omitempty"`
+	Force       bool   `json:"force,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
 }
 
 // Service is the core semantic search API used by MCP and HTTP transports.

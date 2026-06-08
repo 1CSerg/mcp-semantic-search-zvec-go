@@ -164,7 +164,7 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["phase"] != "4" {
+	if payload["phase"] != "5" {
 		t.Fatalf("phase=%v", payload["phase"])
 	}
 }
@@ -714,5 +714,12 @@ func TestReadyMissingCollection(t *testing.T) {
 	p.zvec = &mockZvecStore{openErr: zvec.ErrCollectionMissing}
 	if err := p.Ready(); err == nil || err.Error() != "index not built yet" {
 		t.Fatalf("Ready: %v", err)
+	}
+}
+
+func TestPhase1Close(t *testing.T) {
+	p := &Phase1{zvec: &mockZvecStore{}}
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }

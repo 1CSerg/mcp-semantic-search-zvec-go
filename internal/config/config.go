@@ -98,55 +98,6 @@ type ServerConfig struct {
 	HTTPAddr string `yaml:"http_addr"`
 }
 
-// Load reads environment variables and YAML config.
-func Load() (*Settings, error) {
-	workspace := envOr("WORKSPACE_ROOT", mustAbs(getwd()))
-	workspaceID := envOr("WORKSPACE_ID", workspace)
-
-	indexRaw := envOr("INDEX_DIR", filepath.Join(workspace, DefaultInstallDirName, DefaultIndexSubdir))
-	indexDir, err := absPath(indexRaw, workspace)
-	if err != nil {
-		return nil, err
-	}
-
-	configRaw := envOr("CONFIG_PATH", filepath.Join(workspace, DefaultInstallDirName, "config.yaml"))
-	configPath, err := absPath(configRaw, workspace)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := loadDotEnvCandidates(workspace, configPath); err != nil {
-		return nil, err
-	}
-
-	app, err := LoadAppConfig(configPath)
-	if err != nil {
-		return nil, err
-	}
-	applyEnvOverrides(&app)
-
-	autoIndex := strings.EqualFold(envOr("AUTO_INDEX_ON_START", "false"), "true")
-	httpAddr := DefaultHTTPAddr
-	if app.Server.HTTPAddr != "" {
-		httpAddr = app.Server.HTTPAddr
-	}
-	if v := os.Getenv("HTTP_ADDR"); v != "" {
-		httpAddr = v
-	}
-
-	return &Settings{
-		WorkspaceRoot:    workspace,
-		WorkspaceID:      workspaceID,
-		IndexDir:         indexDir,
-		ConfigPath:       configPath,
-		AutoIndexOnStart: autoIndex,
-		GitHubRepo:       envOr("GITHUB_REPO", "1CSerg/mcp-semantic-search-zvec-go"),
-		HTTPAddr:         httpAddr,
-		APIToken:         os.Getenv("API_TOKEN"),
-		App:              app,
-	}, nil
-}
-
 // LoadAppConfig parses YAML from path.
 func LoadAppConfig(path string) (AppConfig, error) {
 	data, err := os.ReadFile(path)

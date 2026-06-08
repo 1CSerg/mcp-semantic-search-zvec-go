@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "semantic-search-zvec-go": {
+      "command": "${workspaceFolder}/.mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go",
+      "args": [
+        "--stdio-proxy",
+        "--workspace-id",
+        "MY_WORKSPACE_ID",
+        "--daemon-url",
+        "http://127.0.0.1:8080"
+      ],
+      "env": {
+        "API_TOKEN": ""
+      }
+    }
+  }
+}

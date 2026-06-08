@@ -216,7 +216,7 @@ func (c *Client) embedBatch(texts []string) ([][]float32, error) {
 	maxLen := 0
 	encoded := make([]*tokenizer.Encoding, len(texts))
 	for i, text := range texts {
-	enc, err := c.tokenizer.EncodeSingle(text, true)
+		enc, err := c.tokenizer.EncodeSingle(text, true)
 		if err != nil {
 			return nil, fmt.Errorf("tokenize: %w", err)
 		}

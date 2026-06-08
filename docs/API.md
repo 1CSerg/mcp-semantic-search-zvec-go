@@ -16,7 +16,7 @@ Liveness probe.
 {
   "status": "ok",
   "service": "mcp-semantic-search-zvec-go",
-  "version": "0.1.0"
+  "version": "1.0.0"
 }
 ```
 
@@ -63,7 +63,7 @@ Request:
 | `limit` | int | no | Max results (default 10) |
 | `path_glob` | string | no | Filter result paths |
 | `top_k` | int | no | Deprecated alias for `limit` |
-| `workspace_id` | string | no | Required in shared daemon mode (Phase 5) |
+| `workspace_id` | string | no | Required in shared daemon mode (`--daemon`) |
 
 Response (success):
 
@@ -92,7 +92,7 @@ During indexing: HTTP 409 with `indexing` progress object.
 
 #### `GET /v1/status`
 
-Same JSON as MCP `index_status`. Optional query `?workspace_id=` (Phase 5).
+Same JSON as MCP `index_status`. In shared daemon mode, pass `?workspace_id=` or header `X-Workspace-ID`.
 
 ---
 
@@ -103,10 +103,23 @@ Same JSON as MCP `index_status`. Optional query `?workspace_id=` (Phase 5).
 Request:
 
 ```json
-{ "force": false }
+{
+  "force": false,
+  "workspace_id": "my-app"
+}
 ```
 
+In shared daemon mode, `workspace_id` is required (JSON body, query, or `X-Workspace-ID` header).
+
 Starts background indexing; returns initial progress.
+
+---
+
+### Ready (workspace-scoped)
+
+#### `GET /ready`
+
+In shared daemon mode, pass `?workspace_id=` or header `X-Workspace-ID`.
 
 ---
 
@@ -118,11 +131,41 @@ Installed vs latest GitHub release.
 
 ---
 
-### Workspaces (Phase 5)
+### Workspaces (shared daemon)
 
 #### `GET /v1/workspaces`
 
-List registered workspaces in shared daemon mode. Returns `501` until Phase 5.
+List registered workspaces in shared daemon mode (`--daemon`). Returns `501` in per-project mode.
+
+Response:
+
+```json
+{
+  "workspaces": [
+    {
+      "id": "my-app",
+      "root": "/path/to/my-app",
+      "index_dir": "/path/to/my-app/.mcp-semantic-search-zvec-go/data/index",
+      "config_path": "/path/to/my-app/.mcp-semantic-search-zvec-go/config.yaml",
+      "open": true
+    }
+  ]
+}
+```
+
+---
+
+## Shared daemon CLI
+
+| Flag | Description |
+|------|-------------|
+| `--daemon` | Run shared multi-workspace HTTP daemon |
+| `--daemon-config` | Path to `daemon.yaml` (or `WORKSPACES_CONFIG`) |
+| `--stdio-proxy` | MCP stdio → HTTP proxy (use with `--workspace-id`) |
+| `--workspace-id` | Workspace ID for `--stdio-proxy` |
+| `--daemon-url` | Daemon base URL for proxy (default `http://127.0.0.1:8080`) |
+
+Per-project mode (default): `--stdio` and/or `--http` with `WORKSPACE_ROOT` env (unchanged).
 
 ---
 
@@ -165,6 +208,8 @@ No arguments. Returns `installed_version`, `latest_version`, `update_available`.
 |-----------|------|-----|
 | Invalid JSON | 400 | tool error |
 | Indexing in progress | 409 | JSON with empty `results` + `indexing` |
+| Missing `workspace_id` (daemon) | 400 | tool error (proxy) |
+| Unknown `workspace_id` (daemon) | 404 | tool error (proxy) |
 | Index owner mismatch | 200* | JSON with message + empty results |
 | Internal error | 500 | tool error |
 
