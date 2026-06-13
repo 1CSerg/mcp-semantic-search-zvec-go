@@ -170,7 +170,7 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 		return nil, ErrCollectionMissing
 	}
 
-	q := zvec.NewVectorQuery()
+	q := zvec.NewSearchQuery()
 	defer q.Destroy()
 	if err := q.SetFieldName(fieldEmbedding); err != nil {
 		return nil, err

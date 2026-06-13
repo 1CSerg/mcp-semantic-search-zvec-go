@@ -79,10 +79,10 @@ try {
     Wait-Health $HttpPort
 
     $status = Invoke-RestMethod -Uri "http://127.0.0.1:$HttpPort/v1/status" -TimeoutSec 10
-    if ($status.embedding_provider -ne "onnx") {
-        throw "expected onnx provider, got $($status.embedding_provider)"
+    if (-not $status.embedding_model_path) {
+        throw "expected local ONNX model path in status, got: $($status | ConvertTo-Json -Compress)"
     }
-    if ($status.bootstrap -eq $true -or $status.phase -ne "4") {
+    if ($status.bootstrap -eq $true) {
         throw "service running in stub/bootstrap mode: $($status | ConvertTo-Json -Compress)"
     }
 

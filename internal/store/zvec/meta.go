@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
 // IndexMeta binds an index directory to a workspace owner.
@@ -15,6 +17,7 @@ type IndexMeta struct {
 	EmbeddingProfile     string `json:"embedding_profile"`
 	EmbeddingDimensions  int    `json:"embedding_dimensions"`
 	CollectionName       string `json:"collection_name"`
+	ZvecGoVersion        string `json:"zvec_go_version,omitempty"`
 	CreatedAt            string `json:"created_at"`
 	UpdatedAt            string `json:"updated_at"`
 }
@@ -90,5 +93,6 @@ func EnsureIndexMeta(indexDir, workspaceID, workspaceRoot, profile string, dimen
 		EmbeddingProfile:     profile,
 		EmbeddingDimensions:  dimensions,
 		CollectionName:       CollectionName(workspaceRoot, profile, dimensions),
+		ZvecGoVersion:        version.ZvecGoVersion,
 	})
 }

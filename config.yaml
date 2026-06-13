@@ -106,9 +106,9 @@ profiles:
     batch_size: 32
     timeout_seconds: 60
 
-  # Локальная ONNX-модель без сети (Phase 4).
+  # Локальная ONNX-модель без сети.
   local_multilingual:
-    description: Локальная multilingual ONNX (Phase 4)
+    description: Локальная multilingual ONNX
     provider: onnx
     model: paraphrase-multilingual-MiniLM-L12-v2
     dimensions: 384
@@ -126,6 +126,7 @@ indexing:
     - .tsx
     - .jsx
     - .md
+    - .mdc
     - .yaml
     - .yml
     - .json
@@ -140,9 +141,19 @@ indexing:
     - .sql
     - .sh
     - .ps1
+    - .cmd
+    - .bat
+    - .bsl
+    - .mdo
+    - .form
+    - .html
+    - .rights
+    - .xdto
+    - .dcs
   # Имена каталогов, которые обход индексатора пропускает.
   skip_dirs:
     - .git
+    - .deps
     - node_modules
     - vendor
     - dist
@@ -151,9 +162,8 @@ indexing:
     - .venv
     - venv
     - .mcp-semantic-search-zvec-go
-    - .mcp-semantic-search-zvec
   # Через сколько секунд index.lock считается устаревшим и может быть перехвачен.
-  lock_stale_seconds: 300
+  lock_stale_seconds: 30
   # Нет прогресса индексации дольше этого времени — попытка восстановления (секунды).
   stall_seconds: 120
   # Интервал обновления heartbeat в index.lock при длительной индексации (секунды).
@@ -186,13 +196,13 @@ file_watcher:
 # Параметры файлового логирования сервера (Phase 3 — ротация).
 logging:
   # Уровень: DEBUG, INFO, WARNING, ERROR.
-  level: INFO
+  level: DEBUG
   # Подробный вывод в лог (диагностика).
-  verbose: false
+  verbose: true
   # Максимальный размер одного log-файла перед ротацией (байты).
-  max_bytes: 5242880
+  max_bytes: 1048576
   # Сколько архивных log-файлов хранить.
-  backup_count: 3
+  backup_count: 1
 
 # HTTP REST API (при запуске с флагом --http).
 server:

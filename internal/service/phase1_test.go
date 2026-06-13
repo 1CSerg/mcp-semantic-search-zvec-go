@@ -19,12 +19,15 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
 type mockZvecStore struct {
-	hits    []zvec.SearchHit
-	err     error
-	openErr error
+	hits       []zvec.SearchHit
+	err        error
+	openErr    error
+	wipeErr    error
+	wipeCalled bool
 }
 
 func (m *mockZvecStore) Open() error {
@@ -37,7 +40,10 @@ func (m *mockZvecStore) Close() error                                 { return n
 func (m *mockZvecStore) DocCount() (int, error)                       { return len(m.hits), nil }
 func (m *mockZvecStore) UpsertChunks([]zvec.Chunk, [][]float32) error { return nil }
 func (m *mockZvecStore) DeleteByIDs([]string) error                   { return nil }
-func (m *mockZvecStore) WipeCollection() error                        { return nil }
+func (m *mockZvecStore) WipeCollection() error {
+	m.wipeCalled = true
+	return m.wipeErr
+}
 func (m *mockZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -164,8 +170,8 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["phase"] != "5" {
-		t.Fatalf("phase=%v", payload["phase"])
+	if payload["server_version"] != version.Version {
+		t.Fatalf("server_version=%v", payload["server_version"])
 	}
 }
 
@@ -722,4 +728,265 @@ func TestPhase1Close(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+}
+
+type phase1StubEmbedder struct {
+	dims int
+}
+
+func (e *phase1StubEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		v := make([]float32, e.dims)
+		v[0] = 1
+		out[i] = v
+	}
+	return out, nil
+}
+
+func (e *phase1StubEmbedder) Dimensions() int { return e.dims }
+
+func phase1MigrationSettings(t *testing.T, autoIndex bool) (*config.Settings, string) {
+	t.Helper()
+	dir := t.TempDir()
+	indexDir := filepath.Join(dir, "index")
+	return &config.Settings{
+		WorkspaceRoot:    dir,
+		WorkspaceID:      "ws1",
+		IndexDir:         indexDir,
+		AutoIndexOnStart: autoIndex,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+				StallSeconds:     120,
+			},
+		},
+	}, indexDir
+}
+
+func TestPrepareStartupSkipsWhenVersionsMatch(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, true)
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{ZvecGoVersion: version.ZvecGoVersion}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+	if store.wipeCalled {
+		t.Fatal("unexpected wipe")
+	}
+	waitCoordinatorIdle(t, p)
+}
+
+func TestGetIndexStatusZvecGoVersions(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
+		t.Fatal(err)
+	}
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        &mockZvecStore{},
+		searchStats: NewSearchStats(settings.App.Search),
+		zvecCfg: zvec.Config{
+			IndexDir:      indexDir,
+			WorkspaceRoot: settings.WorkspaceRoot,
+			ProfileName:   settings.App.ActiveProfile,
+			Dimensions:    3,
+		},
+	}
+	raw, err := p.GetIndexStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["zvec_go_version"] != version.ZvecGoVersion {
+		t.Fatalf("zvec_go_version=%v", payload["zvec_go_version"])
+	}
+	if payload["index_zvec_go_version"] != "v0.3.1" {
+		t.Fatalf("index_zvec_go_version=%v", payload["index_zvec_go_version"])
+	}
+}
+
+func TestPrepareStartupMigratesWithAutoIndex(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, true)
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+
+	if !store.wipeCalled {
+		t.Fatal("expected wipe during migration")
+	}
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ZvecGoVersion != version.ZvecGoVersion {
+		t.Fatalf("meta=%+v", meta)
+	}
+	waitCoordinatorIdle(t, p)
+}
+
+func TestPrepareStartupMigratesWithoutAutoIndex(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+
+	if !store.wipeCalled {
+		t.Fatal("expected wipe during migration")
+	}
+	if coord.IsRunning() {
+		t.Fatal("expected no background reindex when AUTO_INDEX_ON_START=false")
+	}
+	if p.startupMsg == "" {
+		t.Fatal("expected startup message")
+	}
+}
+
+func TestGetIndexStatusStartupMsg(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+		searchStats: NewSearchStats(settings.App.Search),
+	}
+	p.PrepareStartup()
+
+	raw, err := p.GetIndexStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["message"] != p.startupMsg {
+		t.Fatalf("message=%v", payload["message"])
+	}
+}
+
+func TestPrepareStartupNilCoordinator(t *testing.T) {
+	settings, _ := phase1MigrationSettings(t, true)
+	p := &Phase1{Settings: settings}
+	p.PrepareStartup()
+}
+
+func TestPrepareStartupMigrationCheckError(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, true)
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(indexDir, "index_meta.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+	if store.wipeCalled {
+		t.Fatal("unexpected wipe on corrupt meta")
+	}
+	waitCoordinatorIdle(t, p)
 }

@@ -1,5 +1,17 @@
 # ZVEC spike — результаты прогона
 
+## Сводка (2026-06-10 — bump zvec-ai/zvec-go v0.5.0)
+
+| Способ | Результат | Примечание |
+|--------|-----------|------------|
+| API wrapper | **PASS** | `NewSearchQuery`, `NewHNSWIndexParams` + error |
+| Integration tests | **PASS** | `go test -tags integration,zvec ./internal/store/zvec/...` (Windows) |
+| Windows build | **PASS** | `scripts/dev/build-zvec-windows.ps1` |
+
+**Примечание:** on-disk коллекции v0.3.1 могут потребовать reindex после обновления native libs (alibaba/zvec ≥ v0.4.0).
+
+---
+
 ## Сводка (2026-06-08 — миграция на zvec-ai/zvec-go v0.3.1)
 
 | Способ | Результат | Примечание |
@@ -98,7 +110,7 @@ Checklist [ZVEC_SPIKE.md](ZVEC_SPIKE.md): пункты 1–7 покрыты `Tes
 
 | | |
 |---|---|
-| Модуль | `github.com/zvec-ai/zvec-go v0.3.1` |
+| Модуль | `github.com/zvec-ai/zvec-go v0.5.0` |
 | Replace | `./.deps/zvec-go` |
 | Native libs | `scripts/fetch/fetch-zvec-libs.sh` → GitHub Release artifacts |
 | API wrapper | `internal/store/zvec/` |

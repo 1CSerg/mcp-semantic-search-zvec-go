@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
 func TestIndexMetaRoundTrip(t *testing.T) {
@@ -55,6 +57,20 @@ func TestEnsureIndexMetaExisting(t *testing.T) {
 	}
 	if meta.WorkspaceID != "ws1" {
 		t.Fatalf("meta=%+v", meta)
+	}
+}
+
+func TestEnsureIndexMetaSetsZvecGoVersion(t *testing.T) {
+	dir := t.TempDir()
+	if err := EnsureIndexMeta(dir, "ws1", "/proj", "smoke", 128); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ZvecGoVersion != version.ZvecGoVersion {
+		t.Fatalf("ZvecGoVersion=%q want %q", meta.ZvecGoVersion, version.ZvecGoVersion)
 	}
 }
 

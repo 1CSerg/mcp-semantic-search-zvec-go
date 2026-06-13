@@ -28,6 +28,7 @@ type Phase1 struct {
 	coordinator *indexer.Coordinator
 	searchStats *SearchStats
 	watcherInst *watcher.Watcher
+	startupMsg  string
 }
 
 // NewPhase1 creates a Phase 1/2 service.
@@ -215,11 +216,9 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"workspace_root":          p.Settings.WorkspaceRoot,
 		"index_dir":               p.Settings.IndexDir,
 		"config_path":             p.Settings.ConfigPath,
-		"embedding_profile":       p.Settings.App.ActiveProfile,
-		"embedding_provider":      profile.Provider,
-		"embedding_model":         profile.Model,
-		"embedding_dimensions":    profile.Dimensions,
 		"server_version":          version.Version,
+		"zvec_go_version":         version.ZvecGoVersion,
+		"index_zvec_go_version":   p.indexZvecGoVersion(),
 		"indexed_files":           files,
 		"indexed_chunks_manifest": chunks,
 		"zvec_doc_count":          docCount,
@@ -227,7 +226,6 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"zvec_collection_path":    collectionPath,
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
-		"phase":                   "5",
 		"indexing":                idx.ToIndexingMap(),
 		"file_watcher":            p.fileWatcherStatus(),
 		"search_performance":      p.searchStats.Snapshot(),
@@ -247,7 +245,18 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 	if profileErr != nil {
 		payload["message"] = profileErr.Error()
 	}
+	if p.startupMsg != "" && profileErr == nil {
+		payload["message"] = p.startupMsg
+	}
 	return marshal(payload)
+}
+
+func (p *Phase1) indexZvecGoVersion() string {
+	meta, err := zvec.ReadIndexMeta(p.Settings.IndexDir)
+	if err != nil {
+		return ""
+	}
+	return meta.ZvecGoVersion
 }
 
 func (p *Phase1) Reindex(req ReindexRequest) (json.RawMessage, error) {
@@ -337,6 +346,50 @@ func (p *Phase1) StartFileWatcher(ctx context.Context) {
 	}
 	p.watcherInst = w
 	go w.Start(ctx)
+}
+
+// PrepareStartup runs zvec-go migration if needed and optional background indexing on start.
+func (p *Phase1) PrepareStartup() {
+	if p.coordinator == nil {
+		return
+	}
+	if p.runZvecGoMigrationIfNeeded() {
+		return
+	}
+	p.StartAutoIndex()
+}
+
+func (p *Phase1) runZvecGoMigrationIfNeeded() bool {
+	need, meta, err := zvec.NeedsZvecGoMigration(p.Settings.IndexDir, version.ZvecGoVersion)
+	if err != nil {
+		slog.Warn("zvec-go migration check failed", "err", err)
+		return false
+	}
+	if !need {
+		return false
+	}
+
+	from := ""
+	if meta != nil {
+		from = meta.ZvecGoVersion
+	}
+	slog.Info("zvec-go version changed; resetting index", "from", from, "to", version.ZvecGoVersion)
+
+	if err := zvec.ResetIndexForZvecMigration(p.Settings.IndexDir, meta, p.zvec, version.ZvecGoVersion); err != nil {
+		slog.Warn("zvec-go migration reset failed", "err", err)
+		return false
+	}
+
+	if p.Settings.AutoIndexOnStart {
+		if _, err := p.coordinator.Start(true); err != nil {
+			slog.Warn("zvec-go migration reindex failed to start", "err", err)
+		}
+		return true
+	}
+
+	p.startupMsg = "zvec-go updated — run reindex to rebuild the index"
+	slog.Info(p.startupMsg)
+	return true
 }
 
 // StartAutoIndex triggers background indexing when AUTO_INDEX_ON_START is enabled.

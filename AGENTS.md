@@ -84,6 +84,7 @@ curl -X POST http://127.0.0.1:8080/v1/search -H "Content-Type: application/json"
 |---------|--------|
 | MCP not listed | Restart IDE; check `.cursor/mcp.json` JSON |
 | Empty search, indexing idle | `reindex`; check `index_status` |
+| After MCP binary update (zvec-go bump) | Index resets on first start; with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |
 | `index_owner_mismatch` | Re-run install; separate `INDEX_DIR` per project |
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
 | Shared daemon: `workspace_id` required | Use `--stdio-proxy --workspace-id=<id>` or HTTP `X-Workspace-ID` |

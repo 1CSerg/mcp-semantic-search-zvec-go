@@ -25,25 +25,23 @@ func buildSchema(collectionName string, dimensions int) (*zvec.CollectionSchema,
 
 	schema := zvec.NewCollectionSchema(collectionName)
 
-	hnsw := zvec.NewHNSWIndexParams(zvec.MetricTypeCosine, 16, 200)
-	if hnsw == nil {
+	hnsw, err := zvec.NewHNSWIndexParams(zvec.MetricTypeCosine, 16, 200)
+	if err != nil {
 		schema.Destroy()
-		return nil, fmt.Errorf("create HNSW index params")
+		return nil, err
 	}
+	defer hnsw.Destroy()
 
 	embField := zvec.NewFieldSchema(fieldEmbedding, zvec.DataTypeVectorFP32, false, uint32(dimensions))
 	if embField == nil {
-		hnsw.Destroy()
 		schema.Destroy()
 		return nil, fmt.Errorf("create embedding field schema")
 	}
 	if err := embField.SetIndexParams(hnsw); err != nil {
 		embField.Destroy()
-		hnsw.Destroy()
 		schema.Destroy()
 		return nil, err
 	}
-	hnsw.Destroy()
 	if err := schema.AddField(embField); err != nil {
 		embField.Destroy()
 		schema.Destroy()

@@ -28,6 +28,13 @@ func main() {
 }
 
 func run() int {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" {
+			fmt.Println(version.Version)
+			return 0
+		}
+	}
+
 	var (
 		stdio        bool
 		stdioProxy   bool
@@ -120,9 +127,7 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 	if p, err := service.NewPhase1(settings); err == nil {
 		phase1 = p
 		svc = phase1
-		if settings.AutoIndexOnStart {
-			phase1.StartAutoIndex()
-		}
+		phase1.PrepareStartup()
 	} else {
 		slog.Warn("phase1 service init failed, using stub", "err", err)
 	}

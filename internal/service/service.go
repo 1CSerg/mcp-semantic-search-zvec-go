@@ -67,15 +67,10 @@ func (s *Stub) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 }
 
 func (s *Stub) GetIndexStatus() (json.RawMessage, error) {
-	profile, _ := s.Settings.ActiveProfile()
 	payload := map[string]any{
 		"workspace_root":          s.Settings.WorkspaceRoot,
 		"index_dir":               s.Settings.IndexDir,
 		"config_path":             s.Settings.ConfigPath,
-		"embedding_profile":       s.Settings.App.ActiveProfile,
-		"embedding_provider":      profile.Provider,
-		"embedding_model":         profile.Model,
-		"embedding_dimensions":    profile.Dimensions,
 		"server_version":          version.Version,
 		"indexed_files":           0,
 		"indexed_chunks_manifest": 0,

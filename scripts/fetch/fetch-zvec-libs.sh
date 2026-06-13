@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# Clone zvec-ai/zvec-go v0.3.1 into .deps/ and download pre-built native libs.
+# Clone zvec-ai/zvec-go v0.5.0 into .deps/ and download pre-built native libs.
 # Prints ZVEC_LIB_DIR=... for CI (append >> $GITHUB_ENV) or: eval "$(bash scripts/fetch/fetch-zvec-libs.sh)"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="$ROOT/.deps/zvec-go"
-TAG="${ZVEC_GO_TAG:-v0.3.1}"
+TAG="${ZVEC_GO_TAG:-v0.5.0}"
 
 if [[ ! -d "$DEST/.git" ]]; then
   mkdir -p "$(dirname "$DEST")"
   echo "Cloning zvec-go $TAG into $DEST..." >&2
   git clone --depth 1 --branch "$TAG" https://github.com/zvec-ai/zvec-go "$DEST"
+else
+  current_tag="$(cd "$DEST" && git describe --tags --exact-match 2>/dev/null || true)"
+  if [[ "$current_tag" != "$TAG" ]]; then
+    echo "Updating zvec-go in $DEST to $TAG (was ${current_tag:-unknown})..." >&2
+    (cd "$DEST" && git fetch --depth 1 origin "tag $TAG" && git checkout "$TAG")
+  fi
 fi
 
 (cd "$DEST" && go run ./cmd/download-libs -version "$TAG" >&2)

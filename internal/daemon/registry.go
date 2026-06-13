@@ -118,9 +118,7 @@ func (r *Registry) openWorkspace(spec WorkspaceSpec) (service.Service, error) {
 	}
 	wsCtx, cancel := context.WithCancel(r.rootCtx)
 	phase1.StartFileWatcher(wsCtx)
-	if settings.AutoIndexOnStart {
-		phase1.StartAutoIndex()
-	}
+	phase1.PrepareStartup()
 
 	h := &workspaceHandle{
 		spec:     spec,

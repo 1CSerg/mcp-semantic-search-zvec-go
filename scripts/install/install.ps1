@@ -33,15 +33,31 @@ function Get-VersionFromRepo {
 
 function Merge-McpJson {
     param([string]$Path, [string]$FragmentPath)
-    $fragment = Get-Content -Raw $FragmentPath | ConvertFrom-Json
-    $obj = @{ mcpServers = @{} }
+
+    $obj = [ordered]@{}
+    $mcpServers = @{}
     if (Test-Path $Path) {
-        try { $obj = Get-Content -Raw $Path | ConvertFrom-Json } catch { }
+        try {
+            $existing = Get-Content -Raw $Path | ConvertFrom-Json
+            foreach ($p in $existing.PSObject.Properties) {
+                if ($p.Name -eq "mcpServers") {
+                    if ($null -ne $p.Value) {
+                        foreach ($sp in $p.Value.PSObject.Properties) {
+                            $mcpServers[$sp.Name] = $sp.Value
+                        }
+                    }
+                } else {
+                    $obj[$p.Name] = $p.Value
+                }
+            }
+        } catch { }
     }
-    if (-not $obj.mcpServers) { $obj | Add-Member -NotePropertyName mcpServers -NotePropertyValue @{} -Force }
+
+    $fragment = Get-Content -Raw $FragmentPath | ConvertFrom-Json
     foreach ($p in $fragment.mcpServers.PSObject.Properties) {
-        $obj.mcpServers | Add-Member -NotePropertyName $p.Name -NotePropertyValue $p.Value -Force
+        $mcpServers[$p.Name] = $p.Value
     }
+    $obj["mcpServers"] = $mcpServers
     Write-Utf8File $Path ($obj | ConvertTo-Json -Depth 10)
 }
 

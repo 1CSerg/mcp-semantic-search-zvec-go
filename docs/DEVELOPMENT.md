@@ -67,7 +67,7 @@ templates/                          # MCP fragments
 
 ## zvec-go (Phase 1)
 
-Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.3.1 (CGO, vendor pre-built libs).
+Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.5.0 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) ≥ v0.4.0). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
 
 ### Build tags
 
@@ -84,7 +84,7 @@ make fetch-zvec-libs
 # writes .deps/zvec-lib.env with ZVEC_LIB_DIR
 ```
 
-Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.3.1` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
 
 ### ONNX (Phase 4)
 
@@ -248,9 +248,28 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 
 Использование MCP в **целевом проекте пользователя** (install, tools, troubleshooting): [AGENTS.md](../AGENTS.md).
 
-## Version bump
+## Versions
+
+### MCP server
 
 - Единственный источник версии: `internal/version/version.go`.
 - `scripts/install/install.sh` и `scripts/install/install.ps1` читают версию из клона; install собирает бинарник (`go build`) или копирует готовый из `bin/`. Не добавляйте захардкоженный fallback в скрипты.
 - Перед тегом `v*`: отредактируйте `version.go`; release workflow проверяет совпадение с git-тегом.
 - Примеры установки в `AGENTS.md`, `README.md`, `docs/INSTALL.md` — из актуального клона или release-тега.
+
+### zvec-go
+
+Версия [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) задаётся в нескольких местах — при bump обновляйте **все** перечисленные:
+
+| Место | Что менять |
+|-------|------------|
+| `go.mod` | `require github.com/zvec-ai/zvec-go vX.Y.Z` и `replace => ./.deps/zvec-go` |
+| `internal/version/version.go` | `ZvecGoVersion` (тег `vX.Y.Z`, вшит в бинарник) |
+| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.5.0`) |
+| `scripts/fetch/fetch-zvec-libs.ps1` | то же |
+
+Локальная копия модуля и pre-built native libs (`zvec_c_api.dll` / `libzvec_c_api.so` и т.д.) подтягиваются в `.deps/zvec-go` через `make fetch-zvec-libs` по тегу из fetch-скриптов. Переопределение без правки файлов: env `ZVEC_GO_TAG=vX.Y.Z`. Fetch-скрипты при несовпадении тега делают `git fetch` + `checkout` (re-clone вручную не обязателен).
+
+После смены версии: обновите таблицу выше и снова `make fetch-zvec-libs`.
+
+**Автомиграция в целевом проекте:** при старте бинарник сравнивает `version.ZvecGoVersion` с `zvec_go_version` в `index_meta.json`. При расхождении сбрасывает zvec-коллекцию и `manifest.db`; если `AUTO_INDEX_ON_START=true` (default install) — запускает force `reindex`, иначе нужен ручной MCP `reindex`.

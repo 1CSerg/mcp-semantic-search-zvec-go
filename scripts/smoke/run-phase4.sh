@@ -70,14 +70,14 @@ export LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 SMOKE_PROCS+=("$!")
 wait_health
 
-provider=$(curl -sf "http://127.0.0.1:${HTTP_PORT}/v1/status" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["embedding_provider"])')
-if [[ "$provider" != "onnx" ]]; then
-  echo "expected onnx provider, got $provider" >&2
+model_path=$(curl -sf "http://127.0.0.1:${HTTP_PORT}/v1/status" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("embedding_model_path",""))')
+if [[ -z "$model_path" ]]; then
+  echo "expected embedding_model_path for local ONNX profile" >&2
   exit 1
 fi
-phase=$(curl -sf "http://127.0.0.1:${HTTP_PORT}/v1/status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("phase",""))')
-if [[ "$phase" != "4" ]]; then
-  echo "service not in phase 4 (stub mode?): phase=$phase" >&2
+bootstrap=$(curl -sf "http://127.0.0.1:${HTTP_PORT}/v1/status" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("bootstrap", False))')
+if [[ "$bootstrap" == "True" ]]; then
+  echo "service running in stub/bootstrap mode" >&2
   exit 1
 fi
 

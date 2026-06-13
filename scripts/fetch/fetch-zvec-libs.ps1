@@ -1,12 +1,28 @@
-# Clone zvec-ai/zvec-go and download pre-built vendor libs into .deps/zvec-go.
+# Clone zvec-ai/zvec-go v0.5.0 and download pre-built vendor libs into .deps/zvec-go.
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Dest = Join-Path $RepoRoot ".deps\zvec-go"
-$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.3.1" }
+$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.5.0" }
 
 if (-not (Test-Path (Join-Path $Dest ".git"))) {
     New-Item -ItemType Directory -Force -Path (Split-Path $Dest) | Out-Null
+    Write-Host "Cloning zvec-go $Tag into $Dest..."
     git clone --depth 1 --branch $Tag https://github.com/zvec-ai/zvec-go $Dest
+} else {
+    Push-Location $Dest
+    try {
+        $currentTag = git describe --tags --exact-match 2>$null
+        if ($LASTEXITCODE -ne 0) { $currentTag = "unknown" }
+        if ($currentTag -ne $Tag) {
+            Write-Host "Updating zvec-go in $Dest to $Tag (was $currentTag)..."
+            git fetch --depth 1 origin "tag $Tag"
+            if ($LASTEXITCODE -ne 0) { throw "git fetch tag $Tag failed" }
+            git checkout $Tag
+            if ($LASTEXITCODE -ne 0) { throw "git checkout $Tag failed" }
+        }
+    } finally {
+        Pop-Location
+    }
 }
 
 Push-Location $Dest

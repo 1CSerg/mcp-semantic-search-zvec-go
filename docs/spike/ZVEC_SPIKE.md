@@ -5,7 +5,7 @@ Phase 1 must not proceed until this checklist passes on **Windows amd64** and **
 ## Prerequisites
 
 ```bash
-make fetch-zvec-libs   # clone .deps/zvec-go + download vendor libs (v0.3.1)
+make fetch-zvec-libs   # clone .deps/zvec-go + download vendor libs (v0.5.0)
 export CGO_ENABLED=1
 # Linux/macOS: source .deps/zvec-lib.env && export LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
 ```
