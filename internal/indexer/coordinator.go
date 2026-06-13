@@ -133,12 +133,16 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		return err
 	}
 
-	if err := zvec.EnsureIndexMeta(
+	if err := zvec.ReconcileIndex(
 		c.Settings.IndexDir,
-		c.Settings.WorkspaceID,
-		c.Settings.WorkspaceRoot,
-		c.Settings.App.ActiveProfile,
-		c.Profile.Dimensions,
+		zvec.IndexIdentity{
+			WorkspaceID:   c.Settings.WorkspaceID,
+			WorkspaceRoot: c.Settings.WorkspaceRoot,
+			Profile:       c.Settings.App.ActiveProfile,
+			Dimensions:    c.Profile.Dimensions,
+		},
+		force,
+		c.Zvec,
 	); err != nil {
 		return err
 	}

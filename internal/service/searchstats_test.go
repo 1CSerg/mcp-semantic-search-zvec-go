@@ -17,6 +17,9 @@ func TestSearchStatsPerformance(t *testing.T) {
 		stats.Record(ms)
 	}
 	perf := stats.Performance(100)
+	if perf["total_ms"] != float64(100) {
+		t.Fatalf("total_ms=%v", perf["total_ms"])
+	}
 	if perf["degraded"] != false {
 		t.Fatalf("degraded=%v", perf["degraded"])
 	}

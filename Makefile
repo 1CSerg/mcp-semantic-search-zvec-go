@@ -1,4 +1,4 @@
-.PHONY: build build-zvec fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4 smoke-phase5
+.PHONY: build build-zvec build-release fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4 smoke-phase5 smoke-phase5-docker smoke-staging-multi-windows
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
@@ -48,6 +48,9 @@ build-zvec: fetch-zvec-libs fetch-onnx-runtime copy-zvec-runtime
 	go build $(PRODUCTION_TAGS) -o bin/$(BINARY) $(CMD)
 	. $(ORT_ENV) && cp -f "$$ONNXRUNTIME_SHARED_LIBRARY_PATH" bin/ 2>/dev/null || true
 
+build-release:
+	bash scripts/dev/build-release.sh
+
 smoke-phase1: build-zvec
 	bash scripts/smoke/run-phase1.sh
 
@@ -62,6 +65,12 @@ smoke-phase4: build-zvec fetch-onnx-model
 
 smoke-phase5: build-zvec
 	bash scripts/smoke/run-phase5.sh
+
+smoke-phase5-docker:
+	bash scripts/smoke/run-phase5-docker.sh
+
+smoke-staging-multi-windows: build-zvec
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke/run-mcp-staging-multi-windows.ps1
 
 seed-index: fetch-zvec-libs
 	. $(ZVEC_ENV) && \

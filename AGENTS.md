@@ -30,7 +30,7 @@ TARGET_ROOT="$PWD" bash /tmp/mcp-semantic-search-zvec-go/scripts/install/install
 
 3. Перезапустить Cursor / Roo Code (MCP без hot-reload).
 
-Скрипт создаёт `.mcp-semantic-search-zvec-go/config.yaml`, `.env` (секреты), бинарник, wiring в `.cursor/mcp.json` (прямой вызов `bin/mcp-semantic-search-zvec-go[.exe] --stdio`). Настройки — в `config.yaml`, API-ключи — в `.env`.
+Скрипт создаёт `.mcp-semantic-search-zvec-go/config.yaml`, `.env` (секреты), бинарник и launcher-скрипты в `.mcp-semantic-search-zvec-go/bin/`, wiring в `.cursor/mcp.json` (на Windows — `powershell.exe -File ...\run-mcp-stdio.ps1` с полным `env`; на Linux/macOS — `bin/mcp-semantic-search-zvec-go --stdio` в проекте). Настройки — в `config.yaml`, API-ключи — в `.env`.
 
 ## MCP tools
 
@@ -45,7 +45,7 @@ TARGET_ROOT="$PWD" bash /tmp/mcp-semantic-search-zvec-go/scripts/install/install
 
 - Исследование кодовой базы → сначала `semantic_search`, не полный обход репозитория.
 - Статус индекса → `index_status`; не grep реализацию tools в исходниках MCP.
-- При `indexing.running` — poll `index_status` до `idle`, затем повторить поиск.
+- При `indexing.running` результаты `semantic_search` могут быть неполными; в ответе есть поле `indexing` с прогрессом.
 - Не читать `.mcp-semantic-search-zvec-go/data/index/` целиком; при ошибках — tail `.mcp-semantic-search-zvec-go/data/logs/server.log`.
 
 **Параметры `semantic_search`:**
@@ -83,9 +83,13 @@ curl -X POST http://127.0.0.1:8080/v1/search -H "Content-Type: application/json"
 | Symptom | Action |
 |---------|--------|
 | MCP not listed | Restart IDE; check `.cursor/mcp.json` JSON |
+| Cursor MCP **error**, tools=0, но `exe --version` работает | Windows: re-run `install.ps1 -TargetRoot`; проверить `%APPDATA%\Cursor\logs\*\mcpprocess.log` (`ENOENT`, `non-retryable`); kill McpProcess + restart Cursor; см. [INSTALL.md](docs/INSTALL.md#cursor-mcp-error-на-windows) |
+| После **переноса** проекта на Windows | Re-run `install.ps1 -TargetRoot` (обновляет `mcp.json` env и launcher paths) |
+| **Несколько репо**, два окна Cursor | Native install OK (отдельный `.mcp-semantic-search-zvec-go/` на проект). Multi-root в одном окне → shared daemon |
+| Docker + несколько репо | `docker-compose.daemon.yml` + `-McpMode Proxy` в install.ps1 на Windows |
 | Empty search, indexing idle | `reindex`; check `index_status` |
 | After MCP binary update (zvec-go bump) | Index resets on first start; with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |
-| `index_owner_mismatch` | Re-run install; separate `INDEX_DIR` per project |
+| `index_owner_mismatch` | Call MCP `reindex` with `force: true` (resets index after project move or profile/dimension change). With `AUTO_INDEX_ON_START=true` this runs automatically on next start; keep separate `INDEX_DIR` per project if you share one clone |
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
 | Shared daemon: `workspace_id` required | Use `--stdio-proxy --workspace-id=<id>` or HTTP `X-Workspace-ID` |
 | Shared daemon: unknown workspace | Check `daemon.yaml` id matches proxy `--workspace-id` |
@@ -94,9 +98,11 @@ curl -X POST http://127.0.0.1:8080/v1/search -H "Content-Type: application/json"
 
 Default install uses per-project `--stdio`. For one daemon serving multiple projects:
 
-1. Register workspaces in `daemon.yaml` (see [docs/CONFIG.md](docs/CONFIG.md)).
-2. Run daemon with `--daemon --daemon-config …`.
+1. Register workspaces in `daemon.yaml` (see [docs/CONFIG.md](docs/CONFIG.md); Docker: [templates/daemon.docker.yaml](templates/daemon.docker.yaml)).
+2. Run daemon with `--daemon --daemon-config …` or `docker compose -f docker/docker-compose.daemon.yml up`.
 3. Wire Cursor MCP with `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
+
+**Windows:** `install.ps1 -McpMode Proxy -WorkspaceId <id> -DaemonUrl http://127.0.0.1:8080` — launcher `run-mcp-proxy.ps1` в `.mcp-semantic-search-zvec-go/bin/`, без `${workspaceFolder}` в command.
 
 Per-project mode is unchanged and needs no daemon.
 
@@ -106,10 +112,18 @@ Per-project mode is unchanged and needs no daemon.
 2. Re-run install script from updated clone/release.
 3. Restart IDE.
 
+Повторный install **не затирает** ваш `config.yaml`: добавляются только новые ключи из шаблона репозитория (нужен `pip install -r scripts/install/requirements.txt` для merge с сохранением комментариев). `.env` и индекс не трогаются. Полный сброс конфига: `-ReplaceConfig` (PowerShell) или `REPLACE_CONFIG=1` (bash).
+
 ## Uninstall
+
+From the project root (scripts are created during install):
 
 ```powershell
 & .\.mcp-semantic-search-zvec-go\uninstall.ps1
 ```
 
-(Shell: `./.mcp-semantic-search-zvec-go/uninstall.sh` — Phase 2 install bundle.)
+```bash
+./.mcp-semantic-search-zvec-go/uninstall.sh
+```
+
+Use `-KeepData` (PowerShell) or `KEEP_DATA=1` (bash) to preserve `data/` and `models/`.

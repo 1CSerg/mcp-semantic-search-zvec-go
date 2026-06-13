@@ -20,6 +20,15 @@ type SearchRequest struct {
 	WorkspaceID string  `json:"workspace_id,omitempty"`
 }
 
+// SearchResultItem is one ranked chunk in semantic_search results.
+type SearchResultItem struct {
+	StartLine int64   `json:"start_line"`
+	EndLine   int64   `json:"end_line"`
+	Path      string  `json:"path"`
+	Score     float64 `json:"score"`
+	Snippet   string  `json:"snippet"`
+}
+
 // ReindexRequest triggers background indexing.
 type ReindexRequest struct {
 	Force       bool   `json:"force,omitempty"`
@@ -67,10 +76,11 @@ func (s *Stub) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 }
 
 func (s *Stub) GetIndexStatus() (json.RawMessage, error) {
+	root := s.Settings.WorkspaceRoot
 	payload := map[string]any{
-		"workspace_root":          s.Settings.WorkspaceRoot,
-		"index_dir":               s.Settings.IndexDir,
-		"config_path":             s.Settings.ConfigPath,
+		"workspace_root":          root,
+		"index_dir":               statusRelativePath(root, s.Settings.IndexDir),
+		"config_path":             statusRelativePath(root, s.Settings.ConfigPath),
 		"server_version":          version.Version,
 		"indexed_files":           0,
 		"indexed_chunks_manifest": 0,
@@ -90,9 +100,7 @@ func (s *Stub) GetIndexStatus() (json.RawMessage, error) {
 		"search_performance": map[string]any{
 			"samples": 0,
 		},
-		"diagnostics": map[string]any{
-			"log_dir": s.Settings.LogsDir(),
-		},
+		"diagnostics": indexStatusDiagnostics(s.Settings),
 	}
 	return marshal(payload)
 }

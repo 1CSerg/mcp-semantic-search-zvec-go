@@ -72,19 +72,18 @@ Response (success):
   "query": "authentication middleware",
   "results": [
     {
-      "path": "internal/auth/middleware.go",
       "start_line": 12,
       "end_line": 45,
+      "path": "internal/auth/middleware.go",
       "score": 0.87,
       "snippet": "..."
     }
   ],
-  "timing": { "total_ms": 42.1 },
-  "performance": { "degraded": false }
+  "performance": { "total_ms": 42.1, "degraded": false }
 }
 ```
 
-During indexing: HTTP 409 with `indexing` progress object.
+During indexing: HTTP 200 with partial `results` from already indexed chunks, plus `indexing` progress object and optional `message` warning that results may be incomplete.
 
 ---
 
@@ -112,6 +111,8 @@ Request:
 In shared daemon mode, `workspace_id` is required (JSON body, query, or `X-Workspace-ID` header).
 
 Starts background indexing; returns initial progress.
+
+With `"force": true`, the server wipes the index and rebuilds from scratch. This is required after changing `WORKSPACE_ROOT` / project path, `active_profile`, or embedding dimensions when `index_meta.json` no longer matches (otherwise indexing fails with `index_owner_mismatch`).
 
 ---
 
@@ -184,7 +185,6 @@ All tools return **JSON text** in tool result content.
 | `query` | string | yes | NL query |
 | `limit` | int | no | Result count (default 10) |
 | `path_glob` | string | no | Path filter |
-| `top_k` | int | no | Deprecated alias |
 
 ### `index_status`
 
@@ -192,9 +192,9 @@ No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_perform
 
 ### `reindex`
 
-| Argument | Type | Default |
-|----------|------|---------|
-| `force` | bool | false |
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `force` | bool | false | Full reindex. With `force: true`, also resets the index when `workspace_root`, `active_profile`, or embedding `dimensions` changed (e.g. after moving the project). Incremental reindex without `force` returns `index_owner_mismatch` if metadata does not match. |
 
 ### `check_update`
 
@@ -207,7 +207,7 @@ No arguments. Returns `installed_version`, `latest_version`, `update_available`.
 | Condition | HTTP | MCP |
 |-----------|------|-----|
 | Invalid JSON | 400 | tool error |
-| Indexing in progress | 409 | JSON with empty `results` + `indexing` |
+| Indexing in progress (search) | 200 | JSON with partial `results` + `indexing` + warning `message` |
 | Missing `workspace_id` (daemon) | 400 | tool error (proxy) |
 | Unknown `workspace_id` (daemon) | 404 | tool error (proxy) |
 | Index owner mismatch | 200* | JSON with message + empty results |

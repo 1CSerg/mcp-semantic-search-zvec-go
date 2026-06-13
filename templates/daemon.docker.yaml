@@ -1,0 +1,13 @@
+# Example daemon.yaml for docker/docker-compose.daemon.yml
+# Container paths — adjust host bind-mounts in compose env (WS_*_ROOT, WS_*_INDEX).
+max_open_workspaces: 10
+
+workspaces:
+  - id: ws-alpha
+    root: /workspaces/ws-alpha
+    index_dir: /workspaces/ws-alpha-index
+    config_path: /workspaces/ws-alpha/.mcp-semantic-search-zvec-go/config.yaml
+  - id: ws-beta
+    root: /workspaces/ws-beta
+    index_dir: /workspaces/ws-beta-index
+    config_path: /workspaces/ws-beta/.mcp-semantic-search-zvec-go/config.yaml

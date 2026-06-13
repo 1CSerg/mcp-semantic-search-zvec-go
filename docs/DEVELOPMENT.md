@@ -113,11 +113,14 @@ source .deps/zvec-lib.env
 export LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
 ```
 
-Windows: CGO via **WinLibs MinGW gcc** (recommended) or VS **clang-cl**; plain `cl` rejects cgo `-Werror`. Script:
+Windows: CGO via **WinLibs MinGW gcc** (recommended) or VS **clang-cl**; plain `cl` rejects cgo `-Werror`. Scripts:
 
 ```powershell
-.\scripts\dev\build-zvec-windows.ps1
+.\scripts\dev\build-release.ps1      # production release (-ldflags -s -w)
+.\scripts\dev\build-zvec-windows.ps1 # dev build (same tags, no strip)
 ```
+
+Linux / macOS release: `make build-release` or `bash scripts/dev/build-release.sh`.
 
 `zvec_c_api.dll` must be next to the executable or on `PATH` (script copies to `bin/`).
 
@@ -168,6 +171,14 @@ Linux: `make smoke-phase4`
 ```
 
 Linux: `make smoke-phase5`
+
+**Windows multi-project smoke** (project-local bin, Cyrillic path, `mcp.json` wiring):
+
+```powershell
+.\scripts\smoke\run-mcp-staging-multi-windows.ps1
+```
+
+Makefile: `make smoke-staging-multi-windows`
 
 Production build:
 
@@ -241,8 +252,9 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 
 1. Branch from `main`.
 2. `go test ./...` && `make test-cover-check` && `go vet ./...` && `gofmt -w .`
-3. Update docs if API/config changes.
-4. PR with Russian commit messages (project convention) — см. `.cursor/rules/git-commits-ru.mdc`.
+3. При изменении install/config merge: `python -m unittest scripts/install/merge-config_test.py` (нужен `pip install -r scripts/install/requirements.txt`).
+4. Update docs if API/config changes.
+5. PR with Russian commit messages (project convention) — см. `.cursor/rules/git-commits-ru.mdc`.
 
 Конвенции для агентов в **этом репозитории**: `.cursor/rules/development.mdc` (краткие gate-правила).
 

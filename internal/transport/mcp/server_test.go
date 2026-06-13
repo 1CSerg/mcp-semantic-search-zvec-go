@@ -68,6 +68,61 @@ func TestRegisterTools(t *testing.T) {
 	registerTools(server, service.NewStub(settings))
 }
 
+func TestSemanticSearchToolSchema(t *testing.T) {
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+	registerTools(server, service.NewStub(&config.Settings{
+		App: config.AppConfig{ActiveProfile: "x", Profiles: map[string]config.EmbeddingProfile{"x": {}}},
+	}))
+
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := server.Connect(context.Background(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	cs, err := client.Connect(context.Background(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool *mcp.Tool
+	for _, tt := range res.Tools {
+		if tt.Name == "semantic_search" {
+			tool = tt
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatal("semantic_search tool not found")
+	}
+	schemaBytes, err := json.Marshal(tool.InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		t.Fatal(err)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if props == nil {
+		t.Fatalf("missing properties in schema: %s", schemaBytes)
+	}
+	for _, key := range []string{"query", "limit", "path_glob"} {
+		if _, ok := props[key]; !ok {
+			t.Errorf("expected property %q in schema", key)
+		}
+	}
+	for _, key := range []string{"top_k", "workspace_id"} {
+		if _, ok := props[key]; ok {
+			t.Errorf("unexpected property %q in MCP schema", key)
+		}
+	}
+}
+
 func TestMCPToolHandlers(t *testing.T) {
 	settings := &config.Settings{
 		WorkspaceRoot: t.TempDir(),
@@ -135,17 +190,17 @@ func (failingMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage,
 	return nil, errors.New("search failed")
 }
 
-type indexingMCPService struct {
+type indexingPartialMCPService struct {
 	service.Service
 }
 
-func (indexingMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
-	return json.RawMessage(`{"results":[],"indexing":{"running":true}}`), service.ErrIndexingInProgress
+func (indexingPartialMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+	return json.RawMessage(`{"results":[{"path":"a.go","score":0.9}],"indexing":{"running":true},"message":"results may be incomplete while indexing is in progress"}`), nil
 }
 
-func TestMCPToolHandlerIndexingConflict(t *testing.T) {
+func TestMCPToolHandlerSearchDuringIndexing(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
-	registerTools(server, indexingMCPService{Service: service.NewStub(&config.Settings{
+	registerTools(server, indexingPartialMCPService{Service: service.NewStub(&config.Settings{
 		App: config.AppConfig{ActiveProfile: "x", Profiles: map[string]config.EmbeddingProfile{"x": {}}},
 	})})
 
@@ -168,7 +223,19 @@ func TestMCPToolHandlerIndexingConflict(t *testing.T) {
 		t.Fatalf("CallTool: %v", err)
 	}
 	if res.IsError {
-		t.Fatal("indexing conflict should return JSON payload, not tool error")
+		t.Fatal("search during indexing should return JSON payload, not tool error")
+	}
+	text, ok := res.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("content=%T", res.Content[0])
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(text.Text), &payload); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := payload["indexing"].(map[string]any)
+	if idx == nil || idx["running"] != true {
+		t.Fatalf("payload=%v", payload)
 	}
 }
 

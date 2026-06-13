@@ -2,7 +2,6 @@ package mcptransport
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
@@ -16,8 +15,24 @@ const instructions = `MCP-сервер semantic-search-zvec-go: инструме
 
 - Исследование кодовой базы → semantic_search, не полный обход репозитория.
 - Статус индекса → index_status; переиндексация → reindex.
-- При indexing.running — poll index_status до idle, затем повторите semantic_search.
+- При indexing.running результаты semantic_search могут быть неполными; смотрите поле indexing в ответе.
+- semantic_search: только query и опционально limit (default 10), path_glob; не передавайте top_k.
 - HTTP REST API доступен при запуске с --http (см. docs/API.md).`
+
+// semanticSearchInput is the MCP tool schema; HTTP keeps top_k on service.SearchRequest.
+type semanticSearchInput struct {
+	Query    string  `json:"query" jsonschema:"Natural language search query."`
+	Limit    int     `json:"limit,omitempty" jsonschema:"Maximum number of results (default 10). Use only this parameter, not top_k."`
+	PathGlob *string `json:"path_glob,omitempty" jsonschema:"Optional glob to filter result file paths."`
+}
+
+func (in semanticSearchInput) toSearchRequest() service.SearchRequest {
+	return service.SearchRequest{
+		Query:    in.Query,
+		Limit:    in.Limit,
+		PathGlob: in.PathGlob,
+	}
+}
 
 // Run starts the MCP server over stdio until the client disconnects.
 func Run(ctx context.Context, svc service.Service) error {
@@ -37,12 +52,12 @@ func Run(ctx context.Context, svc service.Service) error {
 func registerTools(server *mcp.Server, svc service.Service) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "semantic_search",
-		Description: "Semantic search over indexed code. Call first when exploring a project.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, input service.SearchRequest) (*mcp.CallToolResult, any, error) {
+		Description: "Semantic search over indexed code. Call first when exploring a project. Use limit for result count (default 10); do not pass top_k.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input semanticSearchInput) (*mcp.CallToolResult, any, error) {
 		_ = ctx
 		_ = req
-		raw, err := svc.SemanticSearch(input)
-		if err != nil && !errors.Is(err, service.ErrIndexingInProgress) {
+		raw, err := svc.SemanticSearch(input.toSearchRequest())
+		if err != nil {
 			return toolError(err)
 		}
 		return textResult(string(raw)), nil, nil

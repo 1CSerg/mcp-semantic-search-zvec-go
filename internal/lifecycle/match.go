@@ -3,6 +3,8 @@ package lifecycle
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 )
 
 const binaryName = "mcp-semantic-search-zvec-go"
@@ -18,7 +20,53 @@ func matchesStaleStdio(cmdline, workspace string, pid, selfPID int) bool {
 	if !strings.Contains(strings.ToLower(cmdline), binaryName) {
 		return false
 	}
-	return cmdlineContainsWorkspace(cmdline, workspace)
+	if cmdlineContainsWorkspace(cmdline, workspace) {
+		return true
+	}
+	return pathsEqual(workspaceFromCmdline(cmdline), workspace)
+}
+
+func workspaceFromCmdline(cmdline string) string {
+	exe := firstExecutableToken(cmdline)
+	if exe == "" {
+		return ""
+	}
+	root, err := config.ReadWorkspaceRootMarker(filepath.Dir(exe))
+	if err != nil {
+		return ""
+	}
+	return root
+}
+
+func firstExecutableToken(cmdline string) string {
+	cmdline = strings.TrimSpace(cmdline)
+	if cmdline == "" {
+		return ""
+	}
+	if cmdline[0] == '"' {
+		end := strings.Index(cmdline[1:], `"`)
+		if end >= 0 {
+			return cmdline[1 : 1+end]
+		}
+	}
+	if i := strings.Index(cmdline, " "); i >= 0 {
+		return cmdline[:i]
+	}
+	return cmdline
+}
+
+func pathsEqual(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	altA := strings.ReplaceAll(a, `\`, `/`)
+	altB := strings.ReplaceAll(b, `\`, `/`)
+	return strings.EqualFold(altA, altB)
 }
 
 func cmdlineContainsWorkspace(cmdline, workspace string) bool {

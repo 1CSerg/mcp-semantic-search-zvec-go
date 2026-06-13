@@ -26,7 +26,7 @@ type LoadOptions struct {
 
 // Load reads environment variables and YAML config (per-project compatibility wrapper).
 func Load() (*Settings, error) {
-	workspace := envOr("WORKSPACE_ROOT", mustAbs(getwd()))
+	workspace := ResolveWorkspaceRoot(os.Getenv("WORKSPACE_ROOT"))
 	workspaceID := envOr("WORKSPACE_ID", workspace)
 
 	indexRaw := envOr("INDEX_DIR", filepath.Join(workspace, DefaultInstallDirName, DefaultIndexSubdir))

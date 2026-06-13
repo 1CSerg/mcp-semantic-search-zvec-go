@@ -3,6 +3,7 @@ set -euo pipefail
 
 TARGET_ROOT="${TARGET_ROOT:-$(pwd)}"
 FETCH_ONNX_MODEL="${FETCH_ONNX_MODEL:-0}"
+REPLACE_CONFIG="${REPLACE_CONFIG:-0}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 INSTALL_DIR="$TARGET_ROOT/.mcp-semantic-search-zvec-go"
 BIN_DIR="$INSTALL_DIR/bin"
@@ -17,8 +18,75 @@ version() {
 VERSION="$(version)"
 echo "Installing mcp-semantic-search-zvec-go v${VERSION} into ${INSTALL_DIR}"
 
+copy_runtime_libs() {
+  local bin_dir="$1"
+  local repo_bin="$REPO_ROOT/bin"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      for f in zvec_c_api.dll onnxruntime.dll; do
+        if [[ -f "$repo_bin/$f" ]]; then
+          cp -f "$repo_bin/$f" "$bin_dir/"
+        fi
+      done
+      ;;
+    Linux*)
+      for f in libzvec_c_api.so; do
+        if [[ -f "$repo_bin/$f" ]]; then
+          cp -f "$repo_bin/$f" "$bin_dir/"
+        fi
+      done
+      ;;
+    Darwin*)
+      for f in libzvec_c_api.dylib; do
+        if [[ -f "$repo_bin/$f" ]]; then
+          cp -f "$repo_bin/$f" "$bin_dir/"
+        fi
+      done
+      ;;
+  esac
+
+  if [[ ! -f "$bin_dir/zvec_c_api.dll" && ! -f "$bin_dir/libzvec_c_api.so" && ! -f "$bin_dir/libzvec_c_api.dylib" ]]; then
+    bash "$REPO_ROOT/scripts/fetch/fetch-zvec-libs.sh" > "$REPO_ROOT/.deps/zvec-lib.env"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/.deps/zvec-lib.env"
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*) cp -f "$ZVEC_LIB_DIR/zvec_c_api.dll" "$bin_dir/" 2>/dev/null || true ;;
+      Linux*) cp -f "$ZVEC_LIB_DIR/libzvec_c_api.so" "$bin_dir/" 2>/dev/null || true ;;
+      Darwin*) cp -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" "$bin_dir/" 2>/dev/null || true ;;
+    esac
+  fi
+
+  if [[ ! -f "$bin_dir/onnxruntime.dll" && ! -f "$bin_dir/libonnxruntime.so" && ! -f "$bin_dir/libonnxruntime.dylib" ]]; then
+    bash "$REPO_ROOT/scripts/fetch/fetch-onnx-runtime.sh" > "$REPO_ROOT/.deps/onnxruntime.env"
+    # shellcheck disable=SC1091
+    . "$REPO_ROOT/.deps/onnxruntime.env"
+    cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" "$bin_dir/" 2>/dev/null || true
+  fi
+}
+
 mkdir -p "$BIN_DIR" "$INSTALL_DIR/data/index" "$INSTALL_DIR/data/logs" "$INSTALL_DIR/models"
-cp -f "$REPO_ROOT/config.yaml" "$INSTALL_DIR/config.yaml"
+
+merge_config_args=("$REPO_ROOT/scripts/install/merge-config.py" "$REPO_ROOT/config.yaml" "$INSTALL_DIR/config.yaml")
+if [[ "$REPLACE_CONFIG" == "1" ]]; then
+  merge_config_args+=(--replace)
+fi
+set +e
+merge_out="$(python3 "${merge_config_args[@]}" 2>&1)"
+merge_rc=$?
+set -e
+if [[ $merge_rc -eq 0 ]]; then
+  echo "$merge_out"
+elif [[ $merge_rc -eq 2 ]]; then
+  if [[ -f "$INSTALL_DIR/config.yaml" ]]; then
+    echo "WARNING: config.yaml preserved (install merge requires ruamel.yaml): pip install -r scripts/install/requirements.txt" >&2
+  else
+    cp -f "$REPO_ROOT/config.yaml" "$INSTALL_DIR/config.yaml"
+    echo "created"
+  fi
+else
+  echo "$merge_out" >&2
+  exit 1
+fi
 
 MODEL_DIR="$INSTALL_DIR/models/paraphrase-multilingual-MiniLM-L12-v2"
 if [[ "$FETCH_ONNX_MODEL" == "1" ]] || grep -q 'active_profile: local_multilingual' "$INSTALL_DIR/config.yaml" 2>/dev/null; then
@@ -46,26 +114,12 @@ else
     cd "$REPO_ROOT"
     CGO_ENABLED=1 LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
       go build -tags "zvec,onnx" -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
-    case "$(uname -s)" in
-      Linux*)
-        if [[ -f "$ZVEC_LIB_DIR/libzvec_c_api.so" ]]; then
-          cp -f "$ZVEC_LIB_DIR/libzvec_c_api.so" "$BIN_DIR/"
-        fi
-        if [[ -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" ]]; then
-          cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" "$BIN_DIR/"
-        fi
-        ;;
-      Darwin*)
-        if [[ -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" ]]; then
-          cp -f "$ZVEC_LIB_DIR/libzvec_c_api.dylib" "$BIN_DIR/"
-        fi
-        if [[ -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" ]]; then
-          cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" "$BIN_DIR/"
-        fi
-        ;;
-    esac
   )
 fi
+copy_runtime_libs "$BIN_DIR"
+
+cp -f "$REPO_ROOT/scripts/install/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
+chmod +x "$INSTALL_DIR/uninstall.sh"
 
 cat > "$INSTALL_DIR/install-manifest.json" <<EOF
 {

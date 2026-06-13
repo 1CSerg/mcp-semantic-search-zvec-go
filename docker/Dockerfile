@@ -16,7 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY go.mod go.sum ./
-RUN go mod download
+COPY scripts/fetch/ scripts/fetch/
+RUN mkdir -p .deps \
+    && bash scripts/fetch/fetch-zvec-libs.sh > .deps/zvec-lib.env \
+    && go mod download
 
 COPY . .
 

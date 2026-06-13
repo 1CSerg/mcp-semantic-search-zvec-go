@@ -2,16 +2,39 @@ package service
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 )
 
+func TestSearchResultItemJSONFieldOrder(t *testing.T) {
+	raw, err := json.Marshal(SearchResultItem{
+		StartLine: 12,
+		EndLine:   45,
+		Path:      "internal/auth/middleware.go",
+		Score:     0.87,
+		Snippet:   "...",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"start_line":12,"end_line":45,"path":"internal/auth/middleware.go","score":0.87,"snippet":"..."}`
+	if string(raw) != want {
+		t.Fatalf("got %s", raw)
+	}
+	if !strings.HasPrefix(string(raw), `{"start_line":`) {
+		t.Fatalf("start_line must be first: %s", raw)
+	}
+}
+
 func TestStubGetIndexStatus(t *testing.T) {
+	root := t.TempDir()
 	s := NewStub(&config.Settings{
-		WorkspaceRoot: "/workspace",
-		IndexDir:      "/workspace/.mcp-semantic-search-zvec-go/data/index",
-		ConfigPath:    "/workspace/.mcp-semantic-search-zvec-go/config.yaml",
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, ".mcp-semantic-search-zvec-go", "data", "index"),
+		ConfigPath:    filepath.Join(root, ".mcp-semantic-search-zvec-go", "config.yaml"),
 		App: config.AppConfig{
 			ActiveProfile: "test",
 			Profiles: map[string]config.EmbeddingProfile{
@@ -30,6 +53,12 @@ func TestStubGetIndexStatus(t *testing.T) {
 	}
 	if payload["bootstrap"] != true {
 		t.Fatalf("expected bootstrap=true, got %v", payload["bootstrap"])
+	}
+	if payload["index_dir"] != ".mcp-semantic-search-zvec-go/data/index" {
+		t.Fatalf("index_dir=%v", payload["index_dir"])
+	}
+	if payload["config_path"] != ".mcp-semantic-search-zvec-go/config.yaml" {
+		t.Fatalf("config_path=%v", payload["config_path"])
 	}
 }
 

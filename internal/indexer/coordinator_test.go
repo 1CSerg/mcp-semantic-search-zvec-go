@@ -479,3 +479,65 @@ func TestCoordinatorStartFailsWhenLockHeld(t *testing.T) {
 		t.Fatalf("progress should not be running: %+v", p)
 	}
 }
+
+func TestCoordinatorForceReindexOwnerMismatch(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	oldRoot := filepath.Join(root, "old-path")
+	newRoot := root
+	oldCollection := zvec.CollectionName(oldRoot, "test", 4)
+	if err := os.MkdirAll(filepath.Join(indexDir, "zvec", oldCollection), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         "ws-a",
+		WorkspaceRoot:       oldRoot,
+		EmbeddingProfile:    "test",
+		EmbeddingDimensions: 4,
+		CollectionName:      oldCollection,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: newRoot,
+		WorkspaceID:   "ws-b",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: newRoot, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	p := c.CurrentProgress()
+	if p.State != StateIdle {
+		t.Fatalf("progress=%+v", p)
+	}
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.WorkspaceID != "ws-b" {
+		t.Fatalf("meta=%+v", meta)
+	}
+	if _, err := os.Stat(filepath.Join(indexDir, "zvec", oldCollection)); !os.IsNotExist(err) {
+		t.Fatalf("old collection still present: err=%v", err)
+	}
+}

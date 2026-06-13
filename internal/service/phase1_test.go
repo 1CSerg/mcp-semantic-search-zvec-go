@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 )
 
 type mockZvecStore struct {
+	mu         sync.Mutex
 	hits       []zvec.SearchHit
 	err        error
 	openErr    error
@@ -41,8 +43,16 @@ func (m *mockZvecStore) DocCount() (int, error)                       { return l
 func (m *mockZvecStore) UpsertChunks([]zvec.Chunk, [][]float32) error { return nil }
 func (m *mockZvecStore) DeleteByIDs([]string) error                   { return nil }
 func (m *mockZvecStore) WipeCollection() error {
+	m.mu.Lock()
 	m.wipeCalled = true
+	m.mu.Unlock()
 	return m.wipeErr
+}
+
+func (m *mockZvecStore) wasWipeCalled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.wipeCalled
 }
 func (m *mockZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error) {
 	if m.err != nil {
@@ -173,6 +183,9 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if payload["server_version"] != version.Version {
 		t.Fatalf("server_version=%v", payload["server_version"])
 	}
+	if payload["index_dir"] != "index" {
+		t.Fatalf("index_dir=%v", payload["index_dir"])
+	}
 }
 
 func TestPhase1SemanticSearch(t *testing.T) {
@@ -242,10 +255,7 @@ func TestPhase1SemanticSearchWithMockZvec(t *testing.T) {
 	if !ok || len(results) != 1 {
 		t.Fatalf("results=%v", payload["results"])
 	}
-	if _, ok := payload["timing"]; !ok {
-		t.Fatalf("missing timing: %v", payload)
-	}
-	if perf, ok := payload["performance"].(map[string]any); !ok || perf["degraded"] == nil {
+	if perf, ok := payload["performance"].(map[string]any); !ok || perf["degraded"] == nil || perf["total_ms"] == nil {
 		t.Fatalf("missing performance: %v", payload["performance"])
 	}
 }
@@ -384,17 +394,19 @@ func TestPhase1GetIndexStatusWithManifest(t *testing.T) {
 }
 
 func TestSemanticSearchWhileIndexing(t *testing.T) {
-	p, err := NewPhase1(phase1Settings(t, "http://127.0.0.1:9/v1"))
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
-	p.zvec = &mockZvecStore{}
+	p.zvec = &mockZvecStore{hits: []zvec.SearchHit{{Path: "internal/auth.go", Score: 0.9, Snippet: "auth"}}}
 	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
-	if err != ErrIndexingInProgress {
+	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	var payload map[string]any
@@ -404,6 +416,13 @@ func TestSemanticSearchWhileIndexing(t *testing.T) {
 	idx, _ := payload["indexing"].(map[string]any)
 	if idx == nil || idx["running"] != true {
 		t.Fatalf("payload=%v", payload)
+	}
+	results, _ := payload["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("results=%v", payload["results"])
+	}
+	if payload["message"] != "results may be incomplete while indexing is in progress" {
+		t.Fatalf("message=%v", payload["message"])
 	}
 }
 
@@ -565,15 +584,17 @@ func TestSemanticSearchIndexingWithoutCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
-	if err != ErrIndexingInProgress {
+	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	idx, _ := payload["indexing"].(map[string]any)
-	if idx["running"] != true {
+	if _, ok := payload["indexing"]; ok {
+		t.Fatalf("expected no indexing block without successful search: %v", payload)
+	}
+	if payload["message"] == nil {
 		t.Fatalf("payload=%v", payload)
 	}
 }
@@ -791,7 +812,7 @@ func TestPrepareStartupSkipsWhenVersionsMatch(t *testing.T) {
 		coordinator: coord,
 	}
 	p.PrepareStartup()
-	if store.wipeCalled {
+	if store.wasWipeCalled() {
 		t.Fatal("unexpected wipe")
 	}
 	waitCoordinatorIdle(t, p)
@@ -861,7 +882,7 @@ func TestPrepareStartupMigratesWithAutoIndex(t *testing.T) {
 	}
 	p.PrepareStartup()
 
-	if !store.wipeCalled {
+	if !store.wasWipeCalled() {
 		t.Fatal("expected wipe during migration")
 	}
 	meta, err := zvec.ReadIndexMeta(indexDir)
@@ -900,9 +921,102 @@ func TestPrepareStartupMigratesWithoutAutoIndex(t *testing.T) {
 	}
 	p.PrepareStartup()
 
-	if !store.wipeCalled {
+	if !store.wasWipeCalled() {
 		t.Fatal("expected wipe during migration")
 	}
+	if coord.IsRunning() {
+		t.Fatal("expected no background reindex when AUTO_INDEX_ON_START=false")
+	}
+	if p.startupMsg == "" {
+		t.Fatal("expected startup message")
+	}
+}
+
+func TestPrepareStartupOwnerMismatchAutoIndex(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, true)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         "ws-old",
+		WorkspaceRoot:       filepath.Join(settings.WorkspaceRoot, "old"),
+		EmbeddingProfile:    settings.App.ActiveProfile,
+		EmbeddingDimensions: 3,
+		ZvecGoVersion:       version.ZvecGoVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settings.WorkspaceRoot, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+
+	waitCoordinatorIdle(t, p)
+	if !store.wasWipeCalled() {
+		t.Fatal("expected wipe during identity migration")
+	}
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.WorkspaceID != settings.WorkspaceID {
+		t.Fatalf("meta=%+v", meta)
+	}
+}
+
+func TestPrepareStartupOwnerMismatchNoAutoIndex(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         "ws-old",
+		EmbeddingProfile:    settings.App.ActiveProfile,
+		EmbeddingDimensions: 3,
+		ZvecGoVersion:       version.ZvecGoVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+
 	if coord.IsRunning() {
 		t.Fatal("expected no background reindex when AUTO_INDEX_ON_START=false")
 	}
@@ -985,7 +1099,7 @@ func TestPrepareStartupMigrationCheckError(t *testing.T) {
 		coordinator: coord,
 	}
 	p.PrepareStartup()
-	if store.wipeCalled {
+	if store.wasWipeCalled() {
 		t.Fatal("unexpected wipe on corrupt meta")
 	}
 	waitCoordinatorIdle(t, p)

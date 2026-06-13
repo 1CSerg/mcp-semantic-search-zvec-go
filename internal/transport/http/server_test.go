@@ -137,23 +137,35 @@ func (failingService) Reindex(service.ReindexRequest) (json.RawMessage, error) {
 	return nil, errors.New("reindex failed")
 }
 
-type indexingConflictService struct {
+type indexingPartialService struct {
 	service.Service
 }
 
-func (indexingConflictService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
-	return json.RawMessage(`{"results":[],"indexing":{"running":true}}`), service.ErrIndexingInProgress
+func (indexingPartialService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+	return json.RawMessage(`{"results":[{"path":"a.go","score":0.9}],"indexing":{"running":true},"message":"results may be incomplete while indexing is in progress"}`), nil
 }
 
-func TestHandlerSearchIndexingConflict(t *testing.T) {
+func TestHandlerSearchDuringIndexing(t *testing.T) {
 	settings := testSettings()
-	srv := New(settings, indexingConflictService{Service: service.NewStub(settings)})
+	srv := New(settings, indexingPartialService{Service: service.NewStub(settings)})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/search", bytes.NewReader([]byte(`{"query":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	srv.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	idx, _ := payload["indexing"].(map[string]any)
+	if idx == nil || idx["running"] != true {
+		t.Fatalf("payload=%v", payload)
+	}
+	results, _ := payload["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("results=%v", payload["results"])
 	}
 }
 

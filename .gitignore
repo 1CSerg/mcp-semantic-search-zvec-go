@@ -40,3 +40,5 @@ Thumbs.db
 /.cursor/*
 /.roo/*
 /docs/instr/*
+/scripts/install/__pycache__/*
+/.mcp-semantic-search-zvec-go/*

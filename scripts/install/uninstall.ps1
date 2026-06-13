@@ -3,8 +3,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$TargetRoot = (Get-Location).Path
-$InstallDir = Join-Path $TargetRoot ".mcp-semantic-search-zvec-go"
+if ((Split-Path -Leaf $PSScriptRoot) -eq '.mcp-semantic-search-zvec-go') {
+    $InstallDir = $PSScriptRoot
+    $TargetRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+} else {
+    $TargetRoot = (Get-Location).Path
+    $InstallDir = Join-Path $TargetRoot ".mcp-semantic-search-zvec-go"
+}
 $ServerKey = "semantic-search-zvec-go"
 
 function Stop-StaleProcesses {
@@ -49,12 +54,28 @@ if (Test-Path $mcpJson) {
     }
 }
 
+$legacyStagingDir = $null
+$manifestPath = Join-Path $InstallDir "install-manifest.json"
+if (Test-Path $manifestPath) {
+    try {
+        $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+        if ($manifest.PSObject.Properties.Name -contains "cursor_staging_dir") {
+            $legacyStagingDir = $manifest.cursor_staging_dir
+        }
+    } catch { }
+}
+
 if (Test-Path $InstallDir) {
     if ($KeepData) {
         Get-ChildItem $InstallDir -Exclude data, models | Remove-Item -Recurse -Force
     } else {
         Remove-Item -Recurse -Force $InstallDir
     }
+}
+
+if ($legacyStagingDir -and (Test-Path $legacyStagingDir)) {
+    Remove-Item -Recurse -Force $legacyStagingDir
+    Write-Host "Removed legacy Cursor staging: $legacyStagingDir"
 }
 
 Remove-GitignoreBlock (Join-Path $TargetRoot ".gitignore")

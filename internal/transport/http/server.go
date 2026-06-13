@@ -154,10 +154,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	raw, err := svc.SemanticSearch(req)
-	if errors.Is(err, service.ErrIndexingInProgress) {
-		writeRawJSON(w, http.StatusConflict, raw)
-		return
-	}
 	if err != nil {
 		writeError(w, err)
 		return

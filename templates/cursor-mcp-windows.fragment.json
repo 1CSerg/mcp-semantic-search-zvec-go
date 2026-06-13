@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "semantic-search-zvec-go": {
+      "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "D:\\project\\.mcp-semantic-search-zvec-go\\bin\\run-mcp-stdio.ps1"
+      ],
+      "env": {
+        "WORKSPACE_ROOT": "D:\\project",
+        "WORKSPACE_ID": "D:\\project",
+        "INDEX_DIR": "D:\\project\\.mcp-semantic-search-zvec-go\\data\\index",
+        "CONFIG_PATH": "D:\\project\\.mcp-semantic-search-zvec-go\\config.yaml",
+        "AUTO_INDEX_ON_START": "true"
+      }
+    }
+  }
+}

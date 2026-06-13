@@ -57,6 +57,7 @@ func (s *SearchStats) Record(ms float64) {
 func (s *SearchStats) Performance(ms float64) map[string]any {
 	degraded, slow, reason := s.evaluate(ms)
 	out := map[string]any{
+		"total_ms": ms,
 		"degraded": degraded,
 		"slow":     slow,
 	}

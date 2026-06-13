@@ -1,0 +1,33 @@
+# Shared daemon: multiple workspaces in one container.
+# Generate daemon.yaml (see templates/daemon.docker.yaml) and set WS_* env before up.
+#
+# Example:
+#   export WS_ALPHA_ROOT=/path/to/repoA WS_BETA_ROOT=/path/to/repoB
+#   export WS_ALPHA_INDEX=/path/to/repoA/.mcp-semantic-search-zvec-go/data/index
+#   export WS_BETA_INDEX=/path/to/repoB/.mcp-semantic-search-zvec-go/data/index
+#   export DAEMON_CONFIG_PATH=/path/to/daemon.yaml
+#   docker compose -f docker/docker-compose.daemon.yml up --build
+
+services:
+  semantic-search-daemon:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ghcr.io/1cserg/mcp-semantic-search-zvec-go:${IMAGE_TAG:-latest}
+    container_name: mcp-semantic-search-zvec-go-daemon
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    volumes:
+      - ${WS_ALPHA_ROOT:?set WS_ALPHA_ROOT}:/workspaces/ws-alpha:ro
+      - ${WS_ALPHA_INDEX:?set WS_ALPHA_INDEX}:/workspaces/ws-alpha-index
+      - ${WS_BETA_ROOT:?set WS_BETA_ROOT}:/workspaces/ws-beta:ro
+      - ${WS_BETA_INDEX:?set WS_BETA_INDEX}:/workspaces/ws-beta-index
+      - ${DAEMON_CONFIG_PATH:?set DAEMON_CONFIG_PATH}:/etc/daemon.yaml:ro
+    environment:
+      FILE_WATCHER_BACKEND: polling
+      FILE_WATCHER_POLL_INTERVAL_SECONDS: "10"
+      HTTP_ADDR: ":8080"
+    command: ["--daemon", "--daemon-config", "/etc/daemon.yaml", "--http-addr", ":8080"]
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

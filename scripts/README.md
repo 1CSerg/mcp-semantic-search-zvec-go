@@ -4,10 +4,10 @@ Purpose-based layout for install, dependency fetch, contributor tooling, phase g
 
 | Folder | Purpose | Examples |
 |--------|---------|----------|
-| **install/** | Wire MCP into a target project | `install.sh`, `install.ps1`, `uninstall.ps1` |
+| **install/** | Wire MCP into a target project | `install.sh`, `install.ps1`, `uninstall.ps1`, `merge-config.py` |
 | **fetch/** | One-time native deps (zvec, ONNX runtime, model bundle) | `fetch-zvec-libs.*`, `fetch-onnx-runtime.*`, `fetch-onnx-model.*` |
-| **dev/** | Contributors: hooks, coverage, Windows zvec build | `setup-git-hooks.*`, `check-coverage.*`, `git-add.sh`, `build-zvec-windows.ps1` |
-| **smoke/** | Phase gate tests (`make smoke-phaseN`) | `run-phase1.*` … `run-phase5.*`, fixtures (`config.yaml`, `mock-embed.go`, …) |
+| **dev/** | Contributors: hooks, coverage, Windows zvec build | `setup-git-hooks.*`, `check-coverage.*`, `git-add.sh`, `build-zvec-windows.ps1`, `build-release.*` |
+| **smoke/** | Phase gate tests (`make smoke-phaseN`) | `run-phase1.*` … `run-phase5.*`, `run-phase5-docker.*`, `run-mcp-staging-multi-windows.ps1`, fixtures |
 | **spike/** | Docker zvec integration (optional manual check) | `run-docker.sh`, `run-docker-inner.sh` |
 | **lib/** | Shared shell helpers | `normalize-eol.sh` |
 
@@ -16,6 +16,7 @@ Purpose-based layout for install, dependency fetch, contributor tooling, phase g
 ```bash
 # Install into target project (from target project root)
 TARGET_ROOT="$PWD" bash /path/to/clone/scripts/install/install.sh
+pip install -r /path/to/clone/scripts/install/requirements.txt   # once, for config merge on update
 
 # Fetch vendor libs (from repo root)
 make fetch-zvec-libs
@@ -34,8 +35,11 @@ make test-cover-check
 & "...\scripts\install\install.ps1" -TargetRoot (Get-Location).Path
 
 # Windows build + smoke
+.\scripts\dev\build-release.ps1   # production binary (-ldflags -s -w)
 .\scripts\dev\build-zvec-windows.ps1
 .\scripts\smoke\run-phase5.ps1
+.\scripts\smoke\run-mcp-staging-multi-windows.ps1
+.\scripts\smoke\run-phase5-docker.ps1
 .\scripts\dev\check-coverage.ps1
 ```
 

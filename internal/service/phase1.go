@@ -113,18 +113,6 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 	}
 
 	idx := p.indexingProgress()
-	if idx.Running {
-		raw, mErr := marshal(map[string]any{
-			"query":    req.Query,
-			"results":  []any{},
-			"indexing": idx.ToIndexingMap(),
-			"message":  "indexing in progress",
-		})
-		if mErr != nil {
-			return nil, mErr
-		}
-		return raw, ErrIndexingInProgress
-	}
 
 	if p.embed == nil {
 		return marshal(map[string]any{
@@ -167,25 +155,28 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 		})
 	}
 
-	results := make([]map[string]any, 0, len(hits))
+	results := make([]SearchResultItem, 0, len(hits))
 	for _, h := range hits {
-		results = append(results, map[string]any{
-			"path":       h.Path,
-			"start_line": h.StartLine,
-			"end_line":   h.EndLine,
-			"score":      h.Score,
-			"snippet":    h.Snippet,
+		results = append(results, SearchResultItem{
+			StartLine: h.StartLine,
+			EndLine:   h.EndLine,
+			Path:      h.Path,
+			Score:     h.Score,
+			Snippet:   h.Snippet,
 		})
 	}
 	totalMS := float64(time.Since(start).Milliseconds())
 	p.searchStats.Record(totalMS)
 	payload := map[string]any{
-		"query":   req.Query,
-		"results": results,
-		"timing": map[string]any{
-			"total_ms": totalMS,
-		},
+		"query":       req.Query,
+		"results":     results,
 		"performance": p.searchStats.Performance(totalMS),
+	}
+	if idx.Running {
+		payload["indexing"] = idx.ToIndexingMap()
+		if _, hasMsg := payload["message"]; !hasMsg {
+			payload["message"] = "results may be incomplete while indexing is in progress"
+		}
 	}
 	return marshal(payload)
 }
@@ -212,10 +203,11 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 	}
 
 	idx := p.indexingProgress()
+	root := p.Settings.WorkspaceRoot
 	payload := map[string]any{
-		"workspace_root":          p.Settings.WorkspaceRoot,
-		"index_dir":               p.Settings.IndexDir,
-		"config_path":             p.Settings.ConfigPath,
+		"workspace_root":          root,
+		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),
+		"config_path":             statusRelativePath(root, p.Settings.ConfigPath),
 		"server_version":          version.Version,
 		"zvec_go_version":         version.ZvecGoVersion,
 		"index_zvec_go_version":   p.indexZvecGoVersion(),
@@ -223,15 +215,13 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"indexed_chunks_manifest": chunks,
 		"zvec_doc_count":          docCount,
 		"zvec_collection":         collectionName,
-		"zvec_collection_path":    collectionPath,
+		"zvec_collection_path":    statusRelativePath(root, collectionPath),
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
-		"indexing":                idx.ToIndexingMap(),
+		"indexing":                relativeIndexingMap(root, idx.ToIndexingMap()),
 		"file_watcher":            p.fileWatcherStatus(),
 		"search_performance":      p.searchStats.Snapshot(),
-		"diagnostics": map[string]any{
-			"log_dir": p.Settings.LogsDir(),
-		},
+		"diagnostics":             indexStatusDiagnostics(p.Settings),
 	}
 	if zvecErr != "" {
 		payload["zvec_error"] = zvecErr
@@ -240,7 +230,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		payload["message"] = "embedding client failed to initialize"
 	}
 	if profileErr == nil && profile.Provider == "onnx" && profile.ModelPath != "" {
-		payload["embedding_model_path"] = profile.ModelPath
+		payload["embedding_model_path"] = statusRelativePath(root, profile.ModelPath)
 	}
 	if profileErr != nil {
 		payload["message"] = profileErr.Error()
@@ -356,7 +346,49 @@ func (p *Phase1) PrepareStartup() {
 	if p.runZvecGoMigrationIfNeeded() {
 		return
 	}
+	if p.runIdentityMigrationIfNeeded() {
+		return
+	}
 	p.StartAutoIndex()
+}
+
+func (p *Phase1) runIdentityMigrationIfNeeded() bool {
+	if p.coordinator == nil {
+		return false
+	}
+	profile, err := p.Settings.ActiveProfile()
+	if err != nil {
+		slog.Warn("identity migration check skipped", "err", err)
+		return false
+	}
+	mismatch, _, err := zvec.IndexIdentityMismatch(
+		p.Settings.IndexDir,
+		p.Settings.WorkspaceID,
+		p.Settings.App.ActiveProfile,
+		profile.Dimensions,
+	)
+	if err != nil && !mismatch {
+		slog.Warn("identity migration check failed", "err", err)
+		return false
+	}
+	if !mismatch {
+		return false
+	}
+
+	if p.Settings.AutoIndexOnStart {
+		slog.Info("workspace identity changed; force reindexing",
+			"workspace_id", p.Settings.WorkspaceID,
+			"workspace_root", p.Settings.WorkspaceRoot,
+		)
+		if _, err := p.coordinator.Start(true); err != nil {
+			slog.Warn("identity migration reindex failed to start", "err", err)
+		}
+		return true
+	}
+
+	p.startupMsg = "workspace path changed — run reindex with force=true"
+	slog.Info(p.startupMsg)
+	return true
 }
 
 func (p *Phase1) runZvecGoMigrationIfNeeded() bool {

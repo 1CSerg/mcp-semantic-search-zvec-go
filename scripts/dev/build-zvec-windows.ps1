@@ -1,4 +1,8 @@
 # Build mcp-semantic-search-zvec-go with zvec vendor libs (Windows MSVC/MinGW CGO).
+param(
+    [switch]$Release
+)
+
 $ErrorActionPreference = "Stop"
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 
@@ -38,7 +42,24 @@ Push-Location $RepoRoot
 try {
     & "$RepoRoot\scripts\fetch\fetch-onnx-runtime.ps1" | Out-Null
     New-Item -ItemType Directory -Force -Path bin | Out-Null
-    go build -tags "zvec,onnx" -o bin\mcp-semantic-search-zvec-go.exe .\cmd\mcp-semantic-search-zvec-go
+    $out = Join-Path $RepoRoot "bin\mcp-semantic-search-zvec-go.exe"
+    $buildArgs = @(
+        "build",
+        "-tags", "zvec,onnx",
+        "-o", $out,
+        ".\cmd\mcp-semantic-search-zvec-go"
+    )
+    if ($Release) {
+        $buildArgs = @(
+            "build",
+            "-tags", "zvec,onnx",
+            "-ldflags", "-s -w",
+            "-o", $out,
+            ".\cmd\mcp-semantic-search-zvec-go"
+        )
+    }
+    & go @buildArgs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $dllDst = Join-Path $LibDir "zvec_c_api.dll"
     if (Test-Path $dllDst) {
         Copy-Item -Force $dllDst bin\ -ErrorAction SilentlyContinue
@@ -47,7 +68,11 @@ try {
     if (Test-Path $ortDll) {
         Copy-Item -Force $ortDll bin\ -ErrorAction SilentlyContinue
     }
-    Write-Host "Built bin\mcp-semantic-search-zvec-go.exe (tags: zvec,onnx)"
+    $mode = if ($Release) { "release (tags: zvec,onnx; -ldflags -s -w)" } else { "tags: zvec,onnx" }
+    Write-Host "Built bin\mcp-semantic-search-zvec-go.exe ($mode)"
+    if ($Release) {
+        & $out --version
+    }
 } finally {
     Pop-Location
 }

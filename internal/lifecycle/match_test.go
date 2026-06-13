@@ -13,10 +13,10 @@ func TestMatchesStaleStdio(t *testing.T) {
 		want    bool
 	}{
 		{
-			name:    "match stdio same workspace",
-			cmdline: `D:\install\bin\mcp-semantic-search-zvec-go.exe --stdio`,
+			name:    "match staging via workspace-root marker",
+			cmdline: `"C:\Users\serg2\AppData\Local\mcp-semantic-search-zvec-go\cursor\abc123\mcp-semantic-search-zvec-go.exe" --stdio`,
 			pid:     5678,
-			want:    false, // no workspace in cmdline
+			want:    false, // no marker file on disk in unit test
 		},
 		{
 			name:    "match with workspace in cmdline",

@@ -117,7 +117,7 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 | Idempotent zvec open | Avoid double-open LOCK errors |
 | SIGTERM handler | Close collection, remove lock |
 | Stale process cleanup | `internal/lifecycle` kills prior `--stdio` instance by exe + workspace path on startup |
-| `indexing.running` + HTTP 409 | No silent wrong results during write |
+| Partial search during write | `indexing` metadata in search response; `/ready` stays not-ready until idle |
 | `/health` vs `/ready` | Liveness vs embeddings+index loaded |
 | Polling file watcher | Windows Docker bind-mount compatibility |
 
