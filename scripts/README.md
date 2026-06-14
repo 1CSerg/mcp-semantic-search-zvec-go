@@ -43,6 +43,6 @@ make test-cover-check
 .\scripts\dev\check-coverage.ps1
 ```
 
-## Removed in v1.0 cleanup
+## Removed legacy scripts
 
-Legacy zvec build scripts (`continue-zvec-build.sh`, `resume-build.sh`, `build-zvec-deps-windows.sh`, `reconfigure-zvec-mingw.sh`, `build-zvec-on-short-path.sh`), orphan `setup-msys2-mirrors.sh`, and duplicate `test-integration-docker.sh` were removed. Use `scripts/fetch/fetch-zvec-libs.*` instead.
+Older zvec build helpers were removed; use `scripts/fetch/fetch-zvec-libs.*` instead.

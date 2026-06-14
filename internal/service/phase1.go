@@ -19,7 +19,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/watcher"
 )
 
-// Phase1 wires manifest read, optional OpenAI embed, zvec store, and Phase 2 indexer.
+// Phase1 wires manifest read, embeddings, zvec store, and the indexer.
 type Phase1 struct {
 	Settings    *config.Settings
 	embed       embeddings.Embedder
@@ -31,7 +31,7 @@ type Phase1 struct {
 	startupMsg  string
 }
 
-// NewPhase1 creates a Phase 1/2 service.
+// NewPhase1 creates the production service (zvec + indexer).
 func NewPhase1(settings *config.Settings) (*Phase1, error) {
 	p := &Phase1{
 		Settings:    settings,
@@ -118,7 +118,7 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 		return marshal(map[string]any{
 			"query":   req.Query,
 			"results": []any{},
-			"message": "embedding provider not configured or unsupported in Phase 1",
+			"message": "embedding provider not configured or unsupported",
 		})
 	}
 
@@ -138,7 +138,7 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 			return marshal(map[string]any{
 				"query":   req.Query,
 				"results": []any{},
-				"message": "index not found — run reindex (Phase 2) or seed a collection for testing",
+				"message": "index not found — run reindex or seed a collection for testing",
 			})
 		}
 		if errors.Is(err, zvec.ErrNotLinked) {

@@ -56,7 +56,7 @@ Semantic search uses **embedding** models (vectorization), not chat LLMs. All cl
 
 Docker → host LM Studio: `http://host.docker.internal:1234/v1`
 
-### onnx (Phase 4)
+### onnx (local offline)
 
 Profile `local_multilingual` in [config.yaml](../config.yaml) runs fully offline after the model bundle is downloaded.
 
@@ -92,13 +92,15 @@ Production build tags: `-tags "zvec,onnx"`. Default unit tests use stub ONNX (`g
 
 ## indexing
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `extensions` | see config.yaml | File extensions to index |
-| `skip_dirs` | see config.yaml | Directories to skip |
-| `lock_stale_seconds` | 300 | Reclaim stale `index.lock` |
-| `stall_seconds` | 120 | No progress → recovery |
-| `heartbeat_seconds` | 15 | Lock heartbeat interval |
+Tables use two default columns: **Code fallback** (key omitted in YAML) and **Install template** (repo [config.yaml](../config.yaml) merged on first install).
+
+| Key | Code fallback | Install template | Description |
+|-----|---------------|------------------|-------------|
+| `extensions` | see config.yaml | see config.yaml | File extensions to index |
+| `skip_dirs` | see config.yaml | see config.yaml | Directories to skip |
+| `lock_stale_seconds` | 300 | 30 | Reclaim stale `index.lock` |
+| `stall_seconds` | 120 | 120 | No progress → recovery |
+| `heartbeat_seconds` | 15 | 15 | Lock heartbeat interval |
 
 Env override: `INDEXING_STALL_SECONDS` (stall detection / stale progress recovery).
 
@@ -115,13 +117,13 @@ Env overrides: `SEARCH_SLOW_THRESHOLD_SECONDS`, `SEARCH_DEGRADE_RATIO`, `SEARCH_
 
 ## file_watcher
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `enabled` | true | Auto-reindex on file changes |
-| `debounce_seconds` | 2 | Debounce after last event |
-| `run_as_daemon` | false | Separate watcher process (Phase 3) |
-| `backend` | auto | `auto`, `inotify`, `polling` |
-| `poll_interval_seconds` | 10 | Polling interval |
+| Key | Code fallback | Install template | Description |
+|-----|---------------|------------------|-------------|
+| `enabled` | false | true | Auto-reindex on file changes |
+| `debounce_seconds` | 2 | 2 | Debounce after last event |
+| `run_as_daemon` | false | false | Not implemented — ignored; watcher runs in-process |
+| `backend` | auto | auto | `auto`, `inotify`, `polling` |
+| `poll_interval_seconds` | 10 | 10 | Polling interval |
 
 On Windows Docker bind-mounts use `backend: polling`.
 
@@ -129,12 +131,12 @@ Env overrides: `FILE_WATCHER_ENABLED`, `FILE_WATCHER_BACKEND`, `FILE_WATCHER_POL
 
 ## logging
 
-| Key | Default |
-|-----|---------|
-| `level` | INFO |
-| `verbose` | false |
-| `max_bytes` | 5242880 |
-| `backup_count` | 3 |
+| Key | Code fallback | Install template |
+|-----|---------------|------------------|
+| `level` | INFO | DEBUG |
+| `verbose` | false | true |
+| `max_bytes` | 5242880 | 1048576 |
+| `backup_count` | 3 | 1 |
 
 Env overrides: `MCP_LOG_LEVEL`, `MCP_LOG_VERBOSE`, `MCP_LOG_MAX_BYTES`, `MCP_LOG_BACKUP_COUNT`. Logs: stderr + `data/logs/server.log`.
 
@@ -154,15 +156,15 @@ Override with `HTTP_ADDR` env.
 | `WORKSPACE_ID` | `WORKSPACE_ROOT` | Stable owner ID in index_meta |
 | `INDEX_DIR` | `.mcp-semantic-search-zvec-go/data/index` | Index storage |
 | `CONFIG_PATH` | `.mcp-semantic-search-zvec-go/config.yaml` | Config file |
-| `AUTO_INDEX_ON_START` | false / true at install | Background index on start via `reindex` coordinator |
-| `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | For check_update |
+| `AUTO_INDEX_ON_START` | false (code); `true` in Native install `mcp.json` | Background index on start via `reindex` coordinator. **Per-project `--stdio` only** — shared daemon workspaces ignore this env; call `reindex` manually |
+| `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | Returned in `check_update` JSON (stub; GitHub API not called yet) |
 | `HTTP_ADDR` | `:8080` | HTTP bind |
 | `API_TOKEN` | — | HTTP Bearer auth (set in `.env`) |
 | `ENV_PATH` | auto | Path to `.env` secrets file |
 
 Planned: `EMBEDDING_PROFILE` to override `active_profile` from yaml — not implemented yet.
 
-## daemon.yaml (Phase 5)
+## daemon.yaml (shared daemon)
 
 Shared daemon registration. Template: [templates/daemon.yaml](../templates/daemon.yaml).
 

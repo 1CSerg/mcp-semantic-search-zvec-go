@@ -42,7 +42,7 @@ flowchart TB
 1. **Single service layer** — `internal/service` shared by MCP and HTTP; identical JSON semantics.
 2. **Embedded vector store** — zvec in-process; no external DB server.
 3. **Resilience first** — graceful shutdown, lock recovery, health/readiness probes.
-4. **Two deployment modes** — per-project (default) and shared daemon (Phase 5).
+4. **Two deployment modes** — per-project (default) and shared daemon.
 
 ## Deployment modes
 
@@ -54,7 +54,7 @@ One OS process bound to one `WORKSPACE_ROOT`. Each target project has `.mcp-sema
 - Cursor: one MCP entry per project in `.cursor/mcp.json`.
 - Trade-off: N projects → N processes (N × ONNX memory in local mode).
 
-### Mode B — Shared daemon (Phase 5)
+### Mode B — Shared daemon
 
 One long-running HTTP server serves multiple workspaces via `workspace_id`.
 
@@ -72,14 +72,14 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 | `internal/transport/mcp` | MCP stdio (go-sdk) |
 | `internal/transport/http` | REST v1, `/health`, `/ready` |
 | `internal/service` | Core API |
-| `internal/indexer` | Scan, chunk, background jobs (Phase 2) |
-| `internal/embeddings` | `openai_compatible`, `onnx` (Phase 1/4) |
+| `internal/indexer` | Scan, chunk, background jobs |
+| `internal/embeddings` | `openai_compatible`, `onnx` |
 | `internal/store/zvec` | zvec-go wrapper |
 | `internal/store/manifest` | SQLite per-file manifest |
 | `internal/lock` | Cross-process `index.lock` |
 | `internal/watcher` | fsnotify + polling |
 | `internal/config` | YAML + env |
-| `internal/daemon` | Multi-tenant registry (Phase 5) |
+| `internal/daemon` | Multi-tenant registry |
 
 ## Data layout
 
@@ -87,7 +87,7 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 .mcp-semantic-search-zvec-go/
 ├── config.yaml
 ├── bin/mcp-semantic-search-zvec-go[.exe]
-├── models/                    # ONNX bundles (Phase 4)
+├── models/                    # ONNX model bundles
 └── data/
     ├── index/
     │   ├── manifest.db

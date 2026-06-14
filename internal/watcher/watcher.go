@@ -81,7 +81,7 @@ func (w *Watcher) Start(ctx context.Context) {
 	if w.settings.App.FileWatcher.RunAsDaemon {
 		w.mu.Lock()
 		w.running = false
-		w.lastError = "run_as_daemon is not supported in Phase 3"
+		w.lastError = "run_as_daemon is not supported"
 		w.mu.Unlock()
 		return
 	}

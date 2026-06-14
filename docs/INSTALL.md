@@ -78,7 +78,7 @@ REPLACE_CONFIG=1 TARGET_ROOT="$PWD" bash .../scripts/install/install.sh
 
 If merge dependencies are missing and `config.yaml` already exists, install **preserves** your file and prints a warning.
 
-After moving the project to a new path, call MCP `reindex` with `force: true`, or rely on `AUTO_INDEX_ON_START=true` to rebuild the index on the next MCP start. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
+After moving the project to a new path, call MCP `reindex` with `force: true`, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
 
 ## Configure secrets
 
@@ -122,7 +122,7 @@ Install копирует exe, DLL и launcher-скрипты в `.mcp-semantic-s
 
 Это обходит баг Cursor на Windows: прямой spawn exe по путям с пробелами/Unicode через `${workspaceFolder}` часто падает, хотя ручной запуск работает.
 
-Linux/macOS: `${workspaceFolder}` + бинарник в проекте (see `templates/cursor-mcp-linux.fragment.json`). Windows template: `templates/cursor-mcp-windows.fragment.json`. Legacy `templates/cursor-mcp.fragment.json` — не для Windows install.
+Linux/macOS: `${workspaceFolder}` + бинарник в проекте (see `templates/cursor-mcp-linux.fragment.json`). Windows template: `templates/cursor-mcp-windows.fragment.json`.
 
 ### Cursor MCP error на Windows
 
@@ -183,7 +183,7 @@ Cursor в каждом проекте (Windows, proxy через launcher):
 
 При старте `--stdio` бинарник сам останавливает зависшие stdio-процессы для того же workspace (`internal/lifecycle`).
 
-**Restart Cursor** after install. Если обновляете с версии с `mcp-native.ps1` — перезапустите `install.ps1` / `install.sh` или обновите `.cursor/mcp.json` вручную.
+**Restart Cursor** after install.
 
 ## HTTP mode (optional)
 
@@ -197,13 +197,18 @@ Or set in systemd / Docker — see [docker/docker-compose.yml](../docker/docker-
 
 ## Build from source
 
+Plain `go build` without tags produces a **stub** binary (no zvec/ONNX — semantic search will not work). For a production binary:
+
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
-go build -o bin/mcp-semantic-search-zvec-go ./cmd/mcp-semantic-search-zvec-go
+make fetch-zvec-libs
+make build-zvec    # -tags "zvec,onnx"
 ```
 
-Copy binary + `config.yaml` into target `.mcp-semantic-search-zvec-go/`.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for Windows CGO, ONNX runtime, and cross-compile notes.
+
+Copy binary, runtime libs, and `config.yaml` into target `.mcp-semantic-search-zvec-go/`.
 
 ## Configure embeddings
 
@@ -257,13 +262,15 @@ Both can be installed in the same project:
 
 Indexes are separate unless you intentionally share paths.
 
-## Shared daemon (Phase 5)
+## Shared daemon
 
-One HTTP process serves multiple projects via `workspace_id`. See [ARCHITECTURE.md](ARCHITECTURE.md).
+One HTTP process serves multiple projects via `workspace_id`. Architecture and trade-offs: [ARCHITECTURE.md](ARCHITECTURE.md). `daemon.yaml` reference: [CONFIG.md](CONFIG.md#daemonyaml-phase-5).
 
 1. Create `daemon.yaml` (template: [templates/daemon.yaml](../templates/daemon.yaml); Docker example: [templates/daemon.docker.yaml](../templates/daemon.docker.yaml)).
 2. Start daemon: `--daemon --daemon-config /path/to/daemon.yaml --http-addr :8080` (or `docker compose -f docker/docker-compose.daemon.yml up`).
 3. Point each Cursor project MCP entry to `--stdio-proxy --workspace-id=<id> --daemon-url=http://127.0.0.1:8080`.
+
+**Note:** `AUTO_INDEX_ON_START` from proxy install does not trigger indexing in the daemon — call MCP `reindex` per workspace after daemon start.
 
 **Windows + Docker:** use install with proxy mode (launcher script in project bin):
 

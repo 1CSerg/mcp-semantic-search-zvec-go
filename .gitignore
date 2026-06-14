@@ -12,6 +12,8 @@
 coverage.out
 coverage-internal.out
 /coverage
+/prof
+/covlifecycle
 
 # IDE
 .idea/
@@ -20,14 +22,9 @@ coverage-internal.out
 *~
 
 # Install / runtime data (target projects)
-.mcp-semantic-search-zvec-go/data/
-.mcp-semantic-search-zvec-go/bin/
-.mcp-semantic-search-zvec-go/models/
+/.mcp-semantic-search-zvec-go/*
 
 # Local dev
-/data/
-/models/
-/dist/
 .deps/
 
 # Legacy cmake debug artifacts
@@ -39,6 +36,4 @@ Thumbs.db
 
 /.cursor/*
 /.roo/*
-/docs/instr/*
 /scripts/install/__pycache__/*
-/.mcp-semantic-search-zvec-go/*

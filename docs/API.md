@@ -128,7 +128,18 @@ In shared daemon mode, pass `?workspace_id=` or header `X-Workspace-ID`.
 
 #### `GET /v1/version`
 
-Installed vs latest GitHub release.
+Installed version info. **Stub:** does not query GitHub Releases; `latest_version` always equals installed and `update_available` is always `false`. Compare with [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases) manually for updates.
+
+Example:
+
+```json
+{
+  "installed_version": "0.1.3",
+  "latest_version": "0.1.3",
+  "update_available": false,
+  "github_repo": "1CSerg/mcp-semantic-search-zvec-go"
+}
+```
 
 ---
 
@@ -156,17 +167,25 @@ Response:
 
 ---
 
-## Shared daemon CLI
+## CLI flags
 
-| Flag | Description |
-|------|-------------|
-| `--daemon` | Run shared multi-workspace HTTP daemon |
-| `--daemon-config` | Path to `daemon.yaml` (or `WORKSPACES_CONFIG`) |
-| `--stdio-proxy` | MCP stdio → HTTP proxy (use with `--workspace-id`) |
-| `--workspace-id` | Workspace ID for `--stdio-proxy` |
-| `--daemon-url` | Daemon base URL for proxy (default `http://127.0.0.1:8080`) |
+No flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
 
-Per-project mode (default): `--stdio` and/or `--http` with `WORKSPACE_ROOT` env (unchanged).
+| Flag | Mode | Description |
+|------|------|-------------|
+| `--stdio` | Per-project | MCP server over stdin/stdout |
+| `--http` | Per-project | HTTP REST API |
+| `--http-addr` | Both | Listen address (default `:8080` or `server.http_addr`) |
+| `--config` | Per-project | Override `CONFIG_PATH` |
+| `--daemon` | Shared daemon | Multi-workspace HTTP daemon (implies `--http`) |
+| `--daemon-config` | Shared daemon | Path to `daemon.yaml` (or `WORKSPACES_CONFIG`) |
+| `--stdio-proxy` | Proxy | MCP stdio → HTTP proxy (requires `--workspace-id`) |
+| `--workspace-id` | Proxy | Workspace ID for `--stdio-proxy` |
+| `--daemon-url` | Proxy | Daemon base URL (default `http://127.0.0.1:8080`) |
+
+Per-project (default): `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Shared daemon: `--daemon --daemon-config …`. Cursor multi-repo: `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
+
+See also [DEVELOPMENT.md](DEVELOPMENT.md#run-modes).
 
 ---
 
@@ -174,7 +193,10 @@ Per-project mode (default): `--stdio` and/or `--http` with `WORKSPACE_ROOT` env 
 
 Transport: stdio JSON-RPC via [MCP go-sdk](https://github.com/modelcontextprotocol/go-sdk).
 
-Server name: `semantic-search-zvec-go` (config key in `.cursor/mcp.json`).
+| Name | Value | Where |
+|------|-------|-------|
+| Cursor `mcp.json` key | `semantic-search-zvec-go` | `.cursor/mcp.json` |
+| MCP `implementation.name` | `mcp-semantic-search-zvec-go` | MCP handshake |
 
 All tools return **JSON text** in tool result content.
 
@@ -198,7 +220,9 @@ No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_perform
 
 ### `check_update`
 
-No arguments. Returns `installed_version`, `latest_version`, `update_available`.
+No arguments. Returns `installed_version`, `latest_version`, `update_available`, `github_repo`.
+
+**Stub:** does not call GitHub Releases API. `latest_version` always equals installed; `update_available` is always `false`. For real update checks, compare `installed_version` with [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases).
 
 ---
 

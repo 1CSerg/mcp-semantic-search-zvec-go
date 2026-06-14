@@ -31,7 +31,7 @@ profiles:
   openai_local:
     # Человекочитаемое описание профиля (для логов и index_status).
     description: LM Studio — локальный OpenAI-compatible API (профиль по умолчанию)
-    # Тип провайдера: openai_compatible (HTTP API) или onnx (локальная модель, Phase 4).
+    # Тип провайдера: openai_compatible (HTTP API) или onnx (локальная модель).
     provider: openai_compatible
     # Идентификатор модели — как в LM Studio (Developer → Loaded model) или в API провайдера.
     model: text-embedding-3-small
@@ -186,14 +186,14 @@ file_watcher:
   enabled: true
   # Пауза после последнего события перед запуском индексации (секунды).
   debounce_seconds: 2
-  # Запускать watcher отдельным процессом (Phase 3).
+  # Запускать watcher отдельным процессом.
   run_as_daemon: false
   # Режим: auto, inotify (Linux) или polling (Windows Docker bind-mount).
   backend: auto
   # Интервал опроса каталогов при backend=polling (секунды).
   poll_interval_seconds: 10
 
-# Параметры файлового логирования сервера (Phase 3 — ротация).
+# Параметры файлового логирования сервера.
 logging:
   # Уровень: DEBUG, INFO, WARNING, ERROR.
   level: DEBUG

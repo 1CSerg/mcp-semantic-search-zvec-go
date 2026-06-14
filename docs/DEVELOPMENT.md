@@ -4,16 +4,18 @@
 
 - Go 1.26+
 - Git
-- CGO toolchain (Phase 1+ for zvec-go): GCC on Linux, MSVC or MinGW on Windows
+- CGO toolchain (for zvec-go): GCC on Linux, MSVC or MinGW on Windows
 - Optional: golangci-lint, Docker
 
 ## Clone and build
+
+Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec`.
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
 make setup-hooks   # один раз: git add на Windows без fatal LF/CRLF
-go build -o bin/mcp-semantic-search-zvec-go ./cmd/mcp-semantic-search-zvec-go
+go build -o bin/mcp-semantic-search-zvec-go ./cmd/mcp-semantic-search-zvec-go   # stub
 go test ./...
 ```
 
@@ -31,8 +33,10 @@ Dev mode uses repo `config.yaml` automatically when install tree is absent.
 
 ## Run modes
 
+No CLI flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
+
 ```bash
-# MCP stdio (Cursor spawns this)
+# MCP stdio (Cursor spawns this; default when no flags)
 ./bin/mcp-semantic-search-zvec-go --stdio
 
 # HTTP only
@@ -40,7 +44,18 @@ Dev mode uses repo `config.yaml` automatically when install tree is absent.
 
 # Both (HTTP in background goroutine + MCP stdio)
 ./bin/mcp-semantic-search-zvec-go --stdio --http
+
+# Shared daemon (multi-workspace HTTP)
+./bin/mcp-semantic-search-zvec-go --daemon --daemon-config /path/to/daemon.yaml --http-addr :8080
+
+# MCP stdio proxy to shared daemon (Cursor multi-repo)
+./bin/mcp-semantic-search-zvec-go --stdio-proxy --workspace-id=my-app --daemon-url=http://127.0.0.1:8080
+
+# Override config path
+./bin/mcp-semantic-search-zvec-go --stdio --config /path/to/config.yaml
 ```
+
+Full flag table: [API.md](API.md#cli-flags).
 
 Logs go to stderr and `.mcp-semantic-search-zvec-go/data/logs/server.log` (rotation via `logging.max_bytes` / `logging.backup_count`). Fatal panics write `data/logs/last_crash.json`.
 
@@ -53,19 +68,19 @@ internal/
   service/                          # Core API
   transport/mcp/                    # MCP stdio
   transport/http/                   # REST
-  store/zvec/                       # Phase 1 — zvec-go
-  embeddings/                     # Phase 1/4
-  indexer/                          # scan, chunk, coordinator (Phase 2)
-  watcher/                          # fsnotify + polling (Phase 3)
-  logging/                          # file log rotation (Phase 3)
-  crash/                            # last_crash.json (Phase 3)
-  daemon/                           # multi-workspace registry (Phase 5)
+  store/zvec/                       # zvec-go vector store
+  embeddings/                       # openai_compatible, onnx
+  indexer/                          # scan, chunk, coordinator
+  watcher/                          # fsnotify + polling
+  logging/                          # file log rotation
+  crash/                            # last_crash.json
+  daemon/                           # multi-workspace registry
 docs/
 scripts/                            # install, fetch, dev, smoke, spike (see scripts/README.md)
 templates/                          # MCP fragments
 ```
 
-## zvec-go (Phase 1)
+## zvec-go
 
 Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.5.0 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) ≥ v0.4.0). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
 
@@ -86,7 +101,7 @@ make fetch-zvec-libs
 
 Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
 
-### ONNX (Phase 4)
+### ONNX (local offline)
 
 Local embeddings use [onnxruntime_go](https://github.com/yalue/onnxruntime_go) with build tag `onnx`.
 
@@ -130,9 +145,9 @@ Linux / macOS release: `make build-release` or `bash scripts/dev/build-release.s
 docker run --rm -v "${PWD}:/src" -w /src golang:1.26.3-bookworm bash /src/scripts/spike/run-docker-inner.sh
 ```
 
-First run ~2–3 min (clone + download libs). Results: [SPIKE_RESULTS.md](spike/SPIKE_RESULTS.md).
+First run ~2–3 min (clone + download libs). Covers integration checklist below.
 
-**Phase 1 gate smoke** (seed-index → HTTP search, mock embeddings):
+**Zvec search smoke** (`make smoke-phase1` — seed-index → HTTP search, mock embeddings):
 
 ```powershell
 .\scripts\smoke\run-phase1.ps1
@@ -140,7 +155,7 @@ First run ~2–3 min (clone + download libs). Results: [SPIKE_RESULTS.md](spike/
 
 Linux: `make smoke-phase1`
 
-**Phase 2 gate smoke** (empty project → reindex → HTTP search):
+**Indexer smoke** (`make smoke-phase2` — empty project → reindex → HTTP search):
 
 ```powershell
 .\scripts\smoke\run-phase2.ps1
@@ -148,7 +163,7 @@ Linux: `make smoke-phase1`
 
 Linux: `make smoke-phase2`
 
-**Phase 3 gate smoke** (reconnect resilience, watcher, `/ready`, search metrics):
+**Resilience smoke** (`make smoke-phase3` — reconnect, watcher, `/ready`, search metrics):
 
 ```powershell
 .\scripts\smoke\run-phase3.ps1
@@ -156,7 +171,7 @@ Linux: `make smoke-phase2`
 
 Linux: `make smoke-phase3`
 
-**Phase 4 gate smoke** (local ONNX `local_multilingual`, no external embedding API):
+**ONNX smoke** (`make smoke-phase4` — local `local_multilingual`, no external embedding API):
 
 ```powershell
 .\scripts\smoke\run-phase4.ps1
@@ -164,7 +179,7 @@ Linux: `make smoke-phase3`
 
 Linux: `make smoke-phase4`
 
-**Phase 5 gate smoke** (shared daemon, 3 workspaces, MCP proxy unit check):
+**Shared daemon smoke** (`make smoke-phase5` — 3 workspaces, MCP proxy unit check):
 
 ```powershell
 .\scripts\smoke\run-phase5.ps1
@@ -188,14 +203,43 @@ make seed-index
 ./bin/mcp-semantic-search-zvec-go --http
 ```
 
-Spike checklist: [ZVEC_SPIKE.md](spike/ZVEC_SPIKE.md).
+### Integration checklist
+
+Run on **Windows amd64** and **Linux amd64** after bump zvec-go or schema changes:
+
+```bash
+make fetch-zvec-libs
+export CGO_ENABLED=1
+# Linux/macOS: source .deps/zvec-lib.env && export LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
+make test-integration
+```
+
+| # | Test | Pass criteria |
+|---|------|---------------|
+| 1 | Create collection with schema below | No CGO/link errors |
+| 2 | Insert 100 docs with fp32 vectors | `doc_count` matches |
+| 3 | Vector query top-k | Results ordered by score |
+| 4 | Open existing collection read-only | Second open in same process idempotent |
+| 5 | Delete by doc id | Count decreases |
+| 6 | Graceful `Close()` then reopen | No LOCK file error |
+| 7 | Kill -9 then stale lock handling | Next process reclaims (app-level) |
+| 8 | Windows MSVC/MinGW build | Binary runs on target host |
+
+Code: `internal/store/zvec/store.go`, tests in `store_integration_test.go` (`TestIntegrationSpikeChecklist`, tags `integration,zvec`).
+
+| Outcome | Action |
+|---------|--------|
+| All pass | OK to ship zvec bump |
+| Windows link fails | `zvec_c_api.dll` next to exe; see Windows CGO notes above |
+| Schema incompatible | Indexes require `reindex` with `force: true` |
+| Vendor libs GLIBC mismatch | Fallback: zvec-go source mode (`-tags source`) |
 
 ### See also
 
 - [zvec-go examples](https://github.com/zvec-ai/zvec-go/tree/main/examples) — Go API reference
-- [zvec-agent-skills](https://github.com/zvec-ai/zvec-agent-skills) — product concepts (Python/Node); hybrid search ideas for Phase 2
+- [zvec-agent-skills](https://github.com/zvec-ai/zvec-agent-skills) — product concepts (Python/Node); hybrid search ideas for future work
 
-Collection schema:
+Collection name: `ws_<sha256(workspace:profile:dims)[:16]>`. Fields:
 
 | Field | Type |
 |-------|------|
@@ -284,4 +328,4 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 
 После смены версии: обновите таблицу выше и снова `make fetch-zvec-libs`.
 
-**Автомиграция в целевом проекте:** при старте бинарник сравнивает `version.ZvecGoVersion` с `zvec_go_version` в `index_meta.json`. При расхождении сбрасывает zvec-коллекцию и `manifest.db`; если `AUTO_INDEX_ON_START=true` (default install) — запускает force `reindex`, иначе нужен ручной MCP `reindex`.
+**Автомиграция в целевом проекте:** при старте бинарник сравнивает `version.ZvecGoVersion` с `zvec_go_version` в `index_meta.json`. При расхождении сбрасывает zvec-коллекцию и `manifest.db`; если `AUTO_INDEX_ON_START=true` (Native install, per-project `--stdio`) — запускает force `reindex`, иначе нужен ручной MCP `reindex`. В shared daemon режиме auto-index при старте не действует.

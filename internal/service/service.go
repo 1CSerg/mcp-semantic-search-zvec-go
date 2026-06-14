@@ -8,8 +8,8 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
-// ErrNotImplemented indicates bootstrap stub; real logic arrives in Phase 1+.
-var ErrNotImplemented = fmt.Errorf("not implemented yet (see docs/ROADMAP.md)")
+// ErrNotImplemented indicates the default stub build (no zvec tag).
+var ErrNotImplemented = fmt.Errorf("not implemented in stub build; use -tags zvec,onnx")
 
 // SearchRequest is shared by MCP and HTTP.
 type SearchRequest struct {
@@ -44,7 +44,7 @@ type Service interface {
 	Ready() error
 }
 
-// Stub implements Service with placeholder responses for Phase 0 bootstrap.
+// Stub implements Service with placeholder responses for the default stub build (!zvec tag).
 type Stub struct {
 	Settings *config.Settings
 }
@@ -90,7 +90,7 @@ func (s *Stub) GetIndexStatus() (json.RawMessage, error) {
 		"indexing": map[string]any{
 			"state":   "idle",
 			"running": false,
-			"message": "Phase 0 bootstrap — indexer not wired",
+			"message": "indexer not available in stub build",
 		},
 		"file_watcher": map[string]any{
 			"enabled_in_config": s.Settings.App.FileWatcher.Enabled,
@@ -124,7 +124,7 @@ func (s *Stub) CheckUpdate() (json.RawMessage, error) {
 		"latest_version":    version.Version,
 		"update_available":  false,
 		"github_repo":       s.Settings.GitHubRepo,
-		"message":           "check_update against GitHub releases — Phase 2",
+		"message":           "check_update not implemented in stub build",
 	}
 	return marshal(payload)
 }
