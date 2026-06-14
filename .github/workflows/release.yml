@@ -46,7 +46,7 @@ jobs:
         shell: bash
         run: |
           want="${{ steps.ver.outputs.version }}"
-          got=$(grep 'Version = ' internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')
+          got=$(awk -F'"' '/^\tVersion = / { print $2; exit }' internal/version/version.go)
           if [ "$want" != "$got" ]; then
             echo "Tag v$want does not match internal/version/version.go ($got)"
             exit 1
