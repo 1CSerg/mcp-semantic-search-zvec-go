@@ -211,6 +211,78 @@ func TestReconcileIndexMismatchWithForce(t *testing.T) {
 	}
 }
 
+func TestReconcileIndexNoMeta(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ws")
+	identity := IndexIdentity{
+		WorkspaceID:   "ws1",
+		WorkspaceRoot: root,
+		Profile:       "test",
+		Dimensions:    3,
+	}
+	if err := ReconcileIndex(dir, identity, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !IndexMetaPresent(dir) {
+		t.Fatal("expected index meta created")
+	}
+}
+
+func TestReconcileIndexNoMismatch(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ws")
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:         "ws1",
+		WorkspaceRoot:       root,
+		EmbeddingProfile:    "test",
+		EmbeddingDimensions: 3,
+		CollectionName:      CollectionName(root, "test", 3),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := IndexIdentity{
+		WorkspaceID:   "ws1",
+		WorkspaceRoot: root,
+		Profile:       "test",
+		Dimensions:    3,
+	}
+	if err := ReconcileIndex(dir, identity, false, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResetIndexForIdentityChangeNilOldMeta(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ws")
+	identity := IndexIdentity{
+		WorkspaceID:   "ws1",
+		WorkspaceRoot: root,
+		Profile:       "test",
+		Dimensions:    3,
+	}
+	if err := ResetIndexForIdentityChange(dir, nil, nil, identity); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.WorkspaceID != "ws1" {
+		t.Fatalf("meta=%+v", meta)
+	}
+}
+
+func TestIndexIdentityMismatchCorruptMeta(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index_meta.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := IndexIdentityMismatch(dir, "ws1", "test", 3)
+	if err == nil {
+		t.Fatal("expected read error")
+	}
+}
+
 func TestRemoveCollectionDirEmptyName(t *testing.T) {
 	dir := t.TempDir()
 	if err := RemoveCollectionDir(dir, ""); err != nil {

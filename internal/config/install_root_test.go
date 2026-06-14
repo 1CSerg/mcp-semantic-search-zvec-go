@@ -53,3 +53,31 @@ func TestReadWorkspaceRootMarkerUnicode(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+func TestReadWorkspaceRootMarkerMissing(t *testing.T) {
+	_, err := ReadWorkspaceRootMarker(t.TempDir())
+	if err == nil {
+		t.Fatal("expected error for missing marker")
+	}
+}
+
+func TestReadWorkspaceRootMarkerEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, WorkspaceRootMarkerFile), []byte("  \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadWorkspaceRootMarker(dir)
+	if err == nil {
+		t.Fatal("expected error for empty marker")
+	}
+}
+
+func TestResolveWorkspaceRootCwdFallback(t *testing.T) {
+	got := ResolveWorkspaceRoot("")
+	if got == "" {
+		t.Fatal("expected non-empty cwd fallback")
+	}
+	if !filepath.IsAbs(got) {
+		t.Fatalf("got %q want absolute path", got)
+	}
+}

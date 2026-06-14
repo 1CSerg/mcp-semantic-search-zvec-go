@@ -3,6 +3,8 @@ package service
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 )
 
 func TestStatusRelativePath(t *testing.T) {
@@ -29,6 +31,11 @@ func TestStatusRelativePath(t *testing.T) {
 			path: "",
 			want: "",
 		},
+		{
+			name: "outside workspace",
+			path: filepath.Join(root, "..", "other", "file.go"),
+			want: "../other/file.go",
+		},
 	}
 
 	for _, tc := range tests {
@@ -38,6 +45,20 @@ func TestStatusRelativePath(t *testing.T) {
 				t.Fatalf("statusRelativePath(%q, %q)=%q want %q", root, tc.path, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRelativeIndexingMapNil(t *testing.T) {
+	if relativeIndexingMap("/tmp", nil) != nil {
+		t.Fatal("expected nil")
+	}
+}
+
+func TestRelativeIndexingMapNoCurrentFile(t *testing.T) {
+	idx := map[string]any{"running": true}
+	got := relativeIndexingMap(t.TempDir(), idx)
+	if got["running"] != true {
+		t.Fatalf("got=%v", got)
 	}
 }
 
@@ -51,5 +72,17 @@ func TestRelativeIndexingMap(t *testing.T) {
 	out := relativeIndexingMap(root, idx)
 	if out["current_file"] != "src/main.go" {
 		t.Fatalf("current_file=%v", out["current_file"])
+	}
+}
+
+func TestIndexStatusDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, config.DefaultInstallDirName, config.DefaultIndexSubdir),
+	}
+	d := indexStatusDiagnostics(settings)
+	if d["log_dir"] == "" {
+		t.Fatalf("diagnostics=%v", d)
 	}
 }

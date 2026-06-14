@@ -87,3 +87,47 @@ func TestCmdlineContainsWorkspace(t *testing.T) {
 		t.Fatal("expected no match for different path")
 	}
 }
+
+func TestCmdlineContainsWorkspaceBackslash(t *testing.T) {
+	ws := `D:\projects\my-app`
+	if !cmdlineContainsWorkspace(`D:/projects/my-app/bin/mcp-semantic-search-zvec-go.exe --stdio`, ws) {
+		t.Fatal("expected forward-slash cmdline match")
+	}
+	if !cmdlineContainsWorkspace(`D:\projects\my-app\bin\mcp-semantic-search-zvec-go.exe --stdio`, ws) {
+		t.Fatal("expected backslash cmdline match")
+	}
+}
+
+func TestFirstExecutableToken(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{`"C:\path\mcp-semantic-search-zvec-go.exe" --stdio`, `C:\path\mcp-semantic-search-zvec-go.exe`},
+		{`/usr/bin/mcp-semantic-search-zvec-go --stdio`, `/usr/bin/mcp-semantic-search-zvec-go`},
+		{`no-space`, `no-space`},
+	}
+	for _, tt := range tests {
+		if got := firstExecutableToken(tt.in); got != tt.want {
+			t.Fatalf("firstExecutableToken(%q)=%q want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestPathsEqual(t *testing.T) {
+	if pathsEqual("", "x") || pathsEqual("x", "") {
+		t.Fatal("expected false for empty path")
+	}
+	if !pathsEqual(`D:\a\b`, `D:/a/b`) {
+		t.Fatal("expected slash-normalized match")
+	}
+	if pathsEqual(`D:\a\b`, `D:\c\d`) {
+		t.Fatal("expected different paths to differ")
+	}
+}
+
+func TestWorkspaceFromCmdlineNoMarker(t *testing.T) {
+	if got := workspaceFromCmdline(`D:\bin\mcp-semantic-search-zvec-go.exe --stdio`); got != "" {
+		t.Fatalf("got %q want empty", got)
+	}
+}
