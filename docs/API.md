@@ -16,7 +16,7 @@ Liveness probe.
 {
   "status": "ok",
   "service": "mcp-semantic-search-zvec-go",
-  "version": "1.0.0"
+  "version": "0.1.3"
 }
 ```
 

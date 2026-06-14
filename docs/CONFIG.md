@@ -81,7 +81,7 @@ bash scripts/fetch/fetch-onnx-model.sh .mcp-semantic-search-zvec-go/models/parap
 Install with model fetch (when `active_profile: local_multilingual` or explicit flag):
 
 ```powershell
-& scripts\install.ps1 -FetchONNXModel
+& scripts\install\install.ps1 -FetchONNXModel
 ```
 
 ```bash
@@ -160,7 +160,7 @@ Override with `HTTP_ADDR` env.
 | `API_TOKEN` | — | HTTP Bearer auth (set in `.env`) |
 | `ENV_PATH` | auto | Path to `.env` secrets file |
 
-Planned (Phase 1+): `EMBEDDING_PROFILE` to override `active_profile` from yaml — not read in Phase 0 bootstrap.
+Planned: `EMBEDDING_PROFILE` to override `active_profile` from yaml — not implemented yet.
 
 ## daemon.yaml (Phase 5)
 

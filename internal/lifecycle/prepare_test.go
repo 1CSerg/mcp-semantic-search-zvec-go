@@ -1,10 +1,12 @@
 package lifecycle
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,6 +14,56 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
+
+func staleHelperBinaryPath(dir string) string {
+	name := "mcp-semantic-search-zvec-go"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(dir, name)
+}
+
+func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cmd.Process == nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		if runtime.GOOS == "windows" {
+			return nil
+		}
+		pid := strconv.Itoa(cmd.Process.Pid)
+		if _, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline")); err == nil {
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return fmt.Errorf("helper not ready within %v", timeout)
+}
+
+func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
+	t.Helper()
+	helper := staleHelperBinaryPath(workspace)
+	data, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Skipf("read test binary: %v", err)
+	}
+	if err := os.WriteFile(helper, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Skipf("start helper: %v", err)
+	}
+	if err := waitForHelperReady(cmd, 5*time.Second); err != nil {
+		_ = cmd.Process.Kill()
+		t.Fatalf("wait for helper: %v", err)
+	}
+	return cmd
+}
 
 func TestStopStaleStdioInstancesNoMatch(t *testing.T) {
 	stopped, err := stopStaleStdioInstances(t.TempDir(), os.Getpid())
@@ -31,23 +83,10 @@ func TestHelperStaleStdio(t *testing.T) {
 
 func TestStopStaleStdioKillsHelper(t *testing.T) {
 	workspace := t.TempDir()
-	helper := filepath.Join(workspace, "mcp-semantic-search-zvec-go.exe")
-	data, err := os.ReadFile(os.Args[0])
-	if err != nil {
-		t.Skipf("read test binary: %v", err)
-	}
-	if err := os.WriteFile(helper, data, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
-	cmd.Env = append(os.Environ(), "GO_WANT_HELPER=1")
-	if err := cmd.Start(); err != nil {
-		t.Skipf("start helper: %v", err)
-	}
+	cmd := startStaleHelper(t, workspace)
 	defer func() { _ = cmd.Process.Kill() }()
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		stopped, err := stopStaleStdioInstances(workspace, os.Getpid())
 		if err != nil {
@@ -64,19 +103,7 @@ func TestStopStaleStdioKillsHelper(t *testing.T) {
 
 func TestPrepareStdioStopsStaleHelper(t *testing.T) {
 	workspace := t.TempDir()
-	helper := filepath.Join(workspace, "mcp-semantic-search-zvec-go.exe")
-	data, err := os.ReadFile(os.Args[0])
-	if err != nil {
-		t.Skipf("read test binary: %v", err)
-	}
-	if err := os.WriteFile(helper, data, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
-	cmd.Env = append(os.Environ(), "GO_WANT_HELPER=1")
-	if err := cmd.Start(); err != nil {
-		t.Skipf("start helper: %v", err)
-	}
+	cmd := startStaleHelper(t, workspace)
 	defer func() { _ = cmd.Process.Kill() }()
 
 	settings := &config.Settings{

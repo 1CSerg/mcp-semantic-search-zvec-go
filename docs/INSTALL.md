@@ -227,9 +227,7 @@ See [CONFIG.md](CONFIG.md).
 
 1. Restart Cursor.
 2. Call MCP `index_status` — check `server_version`, `index_dir`.
-3. After Phase 2: wait for indexing idle, then `semantic_search`.
-
-Bootstrap (Phase 0): tools respond with stub JSON; `bootstrap: true` in status.
+3. After indexing idle, call `semantic_search`.
 
 ## Uninstall
 
