@@ -16,6 +16,7 @@ $Templates = Join-Path $RepoRoot "templates"
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $BinaryName = "mcp-semantic-search-zvec-go.exe"
 $ServerKey = "semantic-search-zvec-go"
+$CursorRuleRelPath = ".cursor/rules/semantic-search-zvec-go.mdc"
 
 function Write-Utf8File {
     param([string]$Path, [string]$Content)
@@ -211,6 +212,27 @@ function Copy-RuntimeLibs {
     }
 }
 
+function Install-CursorRule {
+    param(
+        [string]$TargetRoot,
+        [string]$TemplatesDir
+    )
+
+    $src = Join-Path $TemplatesDir "cursor-rules\semantic-search-zvec-go.mdc"
+    if (-not (Test-Path $src)) {
+        throw "cursor rule template not found: $src"
+    }
+
+    $rulesDir = Join-Path $TargetRoot ".cursor\rules"
+    if (-not (Test-Path $rulesDir)) {
+        New-Item -ItemType Directory -Force -Path $rulesDir | Out-Null
+    }
+
+    $dest = Join-Path $TargetRoot ($CursorRuleRelPath -replace '/', '\')
+    Copy-Item -Force $src $dest
+    Write-Host "Installed Cursor rule: $dest"
+}
+
 function Install-ConfigYaml {
     param(
         [string]$TemplatePath,
@@ -320,16 +342,6 @@ if (-not (Test-Path (Join-Path $InstallDir "uninstall.ps1"))) {
 }
 Write-Host "Project binary: $dstBin"
 
-$manifest = @{
-    mode = if ($McpMode -eq "Proxy") { "proxy" } else { "native" }
-    runtime = "go"
-    version = $version
-    installed_at = (Get-Date).ToUniversalTime().ToString("o")
-    mcp_mode = $McpMode
-    workspace_id = $WorkspaceId
-    daemon_url = if ($McpMode -eq "Proxy") { $DaemonUrl } else { $null }
-} | ConvertTo-Json
-Write-Utf8File (Join-Path $InstallDir "install-manifest.json") $manifest
 Write-Utf8File (Join-Path $InstallDir "installed-version.txt") $version
 
 $cursorDir = Join-Path $TargetRoot ".cursor"
@@ -344,6 +356,20 @@ if ($McpMode -eq "Proxy") {
 } else {
     Merge-WindowsMcpJson -Path $mcpJsonPath -TargetRoot $TargetRoot -BinDir $BinDir
 }
+
+Install-CursorRule -TargetRoot $TargetRoot -TemplatesDir $Templates
+
+$manifest = @{
+    mode = if ($McpMode -eq "Proxy") { "proxy" } else { "native" }
+    runtime = "go"
+    version = $version
+    installed_at = (Get-Date).ToUniversalTime().ToString("o")
+    mcp_mode = $McpMode
+    workspace_id = $WorkspaceId
+    daemon_url = if ($McpMode -eq "Proxy") { $DaemonUrl } else { $null }
+    cursor_rule = $CursorRuleRelPath
+} | ConvertTo-Json
+Write-Utf8File (Join-Path $InstallDir "install-manifest.json") $manifest
 
 # gitignore block
 $gitignore = Join-Path $TargetRoot ".gitignore"

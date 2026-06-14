@@ -68,6 +68,22 @@ function Assert-McpJsonWindows {
     }
 }
 
+function Assert-CursorRuleInstalled {
+    param([string]$Root)
+    $rulePath = Join-Path $Root ".cursor\rules\semantic-search-zvec-go.mdc"
+    if (-not (Test-Path $rulePath)) { throw "missing Cursor rule: $rulePath" }
+    $content = Get-Content -Raw $rulePath
+    if ($content -notmatch 'managedBy:\s*mcp-semantic-search-zvec-go') {
+        throw "Cursor rule missing managedBy marker: $rulePath"
+    }
+}
+
+function Assert-CursorRuleRemoved {
+    param([string]$Root)
+    $rulePath = Join-Path $Root ".cursor\rules\semantic-search-zvec-go.mdc"
+    if (Test-Path $rulePath) { throw "Cursor rule still present after uninstall: $rulePath" }
+}
+
 function Wait-Health {
     param([int]$Port)
     $deadline = (Get-Date).AddSeconds(30)
@@ -171,6 +187,7 @@ try {
         Copy-Item -Force (Join-Path $ScriptDir "config.yaml") $cfgDest
         $uninstall = Join-Path $root ".mcp-semantic-search-zvec-go\uninstall.ps1"
         if (-not (Test-Path $uninstall)) { throw "missing bundled uninstall.ps1: $uninstall" }
+        Assert-CursorRuleInstalled -Root $root
     }
 
     $binA = Get-ProjectBinExe $rootA
@@ -256,6 +273,10 @@ try {
     Start-Sleep -Milliseconds 500
     if ($srvB.HasExited) { throw "server B exited when A was stopped" }
     Invoke-RestMethod -Uri "http://127.0.0.1:$HttpPortB/health" -TimeoutSec 5 | Out-Null
+
+    $uninstallA = Join-Path $rootA ".mcp-semantic-search-zvec-go\uninstall.ps1"
+    & $uninstallA
+    Assert-CursorRuleRemoved -Root $rootA
 
     Write-Host "PASS project-local multi-windows smoke: two installs, parallel HTTP, workspace isolation"
 } finally {

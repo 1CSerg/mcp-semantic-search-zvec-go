@@ -37,3 +37,7 @@ Thumbs.db
 /.cursor/*
 /.roo/*
 /scripts/install/__pycache__/*
+
+# BEGIN mcp-semantic-search-zvec-go
+.mcp-semantic-search-zvec-go/
+# END mcp-semantic-search-zvec-go

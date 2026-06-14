@@ -11,6 +11,37 @@ if ((Split-Path -Leaf $PSScriptRoot) -eq '.mcp-semantic-search-zvec-go') {
     $InstallDir = Join-Path $TargetRoot ".mcp-semantic-search-zvec-go"
 }
 $ServerKey = "semantic-search-zvec-go"
+$DefaultCursorRuleRel = ".cursor/rules/semantic-search-zvec-go.mdc"
+
+function Remove-CursorRule {
+    param(
+        [string]$TargetRoot,
+        [string]$InstallDir
+    )
+
+    $rel = $DefaultCursorRuleRel
+    $manifestPath = Join-Path $InstallDir "install-manifest.json"
+    if (Test-Path $manifestPath) {
+        try {
+            $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+            if ($manifest.PSObject.Properties.Name -contains "cursor_rule" -and $manifest.cursor_rule) {
+                $rel = [string]$manifest.cursor_rule
+            }
+        } catch { }
+    }
+
+    $rulePath = Join-Path $TargetRoot ($rel -replace '/', '\')
+    if (-not (Test-Path $rulePath)) { return }
+
+    $content = Get-Content -Raw $rulePath
+    if ($content -notmatch "managedBy:\s*mcp-semantic-search-zvec-go") {
+        Write-Host "Skipped Cursor rule (not install-managed): $rulePath"
+        return
+    }
+
+    Remove-Item -Force $rulePath
+    Write-Host "Removed Cursor rule: $rulePath"
+}
 
 function Stop-StaleProcesses {
     param([string]$Workspace)
@@ -53,6 +84,8 @@ if (Test-Path $mcpJson) {
         [System.IO.File]::WriteAllText($mcpJson, ($obj | ConvertTo-Json -Depth 10))
     }
 }
+
+Remove-CursorRule -TargetRoot $TargetRoot -InstallDir $InstallDir
 
 $legacyStagingDir = $null
 $manifestPath = Join-Path $InstallDir "install-manifest.json"

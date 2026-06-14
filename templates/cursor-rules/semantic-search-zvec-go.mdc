@@ -1,0 +1,43 @@
+---
+description: Semantic code search via MCP semantic-search-zvec-go
+alwaysApply: true
+managedBy: mcp-semantic-search-zvec-go
+---
+
+# Semantic search (mcp-semantic-search-zvec-go)
+
+> This file is managed by `mcp-semantic-search-zvec-go` install. Do not edit manually — re-run install to update.
+
+MCP server for semantic code search (zvec + embeddings). Install dir: `.mcp-semantic-search-zvec-go/`.
+
+## MCP tools
+
+| Tool | Use |
+|------|-----|
+| `semantic_search` | Natural-language query → ranked code chunks |
+| `index_status` | Paths, counts, indexing progress |
+| `reindex` | Full or incremental reindex |
+| `check_update` | Installed version (stub — does not poll GitHub) |
+
+## Agent rules
+
+- **Explore the codebase** → call `semantic_search` first; avoid full-repo walks or broad grep when MCP can answer.
+- **Index status** → call `index_status`; do not grep MCP tool implementation under `.mcp-semantic-search-zvec-go/`.
+- While **`indexing.running`**, `semantic_search` results may be incomplete; check the `indexing` field in the response.
+- **Do not read** `.mcp-semantic-search-zvec-go/data/index/` wholesale; on errors, tail `.mcp-semantic-search-zvec-go/data/logs/server.log`.
+
+## `semantic_search` parameters
+
+- `query` (required) — natural-language search string
+- `limit` (integer, default 10) — number of results
+- `path_glob` (optional) — narrow results to matching paths
+
+Example: `{"query": "authentication middleware", "limit": 15}`
+
+## When to `reindex`
+
+- Empty search while indexing is idle
+- Embedding profile changed in `config.yaml`
+- `index_owner_mismatch` → `reindex` with `force: true`
+
+Native install (`AUTO_INDEX_ON_START=true`) reindexes on MCP start; shared daemon + `--stdio-proxy` does not — call `reindex` manually.

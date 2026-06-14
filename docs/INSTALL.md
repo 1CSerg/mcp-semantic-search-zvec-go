@@ -35,6 +35,7 @@ TARGET_ROOT="$PWD" bash /tmp/mcp-semantic-search-zvec-go/scripts/install/install
 ```
 your-project/
 ├── .cursor/mcp.json              # MCP wiring (merged)
+├── .cursor/rules/semantic-search-zvec-go.mdc  # agent rule (install-managed, English)
 ├── .mcp-semantic-search-zvec-go/
 │   ├── config.yaml               # settings (profiles, indexing, …)
 │   ├── .env                      # secrets (created on first install)
@@ -57,6 +58,7 @@ The whole `.mcp-semantic-search-zvec-go/` directory is gitignored. On first inst
 Re-run the same install command from an updated clone or release. The script:
 
 - Updates the binary and runtime DLLs/so/dylib
+- **Overwrites** `.cursor/rules/semantic-search-zvec-go.mdc` with the latest agent rule template
 - **Merges** new keys from repo `config.yaml` into your `.mcp-semantic-search-zvec-go/config.yaml` (your `active_profile`, profiles, lists, and comments are preserved)
 - Does **not** overwrite `.env` or `data/index/`
 
@@ -248,6 +250,8 @@ From the **project root**:
 ./.mcp-semantic-search-zvec-go/uninstall.sh
 KEEP_DATA=1 ./.mcp-semantic-search-zvec-go/uninstall.sh
 ```
+
+Uninstall removes the MCP entry from `.cursor/mcp.json`, the install-managed Cursor rule `.cursor/rules/semantic-search-zvec-go.mdc` (only if marked `managedBy: mcp-semantic-search-zvec-go`), and the `.mcp-semantic-search-zvec-go/` tree (unless `-KeepData` / `KEEP_DATA=1`). Other files in `.cursor/rules/` are left intact.
 
 Install copies `uninstall.ps1` / `uninstall.sh` into `.mcp-semantic-search-zvec-go/`; re-run install to refresh bundled scripts after an upgrade.
 

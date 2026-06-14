@@ -5,6 +5,7 @@ Purpose-based layout for install, dependency fetch, contributor tooling, phase g
 | Folder | Purpose | Examples |
 |--------|---------|----------|
 | **install/** | Wire MCP into a target project | `install.sh`, `install.ps1`, `uninstall.ps1`, `merge-config.py` |
+| **templates/** | MCP fragments, env example, Cursor agent rule | `cursor-mcp-*.json`, `cursor-rules/semantic-search-zvec-go.mdc`, `env.example` |
 | **fetch/** | One-time native deps (zvec, ONNX runtime, model bundle) | `fetch-zvec-libs.*`, `fetch-onnx-runtime.*`, `fetch-onnx-model.*` |
 | **dev/** | Contributors: hooks, coverage, Windows zvec build | `setup-git-hooks.*`, `check-coverage.*`, `git-add.sh`, `build-zvec-windows.ps1`, `build-release.*` |
 | **smoke/** | Phase gate tests (`make smoke-phaseN`) | `run-phase1.*` … `run-phase5.*`, `run-phase5-docker.*`, `run-mcp-staging-multi-windows.ps1`, fixtures |

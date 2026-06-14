@@ -3,6 +3,7 @@ set -euo pipefail
 
 KEEP_DATA="${KEEP_DATA:-0}"
 SERVER_KEY="semantic-search-zvec-go"
+DEFAULT_CURSOR_RULE_REL=".cursor/rules/semantic-search-zvec-go.mdc"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ "$(basename "$SCRIPT_DIR")" == ".mcp-semantic-search-zvec-go" ]]; then
@@ -52,6 +53,34 @@ else:
 PY
 }
 
+remove_cursor_rule() {
+  local target_root="$1"
+  local install_dir="$2"
+  local rel="$DEFAULT_CURSOR_RULE_REL"
+  local manifest="$install_dir/install-manifest.json"
+  if [[ -f "$manifest" ]]; then
+    rel="$(python3 - <<'PY' "$manifest"
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        obj = json.load(f)
+    print(obj.get("cursor_rule") or ".cursor/rules/semantic-search-zvec-go.mdc")
+except Exception:
+    print(".cursor/rules/semantic-search-zvec-go.mdc")
+PY
+)"
+  fi
+  local rule_path="$target_root/$rel"
+  [[ -f "$rule_path" ]] || return 0
+  if ! grep -q "managedBy: mcp-semantic-search-zvec-go" "$rule_path"; then
+    echo "Skipped Cursor rule (not install-managed): $rule_path"
+    return 0
+  fi
+  rm -f "$rule_path"
+  echo "Removed Cursor rule: $rule_path"
+}
+
 stop_stale_processes "$TARGET_ROOT"
 
 MCP_JSON="$TARGET_ROOT/.cursor/mcp.json"
@@ -70,6 +99,8 @@ if key in servers:
         f.write("\n")
 PY
 fi
+
+remove_cursor_rule "$TARGET_ROOT" "$INSTALL_DIR"
 
 if [[ -d "$INSTALL_DIR" ]]; then
   if [[ "$KEEP_DATA" == "1" ]]; then

@@ -15,6 +15,8 @@ MCP-сервер семантического поиска (Go): zvec + HTTP/Ope
 
 Кратко: clone репозиторий → `install.ps1` / `install.sh` из корня целевого проекта → перезапустить Cursor / Roo Code (MCP без hot-reload).
 
+Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zvec-go.mdc`](.cursor/rules/semantic-search-zvec-go.mdc) (English, `alwaysApply`) с инструкциями по MCP tools; uninstall удаляет только install-managed файл с маркером `managedBy: mcp-semantic-search-zvec-go`.
+
 ## MCP tools
 
 Схемы аргументов: [docs/API.md](docs/API.md).

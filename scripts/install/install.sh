@@ -10,6 +10,7 @@ BIN_DIR="$INSTALL_DIR/bin"
 TEMPLATES="$REPO_ROOT/templates"
 BINARY_NAME="mcp-semantic-search-zvec-go"
 SERVER_KEY="semantic-search-zvec-go"
+CURSOR_RULE_REL=".cursor/rules/semantic-search-zvec-go.mdc"
 
 version() {
   grep 'Version = ' "$REPO_ROOT/internal/version/version.go" | sed 's/.*"\(.*\)".*/\1/'
@@ -121,16 +122,6 @@ copy_runtime_libs "$BIN_DIR"
 cp -f "$REPO_ROOT/scripts/install/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
 chmod +x "$INSTALL_DIR/uninstall.sh"
 
-cat > "$INSTALL_DIR/install-manifest.json" <<EOF
-{
-  "mode": "native",
-  "runtime": "go",
-  "version": "${VERSION}",
-  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-EOF
-echo "$VERSION" > "$INSTALL_DIR/installed-version.txt"
-
 CURSOR_DIR="$TARGET_ROOT/.cursor"
 mkdir -p "$CURSOR_DIR"
 MCP_JSON="$CURSOR_DIR/mcp.json"
@@ -146,6 +137,27 @@ except FileNotFoundError:
 obj.setdefault("mcpServers", {}).update(frag["mcpServers"])
 json.dump(obj, open(mcp_path, "w", encoding="utf-8"), indent=2)
 PY
+
+RULE_TEMPLATE="$TEMPLATES/cursor-rules/semantic-search-zvec-go.mdc"
+if [[ ! -f "$RULE_TEMPLATE" ]]; then
+  echo "cursor rule template not found: $RULE_TEMPLATE" >&2
+  exit 1
+fi
+RULES_DIR="$CURSOR_DIR/rules"
+mkdir -p "$RULES_DIR"
+cp -f "$RULE_TEMPLATE" "$TARGET_ROOT/$CURSOR_RULE_REL"
+echo "Installed Cursor rule: $TARGET_ROOT/$CURSOR_RULE_REL"
+
+cat > "$INSTALL_DIR/install-manifest.json" <<EOF
+{
+  "mode": "native",
+  "runtime": "go",
+  "version": "${VERSION}",
+  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "cursor_rule": "${CURSOR_RULE_REL}"
+}
+EOF
+echo "$VERSION" > "$INSTALL_DIR/installed-version.txt"
 
 GITIGNORE="$TARGET_ROOT/.gitignore"
 BLOCK="# BEGIN mcp-semantic-search-zvec-go
