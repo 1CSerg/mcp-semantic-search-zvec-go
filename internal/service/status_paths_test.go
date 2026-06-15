@@ -2,6 +2,7 @@ package service
 
 import (
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -83,6 +84,41 @@ func TestIndexStatusDiagnostics(t *testing.T) {
 	}
 	d := indexStatusDiagnostics(settings)
 	if d["log_dir"] == "" {
+		t.Fatalf("diagnostics=%v", d)
+	}
+}
+
+func TestEnrichIndexStatusDiagnosticsUnicodeHint(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only diagnostic")
+	}
+	root := t.TempDir()
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, "База", "index"),
+	}
+	d := indexStatusDiagnostics(settings)
+	enrichIndexStatusDiagnostics(d, settings, 3, 77, 12)
+	if d["non_ascii_index_dir"] != true {
+		t.Fatalf("diagnostics=%v", d)
+	}
+	if d["unicode_index_path_suspected"] != true {
+		t.Fatalf("diagnostics=%v", d)
+	}
+	if d["hint"] == "" {
+		t.Fatal("expected hint")
+	}
+}
+
+func TestEnrichIndexStatusDiagnosticsManifestMismatch(t *testing.T) {
+	root := t.TempDir()
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, "index"),
+	}
+	d := indexStatusDiagnostics(settings)
+	enrichIndexStatusDiagnostics(d, settings, 0, 77, 12)
+	if d["zvec_manifest_mismatch_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
 }

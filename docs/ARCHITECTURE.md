@@ -125,6 +125,7 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 |-----------|---------|
 | Idempotent zvec open | Avoid double-open LOCK errors |
 | SIGTERM handler | Close collection, remove lock |
+| stdio client disconnect | Exit process after MCP session ends (`awaitTransportResults`); cancels ctx and stops file watcher |
 | Stale process cleanup | `internal/lifecycle` kills prior `--stdio` instance by exe + workspace path on startup |
 | stdio.lock singleton | Block second `--stdio` process for same workspace |
 | zvec lock recovery | On LOCK error: kill duplicate stdio, close handle, retry open (`SemanticSearch`, `index_status`) |

@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -36,15 +35,17 @@ func run() int {
 	}
 
 	var (
-		stdio        bool
-		stdioProxy   bool
-		httpFlag     bool
-		daemonFlag   bool
-		httpAddr     string
-		configPath   string
-		daemonConfig string
-		workspaceID  string
-		daemonURL    string
+		stdio              bool
+		stdioProxy         bool
+		httpFlag           bool
+		daemonFlag         bool
+		httpAddr           string
+		configPath         string
+		daemonConfig       string
+		workspaceID        string
+		daemonURL          string
+		stopStdioWorkspace string
+		stopStdioIndexDir  string
 	)
 	if len(os.Args) == 1 {
 		stdio = true
@@ -58,7 +59,13 @@ func run() int {
 	flag.StringVar(&daemonConfig, "daemon-config", "", "Path to daemon.yaml (or WORKSPACES_CONFIG env)")
 	flag.StringVar(&workspaceID, "workspace-id", "", "Workspace ID for --stdio-proxy")
 	flag.StringVar(&daemonURL, "daemon-url", "", "Shared daemon base URL for --stdio-proxy (default http://127.0.0.1:8080)")
+	flag.StringVar(&stopStdioWorkspace, "stop-stdio-for-workspace", "", "Stop stale --stdio MCP instances for workspace and exit")
+	flag.StringVar(&stopStdioIndexDir, "index-dir", "", "Index directory for lock reclaim (optional; used with --stop-stdio-for-workspace)")
 	flag.Parse()
+
+	if stopStdioWorkspace != "" {
+		return runStopStdio(stopStdioWorkspace, stopStdioIndexDir)
+	}
 
 	if stdioProxy {
 		stdio = true
@@ -221,8 +228,18 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 }
 
 func serveTransports(ctx context.Context, stop context.CancelFunc, settings *config.Settings, svc service.Service, httpFlag bool, httpAddr string, stdio bool) int {
-	var wg sync.WaitGroup
-	errCh := make(chan error, 2)
+	pending := 0
+	if httpFlag {
+		pending++
+	}
+	if stdio {
+		pending++
+	}
+	if pending == 0 {
+		return 0
+	}
+
+	errCh := make(chan error, pending)
 
 	if httpFlag {
 		addr := httpAddr
@@ -230,42 +247,77 @@ func serveTransports(ctx context.Context, stop context.CancelFunc, settings *con
 			addr = settings.HTTPAddr
 		}
 		httpSrv := httptransport.New(settings, svc)
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			if err := httpSrv.ListenAndServe(ctx, addr); err != nil {
 				errCh <- fmt.Errorf("http: %w", err)
+				return
 			}
+			errCh <- nil
 		}()
 	}
 
 	if stdio {
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			if err := mcptransport.Run(ctx, svc); err != nil {
 				errCh <- fmt.Errorf("mcp: %w", err)
+				return
 			}
+			errCh <- nil
 		}()
 	}
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+	return awaitTransportResults(ctx, stop, pending, errCh)
+}
 
-	select {
-	case err := <-errCh:
-		slog.Error("server error", "err", err)
-		stop()
-		<-done
-		return 1
-	case <-ctx.Done():
-		slog.Info("shutdown signal received")
-		<-done
-		return 0
+// awaitTransportResults waits for pending transport goroutines to report on errCh.
+// A nil value means clean shutdown (e.g. MCP client disconnect on stdio).
+func awaitTransportResults(ctx context.Context, stop context.CancelFunc, pending int, errCh <-chan error) int {
+	var firstErr error
+	for completed := 0; completed < pending; {
+		select {
+		case err := <-errCh:
+			completed++
+			if err != nil && firstErr == nil {
+				firstErr = err
+				stop()
+			}
+		case <-ctx.Done():
+			slog.Info("shutdown signal received")
+			stop()
+			for completed < pending {
+				err := <-errCh
+				completed++
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+			if firstErr != nil {
+				slog.Error("server error", "err", firstErr)
+				return 1
+			}
+			return 0
+		}
 	}
+
+	stop()
+	if firstErr != nil {
+		slog.Error("server error", "err", firstErr)
+		return 1
+	}
+	slog.Info("transports stopped")
+	return 0
+}
+
+func runStopStdio(workspace, indexDir string) int {
+	stopped, err := lifecycle.StopStdioForWorkspace(workspace, indexDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: stop stdio: %v\n", err)
+		return 1
+	}
+	for _, pid := range stopped {
+		fmt.Fprintf(os.Stderr, "stopped PID %d\n", pid)
+	}
+	return 0
 }
 
 func loadSettings() (*config.Settings, error) {

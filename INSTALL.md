@@ -207,7 +207,7 @@ Cursor в каждом проекте (Windows, proxy через launcher):
 
 `.cursor/mcp.json` получит `command` → `powershell.exe`, `-File` → `run-mcp-proxy.ps1`, `args` → `--stdio-proxy --workspace-id ...`.
 
-**Bind-mount и Unicode:** пути с кириллицей на Windows хрупки; для Docker предпочитайте ASCII-пути, WSL `/mnt/d/...`, или вынесите index в ASCII-каталог.
+**Bind-mount и Unicode:** пути с кириллицей на Windows поддерживаются для `INDEX_DIR` начиная с v0.1.5 (zvec-go: ACP-кодирование путей; MCP: отключение mmap на non-ASCII путях). На Google Drive возможны единичные `files_failed` — смотрите `server.log`.
 
 При старте `--stdio` бинарник сам останавливает зависшие stdio-процессы для того же workspace (`internal/lifecycle`).
 
@@ -263,6 +263,8 @@ See [docs/CONFIG.md](docs/CONFIG.md).
 3. After indexing idle, call `semantic_search`.
 
 ## Uninstall
+
+Close **Cursor** (or disable the `semantic-search-zvec-go` MCP server in settings) before uninstall so `.cursor/mcp.json` and lock files are not held open. If uninstall reports errors while the IDE is running, close Cursor and run the script again.
 
 From the **project root**:
 

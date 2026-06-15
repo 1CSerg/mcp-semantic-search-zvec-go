@@ -125,6 +125,7 @@ indexing:
     - .ts
     - .tsx
     - .jsx
+    - .txt
     - .md
     - .mdc
     - .yaml
@@ -152,6 +153,7 @@ indexing:
     - .dcs
   # Имена каталогов, которые обход индексатора пропускает.
   skip_dirs:
+    - .mcp-semantic-search-zvec-go
     - .git
     - .deps
     - node_modules
@@ -161,7 +163,7 @@ indexing:
     - __pycache__
     - .venv
     - venv
-    - .mcp-semantic-search-zvec-go
+    - .obsidian
   # Через сколько секунд index.lock считается устаревшим и может быть перехвачен.
   lock_stale_seconds: 30
   # Нет прогресса индексации дольше этого времени — попытка восстановления (секунды).

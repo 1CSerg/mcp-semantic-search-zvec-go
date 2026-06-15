@@ -2,6 +2,7 @@ package service
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -36,6 +37,42 @@ func statusRelativePath(workspaceRoot, path string) string {
 func indexStatusDiagnostics(settings *config.Settings) map[string]any {
 	return map[string]any{
 		"log_dir": statusRelativePath(settings.WorkspaceRoot, settings.LogsDir()),
+	}
+}
+
+func pathContainsNonASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return true
+		}
+	}
+	return false
+}
+
+func enrichIndexStatusDiagnostics(
+	diag map[string]any,
+	settings *config.Settings,
+	filesFailed int,
+	docCount int,
+	manifestChunks int,
+) {
+	if runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
+		diag["non_ascii_index_dir"] = true
+	}
+	if filesFailed > 0 && runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
+		diag["unicode_index_path_suspected"] = true
+		if _, ok := diag["hint"]; !ok {
+			diag["hint"] = "INDEX_DIR contains non-ASCII characters on Windows; set INDEX_DIR to an ASCII path (or upgrade zvec-go with Unicode path fix) and run reindex with force=true"
+		}
+	}
+	if docCount > 0 && manifestChunks > 0 && docCount > manifestChunks*2 {
+		diag["zvec_manifest_mismatch_suspected"] = true
+		if _, ok := diag["hint"]; !ok {
+			diag["hint"] = "zvec doc count exceeds manifest chunks; run reindex with force=true"
+		}
+	}
+	if msg, ok := diag["hint"].(string); ok {
+		diag["hint"] = strings.TrimSpace(msg)
 	}
 }
 

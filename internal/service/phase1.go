@@ -216,6 +216,16 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		diag["duplicate_stdio_suspected"] = true
 		diag["hint"] = "Restart Cursor or kill extra mcp-semantic-search-zvec-go processes for this workspace"
 	}
+	filesFailed := 0
+	if v, ok := idx.ToIndexingMap()["files_failed"]; ok {
+		switch n := v.(type) {
+		case int:
+			filesFailed = n
+		case float64:
+			filesFailed = int(n)
+		}
+	}
+	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks)
 	payload := map[string]any{
 		"workspace_root":          root,
 		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),

@@ -182,6 +182,8 @@ No flags → `--stdio` (per-project MCP). `--version` / `-version` prints versio
 | `--stdio-proxy` | Proxy | MCP stdio → HTTP proxy (requires `--workspace-id`) |
 | `--workspace-id` | Proxy | Workspace ID for `--stdio-proxy` |
 | `--daemon-url` | Proxy | Daemon base URL (default `http://127.0.0.1:8080`) |
+| `--stop-stdio-for-workspace` | Maintenance | Stop stale `--stdio` MCP instances for workspace and exit |
+| `--index-dir` | Maintenance | Index directory for lock reclaim (optional; with `--stop-stdio-for-workspace`) |
 
 Per-project (default): `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Shared daemon: `--daemon --daemon-config …`. Cursor multi-repo: `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
 

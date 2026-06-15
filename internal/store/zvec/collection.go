@@ -278,7 +278,9 @@ func (s *CollectionStore) createCollection() error {
 	}
 	defer schema.Destroy()
 
-	col, err := zvec.CreateAndOpen(s.path, schema, nil)
+	opts := s.newCollectionOptions(false)
+	defer opts.Destroy()
+	col, err := zvec.CreateAndOpen(s.path, schema, opts)
 	if err != nil {
 		return err
 	}
@@ -290,17 +292,11 @@ func (s *CollectionStore) createCollection() error {
 
 func (s *CollectionStore) tryOpen(readOnly bool) (*zvec.Collection, error) {
 	openWith := func() (*zvec.Collection, error) {
-		opts := zvec.NewCollectionOptions()
+		opts := s.newCollectionOptions(readOnly)
 		if opts == nil {
 			return nil, fmt.Errorf("create collection options")
 		}
 		defer opts.Destroy()
-		if err := opts.SetReadOnly(readOnly); err != nil {
-			return nil, err
-		}
-		if err := opts.SetEnableMmap(true); err != nil {
-			return nil, err
-		}
 		return zvec.Open(s.path, opts)
 	}
 
@@ -312,6 +308,22 @@ func (s *CollectionStore) tryOpen(readOnly bool) (*zvec.Collection, error) {
 		return openWith()
 	}
 	return nil, err
+}
+
+func (s *CollectionStore) newCollectionOptions(readOnly bool) *zvec.CollectionOptions {
+	opts := zvec.NewCollectionOptions()
+	if opts == nil {
+		return nil
+	}
+	if err := opts.SetReadOnly(readOnly); err != nil {
+		opts.Destroy()
+		return nil
+	}
+	if err := opts.SetEnableMmap(collectionMmapEnabled(s.path)); err != nil {
+		opts.Destroy()
+		return nil
+	}
+	return opts
 }
 
 func reclaimStaleLock(collectionPath string) bool {

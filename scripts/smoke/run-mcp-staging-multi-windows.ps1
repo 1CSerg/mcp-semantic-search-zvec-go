@@ -274,11 +274,40 @@ try {
     if ($srvB.HasExited) { throw "server B exited when A was stopped" }
     Invoke-RestMethod -Uri "http://127.0.0.1:$HttpPortB/health" -TimeoutSec 5 | Out-Null
 
+    Stop-Process -Id $srvB.Id -Force
+    Start-Sleep -Milliseconds 500
+
+    $launcherA = Join-Path (Split-Path $binA) "run-mcp-stdio.ps1"
+    $stdioProc = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $launcherA
+    ) -PassThru -WindowStyle Hidden
+    $script:SmokeProcs += $stdioProc
+    $stdioLock = Join-Path $rootA ".mcp-semantic-search-zvec-go\data\index\stdio.lock"
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        if (Test-Path $stdioLock) { break }
+        if ($stdioProc.HasExited) { throw "stdio launcher exited before stdio.lock appeared" }
+        if ((Get-Date) -gt $deadline) { throw "stdio.lock did not appear for $rootA" }
+        Start-Sleep -Milliseconds 300
+    } while ($true)
+
     $uninstallA = Join-Path $rootA ".mcp-semantic-search-zvec-go\uninstall.ps1"
     & $uninstallA
+    if ($LASTEXITCODE -ne 0) { throw "uninstall.ps1 failed with exit code $LASTEXITCODE" }
+    if (Test-Path (Join-Path $rootA ".mcp-semantic-search-zvec-go")) {
+        throw "install dir still present after stdio uninstall: $rootA"
+    }
+    if (Test-Path $stdioLock) { throw "stdio.lock still present after uninstall" }
+    $mcpAfter = Join-Path $rootA ".cursor\mcp.json"
+    if (Test-Path $mcpAfter) {
+        $cfgAfter = Get-Content -Raw $mcpAfter | ConvertFrom-Json
+        if ($cfgAfter.mcpServers.PSObject.Properties.Name -contains $ServerKey) {
+            throw "mcp.json still contains $ServerKey after uninstall"
+        }
+    }
     Assert-CursorRuleRemoved -Root $rootA
 
-    Write-Host "PASS project-local multi-windows smoke: two installs, parallel HTTP, workspace isolation"
+    Write-Host "PASS project-local multi-windows smoke: two installs, parallel HTTP, workspace isolation, stdio uninstall"
 } finally {
     Stop-SmokeProcs
 }
