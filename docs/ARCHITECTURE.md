@@ -93,6 +93,7 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
     │   ├── manifest.db
     │   ├── index_meta.json    # workspace owner fingerprint
     │   ├── index.lock
+    │   ├── stdio.lock
     │   └── zvec/ws_<hash>/
     └── logs/
         ├── server.log
@@ -110,6 +111,14 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 - Stale reclaim: dead PID, empty file, or age > `lock_stale_seconds`.
 - Read paths (`search`, `status`) reclaim stale locks so search is not blocked indefinitely.
 
+### stdio.lock
+
+- Acquired at `--stdio` startup in `PrepareStdio` (per workspace `INDEX_DIR`).
+- Ensures only one native MCP stdio process serves a project index at a time.
+- Before acquire: `stopStaleStdioInstances` kills prior `--stdio` processes matched by workspace path (case-insensitive on Windows) or `bin/workspace-root.txt`.
+- If acquire fails after retries, process exits with a clear stderr hint (Cursor may show MCP error briefly — preferred over broken search).
+- Released on normal shutdown.
+
 ## Resilience
 
 | Mechanism | Purpose |
@@ -117,6 +126,8 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 | Idempotent zvec open | Avoid double-open LOCK errors |
 | SIGTERM handler | Close collection, remove lock |
 | Stale process cleanup | `internal/lifecycle` kills prior `--stdio` instance by exe + workspace path on startup |
+| stdio.lock singleton | Block second `--stdio` process for same workspace |
+| zvec lock recovery | On LOCK error: kill duplicate stdio, close handle, retry open (`SemanticSearch`, `index_status`) |
 | Partial search during write | `indexing` metadata in search response; `/ready` stays not-ready until idle |
 | `/health` vs `/ready` | Liveness vs embeddings+index loaded |
 | Polling file watcher | Windows Docker bind-mount compatibility |

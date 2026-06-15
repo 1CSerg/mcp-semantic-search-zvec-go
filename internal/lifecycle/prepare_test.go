@@ -110,9 +110,11 @@ func TestPrepareStdioStopsStaleHelper(t *testing.T) {
 		WorkspaceRoot: workspace,
 		IndexDir:      filepath.Join(workspace, config.DefaultInstallDirName, config.DefaultIndexSubdir),
 	}
-	if err := PrepareStdio(settings); err != nil {
+	stdioLock, err := PrepareStdio(settings)
+	if err != nil {
 		t.Fatalf("PrepareStdio: %v", err)
 	}
+	defer func() { _ = stdioLock.Release() }()
 	_ = cmd.Wait()
 }
 
@@ -122,9 +124,11 @@ func TestPrepareStdio(t *testing.T) {
 		WorkspaceRoot: dir,
 		IndexDir:      filepath.Join(dir, config.DefaultInstallDirName, config.DefaultIndexSubdir),
 	}
-	if err := PrepareStdio(settings); err != nil {
+	stdioLock, err := PrepareStdio(settings)
+	if err != nil {
 		t.Fatalf("PrepareStdio: %v", err)
 	}
+	defer func() { _ = stdioLock.Release() }()
 	logDir := settings.LogsDir()
 	info, err := os.Stat(logDir)
 	if err != nil {
@@ -188,9 +192,11 @@ func TestPrepareStdioReclaimsStaleLockAndProgress(t *testing.T) {
 	}
 	time.Sleep(1100 * time.Millisecond)
 
-	if err := PrepareStdio(settings); err != nil {
+	stdioLock, err := PrepareStdio(settings)
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = stdioLock.Release() }()
 	if l := lock.New(indexDir, 1); l.IsLocked() {
 		t.Fatal("expected stale lock reclaimed")
 	}
@@ -200,5 +206,28 @@ func TestPrepareStdioReclaimsStaleLockAndProgress(t *testing.T) {
 	}
 	if p.Running {
 		t.Fatal("expected stalled progress recovered")
+	}
+}
+
+func TestPrepareStdioSingletonLock(t *testing.T) {
+	dir := t.TempDir()
+	settings := &config.Settings{
+		WorkspaceRoot: dir,
+		IndexDir:      filepath.Join(dir, config.DefaultInstallDirName, config.DefaultIndexSubdir),
+		App: config.AppConfig{
+			Indexing: config.IndexingConfig{
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	first, err := PrepareStdio(settings)
+	if err != nil {
+		t.Fatalf("first PrepareStdio: %v", err)
+	}
+	defer func() { _ = first.Release() }()
+
+	_, err = PrepareStdio(settings)
+	if err == nil {
+		t.Fatal("expected error when stdio lock already held")
 	}
 }

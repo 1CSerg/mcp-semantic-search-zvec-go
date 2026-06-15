@@ -119,6 +119,8 @@ else
 fi
 copy_runtime_libs "$BIN_DIR"
 
+printf '%s\n' "$(cd "$TARGET_ROOT" && pwd)" > "$BIN_DIR/workspace-root.txt"
+
 cp -f "$REPO_ROOT/scripts/install/uninstall.sh" "$INSTALL_DIR/uninstall.sh"
 chmod +x "$INSTALL_DIR/uninstall.sh"
 

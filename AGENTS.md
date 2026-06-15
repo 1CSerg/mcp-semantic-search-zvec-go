@@ -11,7 +11,7 @@ MCP-сервер семантического поиска (Go): zvec + HTTP/Ope
 
 ## Установка
 
-Полные команды (Windows/Linux), prerequisites и структура каталогов: [docs/INSTALL.md](docs/INSTALL.md).
+Полные команды (Windows/Linux), prerequisites и структура каталогов: [INSTALL.md](INSTALL.md).
 
 Кратко: clone репозиторий → `install.ps1` / `install.sh` из корня целевого проекта → перезапустить Cursor / Roo Code (MCP без hot-reload).
 
@@ -62,11 +62,12 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | Symptom | Action |
 |---------|--------|
 | MCP not listed | Restart IDE; check `.cursor/mcp.json` JSON |
-| Cursor MCP **error**, tools=0, но `exe --version` работает | Windows: re-run `install.ps1 -TargetRoot`; проверить `%APPDATA%\Cursor\logs\*\mcpprocess.log` (`ENOENT`, `non-retryable`); kill McpProcess + restart Cursor; см. [INSTALL.md](docs/INSTALL.md#cursor-mcp-error-на-windows) |
+| Cursor MCP **error**, tools=0, но `exe --version` работает | Windows: re-run `install.ps1 -TargetRoot`; проверить `%APPDATA%\Cursor\logs\*\mcpprocess.log` (`ENOENT`, `non-retryable`); kill McpProcess + restart Cursor; см. [INSTALL.md](INSTALL.md#cursor-mcp-error-на-windows) |
 | После **переноса** проекта на Windows | Re-run `install.ps1 -TargetRoot` (обновляет `mcp.json` env и launcher paths) |
 | **Несколько репо**, два окна Cursor | Native install OK (отдельный `.mcp-semantic-search-zvec-go/` на проект). Multi-root в одном окне → shared daemon |
 | Docker + несколько репо | `docker-compose.daemon.yml` + `-McpMode Proxy` в install.ps1 на Windows |
 | Empty search, indexing idle | `reindex`; check `index_status` |
+| `zvec_open_ok: false`, LOCK error, `zvec_doc_count: 0` | Duplicate `--stdio` processes — restart Cursor; check `index_status.diagnostics`; re-run install; `reindex` with `force: true` if needed |
 | After MCP binary update (zvec-go bump) | Index resets on first start; in **Native** mode with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |
 | `index_owner_mismatch` | Call MCP `reindex` with `force: true`. In **Native** mode with `AUTO_INDEX_ON_START=true` this runs on next start; keep separate `INDEX_DIR` per project if you share one clone |
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
@@ -77,7 +78,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 
 По умолчанию — per-project `--stdio`. Для нескольких проектов в одном окне Cursor: `daemon.yaml` → `--daemon` → `--stdio-proxy`.
 
-Подробнее: [docs/INSTALL.md](docs/INSTALL.md#shared-daemon-phase-5), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/CONFIG.md](docs/CONFIG.md#daemonyaml-phase-5).
+Подробнее: [INSTALL.md](INSTALL.md#shared-daemon), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/CONFIG.md](docs/CONFIG.md#daemonyaml-phase-5).
 
 **Windows proxy:** `install.ps1 -McpMode Proxy -WorkspaceId <id> -DaemonUrl http://127.0.0.1:8080`.
 
@@ -87,8 +88,8 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 2. Re-run install script from updated clone/release.
 3. Restart IDE.
 
-Merge `config.yaml`, `-ReplaceConfig`: [docs/INSTALL.md](docs/INSTALL.md#update--повторный-install).
+Merge `config.yaml`, `-ReplaceConfig`: [INSTALL.md](INSTALL.md#update--повторный-install).
 
 ## Uninstall
 
-Команды и `-KeepData`: [docs/INSTALL.md](docs/INSTALL.md#uninstall).
+Команды и `-KeepData`: [INSTALL.md](INSTALL.md#uninstall).

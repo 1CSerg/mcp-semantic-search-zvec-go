@@ -311,7 +311,7 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 - Единственный источник версии: `internal/version/version.go`.
 - `scripts/install/install.sh` и `scripts/install/install.ps1` читают версию из клона; install собирает бинарник (`go build`) или копирует готовый из `bin/`. Не добавляйте захардкоженный fallback в скрипты.
 - Перед тегом `v*`: отредактируйте `version.go`; release workflow проверяет совпадение с git-тегом.
-- Примеры установки в `AGENTS.md`, `README.md`, `docs/INSTALL.md` — из актуального клона или release-тега.
+- Примеры установки в `AGENTS.md`, `README.md`, `INSTALL.md` — из актуального клона или release-тега.
 
 ### zvec-go
 

@@ -4,6 +4,7 @@ package lifecycle
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"syscall"
 	"time"
@@ -31,12 +32,14 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 		}
 		cmdline, err := processCommandLine(uint32(pid))
 		if err != nil {
+			slog.Warn("stale stdio scan: read cmdline failed", "pid", pid, "err", err)
 			continue
 		}
 		if !matchesStaleStdio(cmdline, workspace, pid, selfPID) {
 			continue
 		}
 		if err := terminatePID(pid); err != nil {
+			slog.Warn("stale stdio scan: terminate failed", "pid", pid, "err", err)
 			continue
 		}
 		stopped = append(stopped, pid)

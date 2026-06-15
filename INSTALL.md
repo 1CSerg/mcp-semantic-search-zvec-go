@@ -144,6 +144,32 @@ Linux/macOS: `${workspaceFolder}` + бинарник в проекте (see `tem
 4. **После переноса проекта** — обязательно re-run install (обновляет `mcp.json` env и launcher paths).
 5. **Fallback:** если PowerShell не стартует — вручную переключите `command` на `C:\\Windows\\System32\\cmd.exe`, `args` на `["/c", "D:\\...\\bin\\run-mcp-stdio.cmd"]` (шаблон `templates/bin/run-mcp-stdio.cmd`).
 
+### Semantic search: zvec LOCK / duplicate MCP
+
+Симптомы: `index_status` → `zvec_open_ok: false`, `zvec_error` содержит `Can't open lock file`, `zvec_doc_count: 0` при ненулевом `indexed_chunks_manifest`; `semantic_search` возвращает пустой `results`.
+
+Причина: два процесса `mcp-semantic-search-zvec-go --stdio` на один workspace (часто после restart Cursor без завершения старого MCP).
+
+Fix:
+
+1. Полный restart Cursor.
+2. Проверить один процесс: `tasklist /FI "IMAGENAME eq mcp-semantic-search-zvec-go.exe"`.
+3. Re-run `install.ps1 -TargetRoot` (обновляет `workspace-root.txt` и `mcp.json`).
+4. `index_status` → при `diagnostics.duplicate_stdio_suspected` следовать `diagnostics.hint`.
+5. При необходимости MCP `reindex` с `force: true`.
+
+### Индексация: частичные ошибки файлов
+
+Симптомы: `index_status` → `indexing.state: idle`, `indexing.files_failed > 0` (часто zvec `File is too small` на отдельном файле).
+
+Это **не** fatal: остальные файлы проиндексированы, `semantic_search` работает по ним. Пути и текст ошибок — только в `.mcp-semantic-search-zvec-go/data/logs/server.log` (`index file skipped`).
+
+Fix:
+
+1. Tail `.mcp-semantic-search-zvec-go/data/logs/server.log` — строки `index file skipped`.
+2. MCP `reindex` с `force: true` для проблемных путей или всего индекса.
+3. Отличие от fatal: при `indexing.state: error` job прерван (embed down, `index_owner_mismatch`, stall) — см. таблицу troubleshooting в [AGENTS.md](AGENTS.md).
+
 ### Несколько репозиториев (два окна Cursor)
 
 | Режим | Multi-repo | Примечание |
@@ -151,16 +177,16 @@ Linux/macOS: `${workspaceFolder}` + бинарник в проекте (see `tem
 | Native `--stdio` + Windows project-local | OK | exe + launcher в `.mcp-semantic-search-zvec-go/bin/` на каждый проект |
 | Linux/macOS native install | OK | `${workspaceFolder}` в `.cursor/mcp.json`, бинарник в проекте |
 | Multi-root workspace (одно окно, несколько корней) | Нет | Нужен shared daemon + `--stdio-proxy` |
-| Docker [`docker-compose.yml`](../docker/docker-compose.yml) | Нет | Один workspace, один контейнер |
-| Docker [`docker-compose.daemon.yml`](../docker/docker-compose.daemon.yml) | OK | Shared daemon + proxy в Cursor |
+| Docker [`docker-compose.yml`](docker/docker-compose.yml) | Нет | Один workspace, один контейнер |
+| Docker [`docker-compose.daemon.yml`](docker/docker-compose.daemon.yml) | OK | Shared daemon + proxy в Cursor |
 
 Smoke: `scripts/smoke/run-mcp-staging-multi-windows.ps1` (project-local bin, два проекта, проверка `mcp.json`).
 
 ### Docker: один проект vs несколько
 
-**Per-project** ([`docker/docker-compose.yml`](../docker/docker-compose.yml)) — один bind-mount `/workspace`, режим `--http`. Подходит для одного репозитория.
+**Per-project** ([`docker/docker-compose.yml`](docker/docker-compose.yml)) — один bind-mount `/workspace`, режим `--http`. Подходит для одного репозитория.
 
-**Shared daemon** ([`docker/docker-compose.daemon.yml`](../docker/docker-compose.daemon.yml)) — несколько `workspaces[]` в `daemon.yaml`, один контейнер `--daemon`. Пример конфигурации: [`templates/daemon.docker.yaml`](../templates/daemon.docker.yaml).
+**Shared daemon** ([`docker/docker-compose.daemon.yml`](docker/docker-compose.daemon.yml)) — несколько `workspaces[]` в `daemon.yaml`, один контейнер `--daemon`. Пример конфигурации: [templates/daemon.docker.yaml](templates/daemon.docker.yaml).
 
 ```powershell
 # Пример: два репо на хосте
@@ -195,7 +221,7 @@ Run alongside MCP or standalone:
 .mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go --http --http-addr :8080
 ```
 
-Or set in systemd / Docker — see [docker/docker-compose.yml](../docker/docker-compose.yml) (one project) or [docker/docker-compose.daemon.yml](../docker/docker-compose.daemon.yml) (multi-repo daemon).
+Or set in systemd / Docker — see [docker/docker-compose.yml](docker/docker-compose.yml) (one project) or [docker/docker-compose.daemon.yml](docker/docker-compose.daemon.yml) (multi-repo daemon).
 
 ## Build from source
 
@@ -208,7 +234,7 @@ make fetch-zvec-libs
 make build-zvec    # -tags "zvec,onnx"
 ```
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for Windows CGO, ONNX runtime, and cross-compile notes.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows CGO, ONNX runtime, and cross-compile notes.
 
 Copy binary, runtime libs, and `config.yaml` into target `.mcp-semantic-search-zvec-go/`.
 
@@ -224,11 +250,11 @@ Edit `.mcp-semantic-search-zvec-go/config.yaml` and `.env`:
 ### Offline ONNX (`local_multilingual`)
 
 1. Set `active_profile: local_multilingual` in `config.yaml`.
-2. Download model bundle into `.mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2/` (see [CONFIG.md](CONFIG.md)).
+2. Download model bundle into `.mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2/` (see [docs/CONFIG.md](docs/CONFIG.md)).
 3. Re-run install or ensure production binary includes `-tags "zvec,onnx"` and ships `onnxruntime` + `zvec` runtime libraries next to the executable.
 4. Run `reindex` with `force: true`.
 
-See [CONFIG.md](CONFIG.md).
+See [docs/CONFIG.md](docs/CONFIG.md).
 
 ## Verify
 
@@ -268,9 +294,9 @@ Indexes are separate unless you intentionally share paths.
 
 ## Shared daemon
 
-One HTTP process serves multiple projects via `workspace_id`. Architecture and trade-offs: [ARCHITECTURE.md](ARCHITECTURE.md). `daemon.yaml` reference: [CONFIG.md](CONFIG.md#daemonyaml-phase-5).
+One HTTP process serves multiple projects via `workspace_id`. Architecture and trade-offs: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). `daemon.yaml` reference: [docs/CONFIG.md](docs/CONFIG.md#daemonyaml-phase-5).
 
-1. Create `daemon.yaml` (template: [templates/daemon.yaml](../templates/daemon.yaml); Docker example: [templates/daemon.docker.yaml](../templates/daemon.docker.yaml)).
+1. Create `daemon.yaml` (template: [templates/daemon.yaml](templates/daemon.yaml); Docker example: [templates/daemon.docker.yaml](templates/daemon.docker.yaml)).
 2. Start daemon: `--daemon --daemon-config /path/to/daemon.yaml --http-addr :8080` (or `docker compose -f docker/docker-compose.daemon.yml up`).
 3. Point each Cursor project MCP entry to `--stdio-proxy --workspace-id=<id> --daemon-url=http://127.0.0.1:8080`.
 

@@ -27,13 +27,14 @@ type Progress struct {
 	Force         bool   `json:"force,omitempty"`
 	FilesTotal    int    `json:"files_total,omitempty"`
 	FilesDone     int    `json:"files_done,omitempty"`
+	FilesFailed   int    `json:"files_failed,omitempty"`
 	ChunksIndexed int    `json:"chunks_indexed,omitempty"`
-	CurrentFile   string `json:"current_file,omitempty"`
-	Message       string `json:"message,omitempty"`
-	Error         string `json:"error,omitempty"`
-	StartedAt     string `json:"started_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
-	FinishedAt    string `json:"finished_at,omitempty"`
+	CurrentFile   string      `json:"current_file,omitempty"`
+	Message       string      `json:"message,omitempty"`
+	Error         string      `json:"error,omitempty"`
+	StartedAt     string      `json:"started_at,omitempty"`
+	UpdatedAt     string      `json:"updated_at,omitempty"`
+	FinishedAt    string      `json:"finished_at,omitempty"`
 }
 
 // ProgressStore reads/writes progress.json under index dir.
@@ -107,10 +108,29 @@ func FinishIdle(p Progress, files, chunks int) Progress {
 	p.Running = false
 	p.FilesTotal = files
 	p.FilesDone = files
+	p.FilesFailed = 0
 	p.ChunksIndexed = chunks
 	p.CurrentFile = ""
 	p.Message = "indexing complete"
 	p.Error = ""
+	p.UpdatedAt = now
+	p.FinishedAt = now
+	return p
+}
+
+// FinishIdleWithWarnings marks progress complete after partial per-file failures.
+func FinishIdleWithWarnings(p Progress, filesFailed int) Progress {
+	now := time.Now().UTC().Format(time.RFC3339)
+	p.State = StateIdle
+	p.Running = false
+	p.FilesFailed = filesFailed
+	p.CurrentFile = ""
+	p.Error = ""
+	if filesFailed > 0 {
+		p.Message = fmt.Sprintf("indexing complete with %d file errors (see server.log)", filesFailed)
+	} else {
+		p.Message = "indexing complete"
+	}
 	p.UpdatedAt = now
 	p.FinishedAt = now
 	return p
@@ -142,6 +162,9 @@ func (p Progress) ToIndexingMap() map[string]any {
 	}
 	if p.FilesDone > 0 {
 		m["files_done"] = p.FilesDone
+	}
+	if p.FilesFailed > 0 {
+		m["files_failed"] = p.FilesFailed
 	}
 	if p.ChunksIndexed > 0 {
 		m["chunks_indexed"] = p.ChunksIndexed

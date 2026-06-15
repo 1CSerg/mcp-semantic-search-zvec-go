@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const lockFileName = "index.lock"
+const (
+	lockFileName      = "index.lock"
+	StdioLockFileName = "stdio.lock"
+)
 
 // Lock is an exclusive cross-process index lock file.
 type Lock struct {
@@ -19,13 +22,23 @@ type Lock struct {
 	ownerContent string
 }
 
-// New creates a lock helper for indexDir.
+// New creates an indexing lock helper for indexDir.
 func New(indexDir string, staleSeconds float64) *Lock {
+	return NewWithName(indexDir, lockFileName, staleSeconds)
+}
+
+// NewStdio creates a per-workspace stdio MCP singleton lock.
+func NewStdio(indexDir string, staleSeconds float64) *Lock {
+	return NewWithName(indexDir, StdioLockFileName, staleSeconds)
+}
+
+// NewWithName creates a lock helper with a custom file name under indexDir.
+func NewWithName(indexDir, name string, staleSeconds float64) *Lock {
 	if staleSeconds <= 0 {
 		staleSeconds = 300
 	}
 	return &Lock{
-		path:      filepath.Join(indexDir, lockFileName),
+		path:      filepath.Join(indexDir, name),
 		staleSecs: staleSeconds,
 	}
 }
@@ -48,7 +61,7 @@ func (l *Lock) TryAcquire() error {
 		return fmt.Errorf("open lock: %w", err)
 	}
 	if !l.isStale() {
-		return fmt.Errorf("index lock held by another process")
+		return fmt.Errorf("lock held by another process: %s", filepath.Base(l.path))
 	}
 	_ = os.Remove(l.path)
 	f, err = os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
@@ -116,6 +129,23 @@ func (l *Lock) IsHeld() bool {
 func (l *Lock) IsLocked() bool {
 	_, err := os.Stat(l.path)
 	return err == nil
+}
+
+// HolderPID returns the PID recorded in the lock file, if any.
+func (l *Lock) HolderPID() (int, bool) {
+	data, err := os.ReadFile(l.path)
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(string(data))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
 }
 
 // ReclaimStale removes a stale lock if present.

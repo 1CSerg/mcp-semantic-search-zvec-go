@@ -4,6 +4,7 @@ package lifecycle
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,7 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 		}
 		cmdline, err := os.ReadFile(filepath.Join("/proc", ent.Name(), "cmdline"))
 		if err != nil {
+			slog.Warn("stale stdio scan: read cmdline failed", "pid", pid, "err", err)
 			continue
 		}
 		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
@@ -36,6 +38,7 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 			continue
 		}
 		if err := terminatePID(pid); err != nil {
+			slog.Warn("stale stdio scan: terminate failed", "pid", pid, "err", err)
 			continue
 		}
 		stopped = append(stopped, pid)

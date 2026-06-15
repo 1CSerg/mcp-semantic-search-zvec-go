@@ -13,6 +13,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
@@ -133,6 +134,12 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 	}
 
 	hits, err := p.zvec.Search(vector, limit, derefString(req.PathGlob))
+	if err != nil && lifecycle.IsZvecLockError(err) {
+		if recErr := lifecycle.RecoverDuplicateStdio(p.Settings); recErr == nil {
+			_ = p.zvec.Close()
+			hits, err = p.zvec.Search(vector, limit, derefString(req.PathGlob))
+		}
+	}
 	if err != nil {
 		if errors.Is(err, zvec.ErrCollectionMissing) {
 			return marshal(map[string]any{
@@ -191,7 +198,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 	docCount := 0
 	zvecOpenOK := false
 	var zvecErr string
-	if err := p.zvec.Open(); err == nil {
+	if err := p.openZvecWithRecovery(); err == nil {
 		zvecOpenOK = true
 		if n, err := p.zvec.DocCount(); err == nil {
 			docCount = n
@@ -204,6 +211,11 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 
 	idx := p.indexingProgress()
 	root := p.Settings.WorkspaceRoot
+	diag := indexStatusDiagnostics(p.Settings)
+	if !zvecOpenOK && lifecycle.IsZvecLockError(errors.New(zvecErr)) {
+		diag["duplicate_stdio_suspected"] = true
+		diag["hint"] = "Restart Cursor or kill extra mcp-semantic-search-zvec-go processes for this workspace"
+	}
 	payload := map[string]any{
 		"workspace_root":          root,
 		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),
@@ -221,7 +233,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 		"indexing":                relativeIndexingMap(root, idx.ToIndexingMap()),
 		"file_watcher":            p.fileWatcherStatus(),
 		"search_performance":      p.searchStats.Snapshot(),
-		"diagnostics":             indexStatusDiagnostics(p.Settings),
+		"diagnostics":             diag,
 	}
 	if zvecErr != "" {
 		payload["zvec_error"] = zvecErr
@@ -312,7 +324,7 @@ func (p *Phase1) Ready() error {
 	if err := p.embed.HealthCheck(context.Background()); err != nil {
 		return fmt.Errorf("embeddings unreachable: %w", err)
 	}
-	if err := p.zvec.Open(); err != nil {
+	if err := p.openZvecWithRecovery(); err != nil {
 		if errors.Is(err, zvec.ErrCollectionMissing) {
 			return fmt.Errorf("index not built yet")
 		}
@@ -445,4 +457,17 @@ func derefString(p *string) string {
 		return ""
 	}
 	return *p
+}
+
+func (p *Phase1) openZvecWithRecovery() error {
+	err := p.zvec.Open()
+	if err == nil || !lifecycle.IsZvecLockError(err) {
+		return err
+	}
+	slog.Warn("zvec open lock error, attempting recovery", "err", err)
+	if recErr := lifecycle.RecoverDuplicateStdio(p.Settings); recErr != nil {
+		return err
+	}
+	_ = p.zvec.Close()
+	return p.zvec.Open()
 }

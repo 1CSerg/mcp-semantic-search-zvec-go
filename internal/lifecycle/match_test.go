@@ -37,6 +37,12 @@ func TestMatchesStaleStdio(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "case insensitive drive letter",
+			cmdline: `D:\projects\my-app\.mcp-semantic-search-zvec-go\bin\mcp-semantic-search-zvec-go.exe --stdio`,
+			pid:     5678,
+			want:    true,
+		},
+		{
 			name:    "no stdio flag",
 			cmdline: `D:\projects\my-app\bin\mcp-semantic-search-zvec-go.exe --http`,
 			pid:     5678,
@@ -85,6 +91,17 @@ func TestCmdlineContainsWorkspace(t *testing.T) {
 	}
 	if cmdlineContainsWorkspace(`/home/other/project/bin/mcp-semantic-search-zvec-go --stdio`, ws) {
 		t.Fatal("expected no match for different path")
+	}
+}
+
+func TestCmdlineContainsWorkspaceDriveLetterCase(t *testing.T) {
+	ws := `d:\projects\my-app`
+	cmdline := `D:\projects\my-app\.mcp-semantic-search-zvec-go\bin\mcp-semantic-search-zvec-go.exe --stdio`
+	if !cmdlineContainsWorkspace(cmdline, ws) {
+		t.Fatal("expected case-insensitive drive letter match")
+	}
+	if !matchesStaleStdio(cmdline, ws, 5678, 1234) {
+		t.Fatal("expected stale stdio match with mixed drive letter case")
 	}
 }
 

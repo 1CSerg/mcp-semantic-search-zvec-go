@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -111,12 +112,14 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 
 	go func() {
-		err := c.run(context.Background(), force)
+		filesFailed, err := c.run(context.Background(), force)
 		_ = c.lock.Release()
 		c.mu.Lock()
 		c.running = false
 		if err != nil {
 			c.curProgress = FinishError(c.curProgress, err)
+		} else if filesFailed > 0 {
+			c.curProgress = FinishIdleWithWarnings(c.curProgress, filesFailed)
 		} else {
 			files, chunks := c.countStats()
 			c.curProgress = FinishIdle(c.curProgress, files, chunks)
@@ -128,9 +131,9 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	return p, nil
 }
 
-func (c *Coordinator) run(ctx context.Context, force bool) error {
+func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err error) {
 	if err := os.MkdirAll(c.Settings.IndexDir, 0o755); err != nil {
-		return err
+		return 0, err
 	}
 
 	if err := zvec.ReconcileIndex(
@@ -144,22 +147,22 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		force,
 		c.Zvec,
 	); err != nil {
-		return err
+		return 0, err
 	}
 
 	manifestPath := filepath.Join(c.Settings.IndexDir, "manifest.db")
 	manStore, err := manifest.Open(manifestPath)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer manStore.Close()
 
 	if force {
 		if err := manStore.Clear(); err != nil {
-			return err
+			return 0, err
 		}
 		if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
-			return err
+			return 0, err
 		}
 	}
 
@@ -169,7 +172,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		SkipDirs:   c.Settings.App.Indexing.SkipDirs,
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	discovered := make(map[string]struct{}, len(files))
@@ -190,11 +193,11 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 	for i, rel := range files {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return 0, ctx.Err()
 		default:
 		}
 		if err := stallWatch.Check(); err != nil {
-			return err
+			return 0, err
 		}
 		discovered[rel] = struct{}{}
 		c.updateProgress(func(p *Progress) {
@@ -205,7 +208,19 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		stallWatch.Touch()
 
 		if err := c.indexFile(ctx, manStore, rel, force); err != nil {
-			return fmt.Errorf("%s: %w", rel, err)
+			if isFatalIndexingError(err) {
+				return 0, fmt.Errorf("%s: %w", rel, err)
+			}
+			if isPerFileSkippable(err) {
+				filesFailed++
+				slog.Warn("index file skipped", "path", rel, "err", err)
+				c.updateProgress(func(p *Progress) {
+					p.FilesFailed = filesFailed
+				})
+				stallWatch.Touch()
+				continue
+			}
+			return 0, fmt.Errorf("%s: %w", rel, err)
 		}
 		entry, err := manStore.Get(rel)
 		if err == nil {
@@ -225,7 +240,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 	if !force {
 		existing, err := manStore.List()
 		if err != nil {
-			return err
+			return 0, err
 		}
 		for _, e := range existing {
 			if _, ok := discovered[e.RelativePath]; ok {
@@ -233,11 +248,11 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 			}
 			if len(e.DocIDs) > 0 {
 				if err := c.Zvec.DeleteByIDs(e.DocIDs); err != nil && !isZvecUnavailable(err) {
-					return err
+					return 0, err
 				}
 			}
 			if err := manStore.Delete(e.RelativePath); err != nil {
-				return err
+				return 0, err
 			}
 		}
 	}
@@ -247,7 +262,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) error {
 		p.CurrentFile = ""
 	})
 	stallWatch.Touch()
-	return nil
+	return filesFailed, nil
 }
 
 func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool) error {
@@ -286,7 +301,7 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 	}
 	vectors, err := c.Embed.Embed(ctx, texts)
 	if err != nil {
-		return err
+		return fatalEmbedErr(err)
 	}
 	if err := c.Zvec.UpsertChunks(chunks, vectors); err != nil && !isZvecUnavailable(err) {
 		return err

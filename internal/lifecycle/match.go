@@ -69,19 +69,28 @@ func pathsEqual(a, b string) bool {
 	return strings.EqualFold(altA, altB)
 }
 
+func normalizePathForCompare(p string) string {
+	p = filepath.Clean(p)
+	return strings.ToLower(strings.ReplaceAll(p, `/`, `\`))
+}
+
+func pathContainsPath(haystack, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	h := normalizePathForCompare(haystack)
+	n := normalizePathForCompare(needle)
+	return strings.Contains(h, n)
+}
+
 func cmdlineContainsWorkspace(cmdline, workspace string) bool {
 	workspace = filepath.Clean(workspace)
 	if workspace == "" {
 		return false
 	}
-	if strings.Contains(cmdline, workspace) {
+	if pathContainsPath(cmdline, workspace) {
 		return true
 	}
-	// Windows paths may differ by slash style in cmdline vs env.
-	alt := strings.ReplaceAll(workspace, `\`, `/`)
-	if alt != workspace && strings.Contains(cmdline, alt) {
-		return true
-	}
-	alt = strings.ReplaceAll(workspace, `/`, `\`)
-	return alt != workspace && strings.Contains(cmdline, alt)
+	installDir := filepath.Join(workspace, config.DefaultInstallDirName)
+	return pathContainsPath(cmdline, installDir)
 }

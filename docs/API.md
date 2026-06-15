@@ -212,6 +212,10 @@ All tools return **JSON text** in tool result content.
 
 No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_performance`, `diagnostics`.
 
+When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Details are written to `data/logs/server.log` (`index file skipped`).
+
+Fatal failures (embed provider down, `index_owner_mismatch`, stall) still set `indexing.state` to `error`.
+
 ### `reindex`
 
 | Argument | Type | Default | Description |

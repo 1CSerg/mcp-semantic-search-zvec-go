@@ -326,12 +326,14 @@ if (Test-Path $srcBin) {
 }
 Copy-RuntimeLibs $BinDir
 Install-WindowsLaunchers -DestBinDir $BinDir
+$workspaceRootPath = Normalize-WindowsPath $TargetRoot
+Write-Utf8File (Join-Path $BinDir "workspace-root.txt") $workspaceRootPath
 Copy-Item -Force (Join-Path $PSScriptRoot "uninstall.ps1") (Join-Path $InstallDir "uninstall.ps1")
 
 if (-not (Test-Path $dstBin)) {
     throw "MCP binary not found in project install dir: $dstBin"
 }
-foreach ($name in @($BinaryName, "run-mcp-stdio.ps1", "zvec_c_api.dll", "onnxruntime.dll")) {
+foreach ($name in @($BinaryName, "run-mcp-stdio.ps1", "workspace-root.txt", "zvec_c_api.dll", "onnxruntime.dll")) {
     $path = Join-Path $BinDir $name
     if (-not (Test-Path $path)) {
         throw "missing install artifact: $path"

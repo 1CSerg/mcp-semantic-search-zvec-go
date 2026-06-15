@@ -174,3 +174,28 @@ func TestReleaseAfterStaleReclaim(t *testing.T) {
 	}
 	_ = l2.Release()
 }
+
+func TestNewStdioLockName(t *testing.T) {
+	dir := t.TempDir()
+	l := NewStdio(dir, 300)
+	want := filepath.Join(dir, StdioLockFileName)
+	if l.Path() != want {
+		t.Fatalf("path=%q want=%q", l.Path(), want)
+	}
+}
+
+func TestHolderPID(t *testing.T) {
+	dir := t.TempDir()
+	l := NewStdio(dir, 300)
+	if _, ok := l.HolderPID(); ok {
+		t.Fatal("expected no holder before acquire")
+	}
+	if err := l.TryAcquire(); err != nil {
+		t.Fatal(err)
+	}
+	pid, ok := l.HolderPID()
+	if !ok || pid != os.Getpid() {
+		t.Fatalf("HolderPID()=%d ok=%v want pid=%d", pid, ok, os.Getpid())
+	}
+	_ = l.Release()
+}

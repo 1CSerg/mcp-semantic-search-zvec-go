@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -539,5 +540,93 @@ func TestCoordinatorForceReindexOwnerMismatch(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(indexDir, "zvec", oldCollection)); !os.IsNotExist(err) {
 		t.Fatalf("old collection still present: err=%v", err)
+	}
+}
+
+type selectiveFailZvec struct {
+	*memZvec
+	failPaths map[string]struct{}
+}
+
+func newSelectiveFailZvec(fail ...string) *selectiveFailZvec {
+	m := make(map[string]struct{}, len(fail))
+	for _, p := range fail {
+		m[p] = struct{}{}
+	}
+	return &selectiveFailZvec{memZvec: newMemZvec(), failPaths: m}
+}
+
+func (s *selectiveFailZvec) UpsertChunks(chunks []zvec.Chunk, _ [][]float32) error {
+	for _, ch := range chunks {
+		if _, ok := s.failPaths[ch.RelativePath]; ok {
+			return fmt.Errorf(`zvec error [INTERNAL_ERROR]: Invalid: File is too small: 6`)
+		}
+	}
+	return s.memZvec.UpsertChunks(chunks, nil)
+}
+
+func TestCoordinatorSkipsPerFileZvecError(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".cursor", "rules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "ok.go"), []byte("package pkg\n\nfunc OK() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".cursor", "rules", "rule.mdc"), []byte("---\ntitle: rule\n---\n\n# Rule\n\ncontent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go", ".mdc"},
+				SkipDirs:         []string{".git", "node_modules"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newSelectiveFailZvec(".cursor/rules/rule.mdc")
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	p := c.CurrentProgress()
+	if p.State != StateIdle {
+		t.Fatalf("progress=%+v", p)
+	}
+	if p.FilesFailed != 1 {
+		t.Fatalf("files_failed=%d", p.FilesFailed)
+	}
+	m := p.ToIndexingMap()
+	if _, ok := m["file_errors"]; ok {
+		t.Fatalf("file_errors should not be in index_status: map=%v", m)
+	}
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	if _, err := man.Get("pkg/ok.go"); err != nil {
+		t.Fatalf("ok.go not indexed: %v", err)
+	}
+	if _, err := man.Get(".cursor/rules/rule.mdc"); err == nil {
+		t.Fatal("failed file should not be in manifest")
 	}
 }

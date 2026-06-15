@@ -55,6 +55,27 @@ func TestFinishError(t *testing.T) {
 	}
 }
 
+func TestFinishIdleWithWarnings(t *testing.T) {
+	p := StartRunning(true)
+	p.FilesTotal = 3
+	p.FilesDone = 3
+	p.ChunksIndexed = 5
+	p = FinishIdleWithWarnings(p, 2)
+	if p.State != StateIdle || p.Running || p.FilesFailed != 2 {
+		t.Fatalf("progress=%+v", p)
+	}
+	if p.Message != "indexing complete with 2 file errors (see server.log)" {
+		t.Fatalf("message=%q", p.Message)
+	}
+	m := p.ToIndexingMap()
+	if m["files_failed"] != 2 {
+		t.Fatalf("map=%v", m)
+	}
+	if _, ok := m["file_errors"]; ok {
+		t.Fatalf("file_errors should not be in index_status: map=%v", m)
+	}
+}
+
 func TestProgressLoadMissingFile(t *testing.T) {
 	store := NewProgressStore(t.TempDir())
 	p, err := store.Load()

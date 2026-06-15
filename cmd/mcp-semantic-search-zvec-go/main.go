@@ -117,9 +117,13 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 	}()
 
 	if stdio {
-		if err := lifecycle.PrepareStdio(settings); err != nil {
-			slog.Warn("stdio prepare failed", "err", err)
+		stdioLock, err := lifecycle.PrepareStdio(settings)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Hint: restart Cursor or kill extra mcp-semantic-search-zvec-go.exe processes for this workspace.\n")
+			return 1
 		}
+		defer func() { _ = stdioLock.Release() }()
 	}
 
 	var svc service.Service = service.NewStub(settings)
