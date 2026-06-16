@@ -4,6 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,12 +33,56 @@ func Open(dbPath string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("configure manifest db: %w", err)
 	}
+	if shouldEnableWAL(dbPath) {
+		if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("enable manifest WAL: %w", err)
+		}
+	} else {
+		slog.Debug("manifest WAL skipped", "path", dbPath, "reason", walSkipReason(dbPath))
+	}
 	s := &Store{db: db}
 	if err := s.ensureSchema(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+func shouldEnableWAL(dbPath string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MANIFEST_WAL"))) {
+	case "on", "1", "true", "yes":
+		return true
+	case "off", "0", "false", "no":
+		return false
+	default:
+		return !config.PathIsSyncedCloudDrive(filepath.Dir(dbPath))
+	}
+}
+
+func walSkipReason(dbPath string) string {
+	mode := strings.TrimSpace(os.Getenv("MANIFEST_WAL"))
+	if mode != "" {
+		return "MANIFEST_WAL=" + mode
+	}
+	if config.PathIsSyncedCloudDrive(filepath.Dir(dbPath)) {
+		return "synced_cloud_drive_path"
+	}
+	return "auto"
+}
+
+// JournalMode returns the current SQLite journal_mode (for tests/diagnostics).
+func JournalMode(dbPath string) (string, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var mode string
+	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		return "", err
+	}
+	return mode, nil
 }
 
 func (s *Store) ensureSchema() error {

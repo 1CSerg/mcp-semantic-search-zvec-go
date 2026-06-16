@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestDiscoverGit(t *testing.T) {
 		t.Skipf("git add: %v %s", err, out)
 	}
 
-	files, err := Discover(Options{
+	result, err := Discover(Options{
 		Root:       dir,
 		Extensions: []string{".go"},
 		SkipDirs:   []string{".git"},
@@ -35,8 +36,11 @@ func TestDiscoverGit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0] != "main.go" {
-		t.Fatalf("files=%v", files)
+	if len(result.Files) != 1 || result.Files[0] != "main.go" {
+		t.Fatalf("files=%v", result.Files)
+	}
+	if result.Method != "git" {
+		t.Fatalf("method=%q", result.Method)
 	}
 }
 
@@ -55,7 +59,7 @@ func TestDiscoverWalk(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err := Discover(Options{
+	result, err := Discover(Options{
 		Root:       dir,
 		Extensions: []string{".go"},
 		SkipDirs:   []string{".git"},
@@ -63,8 +67,37 @@ func TestDiscoverWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 || files[0] != "main.go" {
-		t.Fatalf("files=%v", files)
+	if len(result.Files) != 1 || result.Files[0] != "main.go" {
+		t.Fatalf("files=%v", result.Files)
+	}
+	if result.Method != "walk" {
+		t.Fatalf("method=%q", result.Method)
+	}
+}
+
+func TestDiscoverWalkRecordsSkippedPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unreadable directory semantics differ on Windows")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.Mkdir(blocked, 0o000); err != nil {
+		t.Skip("cannot create unreadable dir:", err)
+	}
+	defer func() { _ = os.Chmod(blocked, 0o755) }()
+
+	result, err := Discover(Options{Root: dir, Extensions: []string{".go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 {
+		t.Fatalf("files=%v skipped=%v", result.Files, result.SkippedPaths)
+	}
+	if len(result.SkippedPaths) == 0 {
+		t.Fatal("expected skipped paths on unreadable directory")
 	}
 }
 

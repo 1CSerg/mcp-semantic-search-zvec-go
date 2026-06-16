@@ -111,6 +111,36 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestHTTPAddrDefaultLocal(t *testing.T) {
+	dir := t.TempDir()
+	minimalNoHTTP := `active_profile: test
+profiles:
+  test:
+    provider: openai_compatible
+    model: test-model
+    dimensions: 384
+    base_url: http://127.0.0.1:9/v1
+`
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte(minimalNoHTTP), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexDir := filepath.Join(dir, "data", "index")
+
+	t.Setenv("WORKSPACE_ROOT", dir)
+	t.Setenv("CONFIG_PATH", path)
+	t.Setenv("INDEX_DIR", indexDir)
+	t.Setenv("HTTP_ADDR", "")
+
+	settings, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if settings.HTTPAddr != DefaultHTTPAddrLocal {
+		t.Fatalf("http_addr=%q want %q (per-project default)", settings.HTTPAddr, DefaultHTTPAddrLocal)
+	}
+}
+
 func TestHTTPAddrConfigFallback(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestConfig(t, dir)
@@ -151,6 +181,64 @@ func TestActiveProfile(t *testing.T) {
 	settings.App.ActiveProfile = "missing"
 	if _, err := settings.ActiveProfile(); err == nil {
 		t.Fatal("expected error for missing profile")
+	}
+}
+
+func TestLoadPathContainmentStrictRejectsEscape(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	outside := t.TempDir()
+
+	_, err := LoadWithOptions(LoadOptions{
+		WorkspaceRoot:   dir,
+		IndexDir:        outside,
+		ConfigPath:      path,
+		PathContainment: PathContainmentStrict,
+		UseProcessEnv:   false,
+	})
+	if err == nil {
+		t.Fatal("expected strict containment error for INDEX_DIR outside workspace")
+	}
+}
+
+func TestLoadWithOptionsAllowlistPermitsExternalIndex(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	external := t.TempDir()
+
+	settings, err := LoadWithOptions(LoadOptions{
+		WorkspaceRoot:   dir,
+		IndexDir:        external,
+		ConfigPath:      path,
+		PathContainment: PathContainmentStrict,
+		PathAllowlist:   []string{external},
+		UseProcessEnv:   false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.IndexDir != external {
+		t.Fatalf("index_dir=%q", settings.IndexDir)
+	}
+}
+
+func TestLoadPathContainmentOffAllowsEscape(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	outside := t.TempDir()
+
+	settings, err := LoadWithOptions(LoadOptions{
+		WorkspaceRoot:   dir,
+		IndexDir:        outside,
+		ConfigPath:      path,
+		PathContainment: PathContainmentOff,
+		UseProcessEnv:   false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.IndexDir != outside {
+		t.Fatalf("index_dir=%q", settings.IndexDir)
 	}
 }
 

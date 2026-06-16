@@ -94,3 +94,19 @@ func TestReadAndChunk(t *testing.T) {
 		t.Fatal("expected chunks")
 	}
 }
+
+func TestReadAndChunkRejectsLargeFile(t *testing.T) {
+	root := t.TempDir()
+	rel := "big.go"
+	content := make([]byte, 64)
+	if err := os.WriteFile(filepath.Join(root, rel), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadAndChunk(root, rel, Options{MaxFileBytes: 32})
+	if err == nil {
+		t.Fatal("expected file too large error")
+	}
+	if !strings.Contains(err.Error(), "file too large for indexing") {
+		t.Fatalf("err=%v", err)
+	}
+}

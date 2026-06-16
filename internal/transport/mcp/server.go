@@ -54,9 +54,8 @@ func registerTools(server *mcp.Server, svc service.Service) {
 		Name:        "semantic_search",
 		Description: "Semantic search over indexed code. Call first when exploring a project. Use limit for result count (default 10); do not pass top_k.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input semanticSearchInput) (*mcp.CallToolResult, any, error) {
-		_ = ctx
 		_ = req
-		raw, err := svc.SemanticSearch(input.toSearchRequest())
+		raw, err := svc.SemanticSearch(ctx, input.toSearchRequest())
 		if err != nil {
 			return toolError(err)
 		}
@@ -67,9 +66,8 @@ func registerTools(server *mcp.Server, svc service.Service) {
 		Name:        "index_status",
 		Description: "Index status: paths, counts, indexing progress, diagnostics.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		_ = ctx
 		_ = req
-		raw, err := svc.GetIndexStatus()
+		raw, err := svc.GetIndexStatus(ctx)
 		if err != nil {
 			return toolError(err)
 		}
@@ -80,9 +78,8 @@ func registerTools(server *mcp.Server, svc service.Service) {
 		Name:        "reindex",
 		Description: "Full (force=true) or incremental reindex in background.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input service.ReindexRequest) (*mcp.CallToolResult, any, error) {
-		_ = ctx
 		_ = req
-		raw, err := svc.Reindex(input)
+		raw, err := svc.Reindex(ctx, input)
 		if err != nil {
 			return toolError(err)
 		}
@@ -93,9 +90,8 @@ func registerTools(server *mcp.Server, svc service.Service) {
 		Name:        "check_update",
 		Description: "Compare installed version with latest GitHub release.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		_ = ctx
 		_ = req
-		raw, err := svc.CheckUpdate()
+		raw, err := svc.CheckUpdate(ctx)
 		if err != nil {
 			return toolError(err)
 		}

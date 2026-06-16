@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,11 +32,16 @@ func WorkspaceRootFromExecutable() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return ReadWorkspaceRootMarker(filepath.Dir(exe))
+	return ReadWorkspaceRootMarkerValidated(filepath.Dir(exe))
 }
 
 // ReadWorkspaceRootMarker loads the UTF-8 workspace path from dir/workspace-root.txt.
 func ReadWorkspaceRootMarker(dir string) (string, error) {
+	return ReadWorkspaceRootMarkerValidated(dir)
+}
+
+// ReadWorkspaceRootMarkerValidated loads and validates workspace-root.txt.
+func ReadWorkspaceRootMarkerValidated(dir string) (string, error) {
 	path := filepath.Join(dir, WorkspaceRootMarkerFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -44,5 +51,38 @@ func ReadWorkspaceRootMarker(dir string) (string, error) {
 	if root == "" {
 		return "", os.ErrInvalid
 	}
-	return filepath.Abs(root)
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	if err := ValidateWorkspaceRootMarker(abs); err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+// ValidateWorkspaceRootMarker checks that root exists and contains the MCP install tree.
+func ValidateWorkspaceRootMarker(root string) error {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return os.ErrInvalid
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return fmt.Errorf("workspace root marker path: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("workspace root marker path is not a directory: %s", root)
+	}
+	installDir := filepath.Join(root, DefaultInstallDirName)
+	if st, err := os.Stat(installDir); err != nil {
+		return fmt.Errorf("workspace root missing install dir %q: %w", DefaultInstallDirName, err)
+	} else if !st.IsDir() {
+		return fmt.Errorf("workspace install path is not a directory: %s", installDir)
+	}
+	configPath := filepath.Join(installDir, "config.yaml")
+	if _, err := os.Stat(configPath); err != nil {
+		slog.Debug("workspace root marker: config.yaml not found in install dir", "path", configPath, "err", err)
+	}
+	return nil
 }

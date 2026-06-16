@@ -29,6 +29,8 @@ Windows (PowerShell): `.\scripts\setup-git-hooks.ps1` вместо `make setup-h
 
 Dev mode uses repo `config.yaml` automatically when install tree is absent.
 
+Path containment (`INDEX_DIR` / `CONFIG_PATH` / `daemon.yaml`): `internal/config/paths.go`, env `MCP_PATH_CONTAINMENT`, tests `go test ./internal/config/... -run Containment`.
+
 Секреты в dev: скопируйте `templates/env.example` в `.mcp-semantic-search-zvec-go/.env` или задайте `ENV_PATH`. Бинарник загружает `.env` при старте до чтения профилей.
 
 ## Run modes
@@ -39,13 +41,13 @@ No CLI flags → `--stdio` (per-project MCP). `--version` / `-version` prints ve
 # MCP stdio (Cursor spawns this; default when no flags)
 ./bin/mcp-semantic-search-zvec-go --stdio
 
-# HTTP only
-./bin/mcp-semantic-search-zvec-go --http --http-addr :8080
+# HTTP only (default bind 127.0.0.1:8080)
+./bin/mcp-semantic-search-zvec-go --http
 
 # Both (HTTP in background goroutine + MCP stdio)
 ./bin/mcp-semantic-search-zvec-go --stdio --http
 
-# Shared daemon (multi-workspace HTTP)
+# Shared daemon (multi-workspace HTTP; default bind :8080)
 ./bin/mcp-semantic-search-zvec-go --daemon --daemon-config /path/to/daemon.yaml --http-addr :8080
 
 # MCP stdio proxy to shared daemon (Cursor multi-repo)

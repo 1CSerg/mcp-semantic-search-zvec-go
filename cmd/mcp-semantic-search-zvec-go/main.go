@@ -54,7 +54,7 @@ func run() int {
 	flag.BoolVar(&stdioProxy, "stdio-proxy", false, "Run MCP stdio proxy to shared daemon HTTP API")
 	flag.BoolVar(&httpFlag, "http", false, "Run HTTP REST API server")
 	flag.BoolVar(&daemonFlag, "daemon", false, "Run shared multi-workspace HTTP daemon")
-	flag.StringVar(&httpAddr, "http-addr", "", "HTTP listen address (default :8080 or config server.http_addr)")
+	flag.StringVar(&httpAddr, "http-addr", "", "HTTP listen address (default 127.0.0.1:8080 per-project, :8080 daemon, or config server.http_addr)")
 	flag.StringVar(&configPath, "config", "", "Override CONFIG_PATH")
 	flag.StringVar(&daemonConfig, "daemon-config", "", "Path to daemon.yaml (or WORKSPACES_CONFIG env)")
 	flag.StringVar(&workspaceID, "workspace-id", "", "Workspace ID for --stdio-proxy")
@@ -118,7 +118,10 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = crash.Write(settings.LogsDir(), version.Version, settings.WorkspaceRoot, r)
+			_ = crash.WriteWithOptions(settings.LogsDir(), version.Version, r, crash.WriteOptions{
+				RedactPaths:   crash.RedactPathsEnabled(),
+				WorkspaceRoot: settings.WorkspaceRoot,
+			})
 			panic(r)
 		}
 	}()
@@ -138,6 +141,7 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 	if p, err := service.NewPhase1(settings); err == nil {
 		phase1 = p
 		svc = phase1
+		phase1.SetLifecycleContext(ctx)
 		phase1.PrepareStartup()
 	} else {
 		slog.Warn("phase1 service init failed, using stub", "err", err)
@@ -159,7 +163,7 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 	}
 
 	settings := &config.Settings{
-		HTTPAddr: config.DefaultHTTPAddr,
+		HTTPAddr: config.DefaultHTTPAddrDaemon,
 		APIToken: os.Getenv("API_TOKEN"),
 	}
 	if v := os.Getenv("HTTP_ADDR"); v != "" {
@@ -178,7 +182,9 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = crash.Write(settings.LogsDir(), version.Version, "", r)
+			_ = crash.WriteWithOptions(crash.DaemonLogDir(), version.Version, r, crash.WriteOptions{
+				RedactPaths: crash.RedactPathsEnabled(),
+			})
 			panic(r)
 		}
 	}()
@@ -193,6 +199,7 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 
 	errCh := make(chan error, 1)
 	go func() {
+		defer recoverToCrashReport(crash.DaemonLogDir(), "", "")
 		addr := settings.HTTPAddr
 		if httpAddr != "" {
 			addr = httpAddr
@@ -215,6 +222,10 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("mcp stdio proxy panic", "panic", fmt.Sprint(r))
+			_ = crash.WriteWithOptions(crash.ProxyLogDir(), version.Version, r, crash.WriteOptions{
+				RedactPaths: crash.RedactPathsEnabled(),
+				WorkspaceID: workspaceID,
+			})
 			panic(r)
 		}
 	}()
@@ -227,6 +238,7 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 
 	errCh := make(chan error, 1)
 	go func() {
+		defer recoverToCrashReport(crash.ProxyLogDir(), "", workspaceID)
 		errCh <- mcptransport.Run(ctx, svc)
 	}()
 
@@ -264,6 +276,7 @@ func serveTransports(ctx context.Context, stop context.CancelFunc, settings *con
 		warnIfOpenHTTP(addr, settings.APIToken)
 		httpSrv := httptransport.New(settings, svc)
 		go func() {
+			defer recoverToCrashReport(settings.LogsDir(), settings.WorkspaceRoot, "")
 			if err := httpSrv.ListenAndServe(ctx, addr); err != nil {
 				errCh <- fmt.Errorf("http: %w", err)
 				return
@@ -274,6 +287,7 @@ func serveTransports(ctx context.Context, stop context.CancelFunc, settings *con
 
 	if stdio {
 		go func() {
+			defer recoverToCrashReport(settings.LogsDir(), settings.WorkspaceRoot, "")
 			if err := mcptransport.Run(ctx, svc); err != nil {
 				errCh <- fmt.Errorf("mcp: %w", err)
 				return
@@ -322,6 +336,21 @@ func awaitTransportResults(ctx context.Context, stop context.CancelFunc, pending
 	}
 	slog.Info("transports stopped")
 	return 0
+}
+
+// recoverToCrashReport writes last_crash.json for a panicking goroutine and
+// then re-panics so the process still aborts with the original stack. Deferred
+// at the top of every transport goroutine, since the parent goroutine's recover
+// cannot catch panics raised on a different stack.
+func recoverToCrashReport(logDir, workspaceRoot, workspaceID string) {
+	if r := recover(); r != nil {
+		_ = crash.WriteWithOptions(logDir, version.Version, r, crash.WriteOptions{
+			RedactPaths:   crash.RedactPathsEnabled(),
+			WorkspaceRoot: workspaceRoot,
+			WorkspaceID:   workspaceID,
+		})
+		panic(r)
+	}
 }
 
 func runStopStdio(workspace, indexDir string) int {

@@ -33,6 +33,9 @@ type Progress struct {
 	FilesFailed   int      `json:"files_failed,omitempty"`
 	FailedFiles   []string `json:"failed_files,omitempty"`
 	ChunksIndexed int      `json:"chunks_indexed,omitempty"`
+	ScanMethod    string   `json:"scan_method,omitempty"`
+	ScanWarnings  []string `json:"scan_warnings,omitempty"`
+	SkippedPaths  []string `json:"skipped_paths,omitempty"`
 	CurrentFile   string   `json:"current_file,omitempty"`
 	Message       string   `json:"message,omitempty"`
 	Error         string   `json:"error,omitempty"`
@@ -193,6 +196,15 @@ func (p Progress) ToIndexingMap() map[string]any {
 	}
 	if p.ChunksIndexed > 0 {
 		m["chunks_indexed"] = p.ChunksIndexed
+	}
+	if p.ScanMethod != "" {
+		m["scan_method"] = p.ScanMethod
+	}
+	if len(p.ScanWarnings) > 0 {
+		m["scan_warnings"] = append([]string(nil), p.ScanWarnings...)
+	}
+	if len(p.SkippedPaths) > 0 {
+		m["skipped_paths"] = append([]string(nil), p.SkippedPaths...)
 	}
 	if p.CurrentFile != "" {
 		m["current_file"] = p.CurrentFile

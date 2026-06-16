@@ -71,7 +71,7 @@ func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions int) er
 		return fmt.Errorf("read index_meta: %w", err)
 	}
 	if meta.WorkspaceID != "" && workspaceID != "" && meta.WorkspaceID != workspaceID {
-		return fmt.Errorf("index_owner_mismatch: index belongs to workspace_id %q, current is %q", meta.WorkspaceID, workspaceID)
+		return fmt.Errorf("%w: index belongs to workspace_id %q, current is %q", ErrOwnerMismatch, meta.WorkspaceID, workspaceID)
 	}
 	if meta.EmbeddingProfile != "" && profile != "" && meta.EmbeddingProfile != profile {
 		return fmt.Errorf("index profile mismatch: %q vs %q", meta.EmbeddingProfile, profile)
@@ -82,21 +82,57 @@ func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions int) er
 	return nil
 }
 
-// EnsureIndexMeta creates or validates index_meta.json.
+func indexMetaFromIdentity(identity IndexIdentity, zvecGoVersion string) IndexMeta {
+	collectionName := CollectionName(identity.WorkspaceRoot, identity.Profile, identity.Dimensions)
+	return IndexMeta{
+		WorkspaceID:          identity.WorkspaceID,
+		WorkspaceRoot:        identity.WorkspaceRoot,
+		WorkspaceFingerprint: collectionName,
+		EmbeddingProfile:     identity.Profile,
+		EmbeddingDimensions:  identity.Dimensions,
+		CollectionName:       collectionName,
+		ZvecGoVersion:        zvecGoVersion,
+	}
+}
+
+func indexMetaIncomplete(meta *IndexMeta) bool {
+	if meta == nil {
+		return true
+	}
+	return meta.WorkspaceRoot == "" ||
+		meta.CollectionName == "" ||
+		meta.EmbeddingProfile == "" ||
+		meta.EmbeddingDimensions == 0
+}
+
+// EnsureIndexMeta creates, validates, or backfills index_meta.json.
 func EnsureIndexMeta(indexDir, workspaceID, workspaceRoot, profile string, dimensions int) error {
 	if err := ValidateIndexMeta(indexDir, workspaceID, profile, dimensions); err != nil {
 		return err
 	}
-	if IndexMetaPresent(indexDir) {
+	if !IndexMetaPresent(indexDir) {
+		return WriteIndexMeta(indexDir, indexMetaFromIdentity(IndexIdentity{
+			WorkspaceID:   workspaceID,
+			WorkspaceRoot: workspaceRoot,
+			Profile:       profile,
+			Dimensions:    dimensions,
+		}, version.ZvecGoVersion))
+	}
+	meta, err := ReadIndexMeta(indexDir)
+	if err != nil {
+		return fmt.Errorf("read index_meta: %w", err)
+	}
+	if !indexMetaIncomplete(meta) {
 		return nil
 	}
-	return WriteIndexMeta(indexDir, IndexMeta{
-		WorkspaceID:          workspaceID,
-		WorkspaceRoot:        workspaceRoot,
-		WorkspaceFingerprint: CollectionName(workspaceRoot, profile, dimensions),
-		EmbeddingProfile:     profile,
-		EmbeddingDimensions:  dimensions,
-		CollectionName:       CollectionName(workspaceRoot, profile, dimensions),
-		ZvecGoVersion:        version.ZvecGoVersion,
-	})
+	zvecGoVersion := meta.ZvecGoVersion
+	if zvecGoVersion == "" {
+		zvecGoVersion = version.ZvecGoVersion
+	}
+	return WriteIndexMeta(indexDir, indexMetaFromIdentity(IndexIdentity{
+		WorkspaceID:   workspaceID,
+		WorkspaceRoot: workspaceRoot,
+		Profile:       profile,
+		Dimensions:    dimensions,
+	}, zvecGoVersion))
 }

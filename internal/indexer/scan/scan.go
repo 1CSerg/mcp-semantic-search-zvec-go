@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,25 +15,61 @@ type Options struct {
 	SkipDirs   []string
 }
 
-// Discover returns relative file paths to index.
-func Discover(opts Options) ([]string, error) {
+// Result describes discovered files and scan diagnostics.
+type Result struct {
+	Files        []string
+	Method       string
+	SkippedPaths []string
+	Warnings     []string
+}
+
+// Discover returns relative file paths to index with scan metadata.
+func Discover(opts Options) (Result, error) {
 	if opts.Root == "" {
-		return nil, os.ErrInvalid
+		return Result{}, os.ErrInvalid
 	}
 	root, err := filepath.Abs(opts.Root)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
-	if files, err := gitFiles(root); err == nil && len(files) > 0 {
-		return filterFiles(files, opts), nil
+	gitRes, ok := discoverGit(root, opts)
+	if ok {
+		return gitRes, nil
 	}
-	return walkFiles(root, opts)
+	walkRes, err := discoverWalk(root, opts)
+	if err != nil {
+		return walkRes, err
+	}
+	// Preserve the reason git discovery was skipped (git_not_found /
+	// git_unavailable / empty_repository) so index_status can surface it.
+	if len(gitRes.Warnings) > 0 {
+		walkRes.Warnings = append(gitRes.Warnings, walkRes.Warnings...)
+	}
+	return walkRes, nil
+}
+
+func discoverGit(root string, opts Options) (Result, bool) {
+	if _, err := exec.LookPath("git"); err != nil {
+		return Result{Warnings: []string{"git_not_found: falling back to directory walk"}}, false
+	}
+	gitDir := filepath.Join(root, ".git")
+	if _, err := os.Stat(gitDir); err != nil {
+		return Result{}, false
+	}
+	files, err := gitFiles(root)
+	if err != nil {
+		return Result{Warnings: []string{"git_unavailable: " + err.Error()}}, false
+	}
+	if len(files) == 0 {
+		return Result{Warnings: []string{"empty_repository: git ls-files returned no paths"}}, false
+	}
+	return Result{
+		Files:  filterFiles(files, opts),
+		Method: "git",
+	}, true
 }
 
 func gitFiles(root string) ([]string, error) {
-	if _, err := exec.LookPath("git"); err != nil {
-		return nil, err
-	}
 	cmd := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard")
 	out, err := cmd.Output()
 	if err != nil {
@@ -49,10 +86,16 @@ func gitFiles(root string) ([]string, error) {
 	return files, nil
 }
 
-func walkFiles(root string, opts Options) ([]string, error) {
-	var files []string
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
+func discoverWalk(root string, opts Options) (Result, error) {
+	var result Result
+	result.Method = "walk"
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			result.SkippedPaths = append(result.SkippedPaths, relForSkip(root, path))
+			slog.Debug("scan skipped path", "path", path, "err", walkErr)
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() {
@@ -63,15 +106,27 @@ func walkFiles(root string, opts Options) ([]string, error) {
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
+			result.SkippedPaths = append(result.SkippedPaths, relForSkip(root, path))
+			slog.Debug("scan skipped path", "path", path, "err", err)
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
 		if matchesExtension(rel, opts.Extensions) {
-			files = append(files, rel)
+			result.Files = append(result.Files, rel)
 		}
 		return nil
 	})
-	return files, err
+	return result, err
+}
+
+// relForSkip returns path relative to root (slash-separated) for diagnostics,
+// falling back to the original path if it cannot be relativized.
+func relForSkip(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return filepath.ToSlash(path)
+	}
+	return filepath.ToSlash(rel)
 }
 
 func filterFiles(files []string, opts Options) []string {

@@ -76,7 +76,7 @@ profiles:
 func TestLoadWorkspaceFromSpec(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTestConfig(t, dir)
-	settings, err := LoadWorkspaceFromSpec("my-app", dir, filepath.Join(dir, "idx"), path)
+	settings, err := LoadWorkspaceFromSpec("my-app", dir, filepath.Join(dir, "idx"), path, LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

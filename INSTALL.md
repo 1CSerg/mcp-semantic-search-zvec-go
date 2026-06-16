@@ -219,10 +219,12 @@ Cursor в каждом проекте (Windows, proxy через launcher):
 Run alongside MCP or standalone:
 
 ```bash
-.mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go --http --http-addr :8080
+.mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go --http
 ```
 
-Or set in systemd / Docker — see [docker/docker-compose.yml](docker/docker-compose.yml) (one project) or [docker/docker-compose.daemon.yml](docker/docker-compose.daemon.yml) (multi-repo daemon).
+Default bind is `127.0.0.1:8080` (loopback). For LAN access set `server.http_addr: ":8080"` in config or `HTTP_ADDR=:8080`.
+
+Or set in systemd / Docker — see [docker/docker-compose.yml](docker/docker-compose.yml) (one project; explicit `:8080` bind) or [docker/docker-compose.daemon.yml](docker/docker-compose.daemon.yml) (multi-repo daemon).
 
 ## Build from source
 

@@ -101,7 +101,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeHint(t *testing.T) {
 		IndexDir:      filepath.Join(root, "База", "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 3, 77, 12, true)
+	enrichIndexStatusDiagnostics(d, settings, 3, 77, 12, true, 0)
 	if d["non_ascii_index_dir"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
@@ -126,7 +126,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeZvecFailure(t *testing.T) {
 		IndexDir:      filepath.Join(root, "База", "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 0, 0, 0, false)
+	enrichIndexStatusDiagnostics(d, settings, 0, 0, 0, false, 0)
 	if d["unicode_index_path_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
@@ -139,7 +139,7 @@ func TestEnrichIndexStatusDiagnosticsCloudDrive(t *testing.T) {
 		IndexDir:      filepath.Join(root, "GDrive", "База знаний", ".mcp-semantic-search-zvec-go", "data", "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 1, 10, 10, true)
+	enrichIndexStatusDiagnostics(d, settings, 1, 10, 10, true, 0)
 	if d["synced_cloud_drive_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
@@ -152,7 +152,7 @@ func TestEnrichIndexStatusDiagnosticsManifestMismatch(t *testing.T) {
 		IndexDir:      filepath.Join(root, "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 0, 77, 12, true)
+	enrichIndexStatusDiagnostics(d, settings, 0, 77, 12, true, 0)
 	if d["zvec_manifest_mismatch_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}

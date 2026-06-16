@@ -28,18 +28,18 @@ func TestNewDefaultStaleSeconds(t *testing.T) {
 
 func TestIsStaleAliveProcess(t *testing.T) {
 	dir := t.TempDir()
-	l := New(dir, 300)
-	if err := l.TryAcquire(); err != nil {
+	l1 := New(dir, 300)
+	if err := l1.TryAcquire(); err != nil {
 		t.Fatal(err)
 	}
-	_ = l.Release()
+	defer func() { _ = l1.Release() }()
 
 	l2 := New(dir, 300)
-	if l2.isStale() {
-		t.Fatal("expected fresh lock from alive process")
+	if err := l2.TryAcquire(); err == nil {
+		t.Fatal("expected exclusive lock error while holder alive")
 	}
 	if l2.ReclaimStale() {
-		t.Fatal("expected no reclaim for fresh lock")
+		t.Fatal("expected no reclaim while OS lock held")
 	}
 }
 
@@ -125,6 +125,9 @@ func TestReleaseDoesNotRemoveReclaimedLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := l1.ownerContent
+	if err := unlock(l1.file); err != nil {
+		t.Fatal(err)
+	}
 	if err := l1.file.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +135,6 @@ func TestReleaseDoesNotRemoveReclaimedLock(t *testing.T) {
 	l1.ownerContent = owner
 
 	path := filepath.Join(dir, lockFileName)
-	// Another process now owns the lock with different content.
 	if err := os.WriteFile(path, []byte("2 9999999999\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -152,10 +154,6 @@ func TestReleaseAfterStaleReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("999999 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	oldTime := time.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
 		t.Fatal(err)
 	}
 	old := New(dir, 1)
@@ -198,4 +196,41 @@ func TestHolderPID(t *testing.T) {
 		t.Fatalf("HolderPID()=%d ok=%v want pid=%d", pid, ok, os.Getpid())
 	}
 	_ = l.Release()
+}
+
+func TestLegacyLockFileWithoutOSLock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, lockFileName)
+	if err := os.WriteFile(path, []byte("999999 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	l := New(dir, 300)
+	if err := l.TryAcquire(); err != nil {
+		t.Fatalf("TryAcquire legacy: %v", err)
+	}
+	pid, ok := l.HolderPID()
+	if !ok || pid != os.Getpid() {
+		t.Fatalf("HolderPID()=%d ok=%v want pid=%d", pid, ok, os.Getpid())
+	}
+	_ = l.Release()
+}
+
+func TestIsStaleLegacyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, lockFileName)
+	if err := os.WriteFile(path, []byte("999999 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	l := New(dir, 1)
+	if !l.isStale() {
+		t.Fatal("expected stale legacy lock by mtime")
+	}
 }

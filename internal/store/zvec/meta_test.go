@@ -86,3 +86,29 @@ func TestValidateIndexMetaDimensions(t *testing.T) {
 		t.Fatal("expected profile mismatch")
 	}
 }
+
+func TestEnsureIndexMetaBackfillsIncomplete(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: version.ZvecGoVersion}); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureIndexMeta(dir, "ws1", "/proj", "smoke", 128); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := indexMetaFromIdentity(IndexIdentity{
+		WorkspaceID:   "ws1",
+		WorkspaceRoot: "/proj",
+		Profile:       "smoke",
+		Dimensions:    128,
+	}, version.ZvecGoVersion)
+	if meta.WorkspaceID != want.WorkspaceID ||
+		meta.WorkspaceRoot != want.WorkspaceRoot ||
+		meta.CollectionName != want.CollectionName ||
+		meta.ZvecGoVersion != want.ZvecGoVersion {
+		t.Fatalf("meta=%+v want=%+v", meta, want)
+	}
+}

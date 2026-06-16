@@ -16,12 +16,13 @@ import (
 var ErrUnknownWorkspace = errors.New("unknown workspace")
 
 // WorkspaceInfo is returned by GET /v1/workspaces.
+// Path fields are omitted unless include_paths is requested.
 type WorkspaceInfo struct {
 	ID         string `json:"id"`
-	Root       string `json:"root"`
-	IndexDir   string `json:"index_dir"`
-	ConfigPath string `json:"config_path"`
 	Open       bool   `json:"open"`
+	Root       string `json:"root,omitempty"`
+	IndexDir   string `json:"index_dir,omitempty"`
+	ConfigPath string `json:"config_path,omitempty"`
 }
 
 type workspaceHandle struct {
@@ -55,19 +56,23 @@ func NewRegistry(cfg Config, rootCtx context.Context) *Registry {
 }
 
 // ListWorkspaces returns registered workspace metadata.
-func (r *Registry) ListWorkspaces() []WorkspaceInfo {
+// When includePaths is false, only id and open are populated.
+func (r *Registry) ListWorkspaces(includePaths bool) []WorkspaceInfo {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]WorkspaceInfo, 0, len(r.cfg.Workspaces))
 	for _, spec := range r.cfg.Workspaces {
 		_, isOpen := r.open[spec.ID]
-		out = append(out, WorkspaceInfo{
-			ID:         spec.ID,
-			Root:       spec.Root,
-			IndexDir:   spec.IndexDir,
-			ConfigPath: spec.ConfigPath,
-			Open:       isOpen,
-		})
+		info := WorkspaceInfo{
+			ID:   spec.ID,
+			Open: isOpen,
+		}
+		if includePaths {
+			info.Root = spec.Root
+			info.IndexDir = spec.IndexDir
+			info.ConfigPath = spec.ConfigPath
+		}
+		out = append(out, info)
 	}
 	return out
 }
@@ -107,7 +112,10 @@ func (r *Registry) openWorkspace(spec WorkspaceSpec) (service.Service, error) {
 		r.evictOldestLocked()
 	}
 
-	settings, err := config.LoadWorkspaceFromSpec(spec.ID, spec.Root, spec.IndexDir, spec.ConfigPath)
+	settings, err := config.LoadWorkspaceFromSpec(spec.ID, spec.Root, spec.IndexDir, spec.ConfigPath, config.LoadOptions{
+		PathContainment: config.ParsePathContainmentMode(r.cfg.PathContainment),
+		PathAllowlist:   r.cfg.PathAllowlist,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +125,7 @@ func (r *Registry) openWorkspace(spec WorkspaceSpec) (service.Service, error) {
 		return nil, err
 	}
 	wsCtx, cancel := context.WithCancel(r.rootCtx)
+	phase1.SetLifecycleContext(wsCtx)
 	phase1.StartFileWatcher(wsCtx)
 	phase1.PrepareStartup()
 

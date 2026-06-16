@@ -31,27 +31,27 @@ func NewHTTPProxy(baseURL, workspaceID, apiToken string) *HTTPProxy {
 	}
 }
 
-func (p *HTTPProxy) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
+func (p *HTTPProxy) SemanticSearch(ctx context.Context, req SearchRequest) (json.RawMessage, error) {
 	req.WorkspaceID = p.WorkspaceID
-	return p.postJSON("/v1/search", req)
+	return p.postJSON(ctx, "/v1/search", req)
 }
 
-func (p *HTTPProxy) GetIndexStatus() (json.RawMessage, error) {
-	return p.getJSON("/v1/status?workspace_id=" + urlQuery(p.WorkspaceID))
+func (p *HTTPProxy) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
+	return p.getJSON(ctx, "/v1/status?workspace_id="+urlQuery(p.WorkspaceID))
 }
 
-func (p *HTTPProxy) Reindex(req ReindexRequest) (json.RawMessage, error) {
+func (p *HTTPProxy) Reindex(ctx context.Context, req ReindexRequest) (json.RawMessage, error) {
 	req.WorkspaceID = p.WorkspaceID
-	return p.postJSON("/v1/reindex", req)
+	return p.postJSON(ctx, "/v1/reindex", req)
 }
 
-func (p *HTTPProxy) CheckUpdate() (json.RawMessage, error) {
-	return p.getJSON("/v1/version")
+func (p *HTTPProxy) CheckUpdate(ctx context.Context) (json.RawMessage, error) {
+	return p.getJSON(ctx, "/v1/version")
 }
 
-func (p *HTTPProxy) Ready() error {
+func (p *HTTPProxy) Ready(ctx context.Context) error {
 	url := p.BaseURL + "/ready?workspace_id=" + urlQuery(p.WorkspaceID)
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
@@ -75,12 +75,12 @@ func (p *HTTPProxy) Ready() error {
 	return fmt.Errorf("not ready: HTTP %d", resp.StatusCode)
 }
 
-func (p *HTTPProxy) postJSON(path string, payload any) (json.RawMessage, error) {
+func (p *HTTPProxy) postJSON(ctx context.Context, path string, payload any) (json.RawMessage, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, p.BaseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +89,8 @@ func (p *HTTPProxy) postJSON(path string, payload any) (json.RawMessage, error) 
 	return p.do(req)
 }
 
-func (p *HTTPProxy) getJSON(path string) (json.RawMessage, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, p.BaseURL+path, nil)
+func (p *HTTPProxy) getJSON(ctx context.Context, path string) (json.RawMessage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.BaseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}

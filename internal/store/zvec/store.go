@@ -15,6 +15,9 @@ var ErrNotLinked = errors.New("zvec store not linked: build with -tags zvec and 
 // ErrCollectionMissing is returned when the zvec collection directory does not exist.
 var ErrCollectionMissing = errors.New("zvec collection not found")
 
+// ErrOwnerMismatch is returned when index_meta does not match the current workspace identity.
+var ErrOwnerMismatch = errors.New("index_owner_mismatch")
+
 // Chunk is a searchable document slice stored in zvec.
 type Chunk struct {
 	DocID        string

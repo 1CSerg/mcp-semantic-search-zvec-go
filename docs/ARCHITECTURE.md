@@ -106,10 +106,12 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 
 ### index.lock
 
-- Exclusive create when indexing starts (`O_CREAT|O_EXCL`).
-- Content: PID + Unix timestamp; heartbeat updates mtime.
-- Stale reclaim: dead PID, empty file, or age > `lock_stale_seconds`.
-- Read paths (`search`, `status`) reclaim stale locks so search is not blocked indefinitely.
+- OS advisory exclusive lock (`flock` on Unix, `LockFileEx` on Windows) on an open fd for the holder's lifetime.
+- Content: `PID` + Unix timestamp (diagnostics, `HolderPID`); format unchanged from earlier versions.
+- `TryAcquire`: open `O_CREATE|O_RDWR`, non-blocking exclusive lock; no `O_EXCL` / TOCTOU reclaim.
+- `ReclaimStale`: open + non-blocking lock; if acquired, file is orphaned (holder crashed) → remove.
+- `lock_stale_seconds` / `isStale()` retained for maintenance diagnostics only (uninstall, legacy files).
+- `heartbeat_seconds` is deprecated for mutual exclusion; indexing no longer calls `Heartbeat`.
 
 ### stdio.lock
 
@@ -132,13 +134,20 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 | Partial search during write | `indexing` metadata in search response; `/ready` stays not-ready until idle |
 | `/health` vs `/ready` | Liveness vs embeddings+index loaded |
 | Polling file watcher | Windows Docker bind-mount compatibility |
+| Request context | MCP/HTTP pass `ctx` to sync service calls (search, status, ready); embeddings honor cancel |
+| Indexing lifecycle | Background `Coordinator.run` uses process/workspace ctx; stops on shutdown/eviction, not on reindex client disconnect |
 
 ## Security
 
 - Workspace mounted read-only in Docker.
 - HTTP `API_TOKEN` Bearer auth (constant-time compare). When unset, the API is
   unauthenticated and a warning is logged on startup — loudly if the listen
-  address is non-loopback (network-reachable). Bind to `127.0.0.1` or set a token.
+  address is non-loopback (network-reachable). Per-project `--http` defaults to
+  loopback (`127.0.0.1:8080`); daemon/Docker default `:8080`. Bind to
+  `127.0.0.1` or set a token for network exposure.
+- `GET /v1/workspaces` (shared daemon) returns only workspace `id` and `open` by
+  default; absolute paths from `daemon.yaml` require explicit `?include_paths=1`
+  and, when `API_TOKEN` is set, a valid Bearer token.
 - Secrets from `.env` (anything matching `*TOKEN*`, `*SECRET*`, `*PASSWORD*`,
   `*API_KEY*`, `*CREDENTIAL*`) are loaded into a private in-memory map and are
   **not** exported to the process environment (`os.Setenv`), so they don't leak

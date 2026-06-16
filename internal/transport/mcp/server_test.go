@@ -186,7 +186,7 @@ type failingMCPService struct {
 	service.Service
 }
 
-func (failingMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+func (failingMCPService) SemanticSearch(context.Context, service.SearchRequest) (json.RawMessage, error) {
 	return nil, errors.New("search failed")
 }
 
@@ -194,7 +194,7 @@ type indexingPartialMCPService struct {
 	service.Service
 }
 
-func (indexingPartialMCPService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+func (indexingPartialMCPService) SemanticSearch(context.Context, service.SearchRequest) (json.RawMessage, error) {
 	return json.RawMessage(`{"results":[{"path":"a.go","score":0.9}],"indexing":{"running":true},"message":"results may be incomplete while indexing is in progress"}`), nil
 }
 

@@ -14,6 +14,10 @@ func TestMatchesStaleStdioViaWorkspaceMarker(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	install := filepath.Join(workspace, config.DefaultInstallDirName)
+	if err := os.MkdirAll(install, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(
 		filepath.Join(staging, config.WorkspaceRootMarkerFile),
 		[]byte(workspace),

@@ -57,16 +57,7 @@ func ResetIndexForIdentityChange(indexDir string, oldMeta *IndexMeta, store Stor
 	if err := clearManifest(indexDir); err != nil {
 		return err
 	}
-	collectionName := CollectionName(newIdentity.WorkspaceRoot, newIdentity.Profile, newIdentity.Dimensions)
-	return WriteIndexMeta(indexDir, IndexMeta{
-		WorkspaceID:          newIdentity.WorkspaceID,
-		WorkspaceRoot:        newIdentity.WorkspaceRoot,
-		WorkspaceFingerprint: collectionName,
-		EmbeddingProfile:     newIdentity.Profile,
-		EmbeddingDimensions:  newIdentity.Dimensions,
-		CollectionName:       collectionName,
-		ZvecGoVersion:        version.ZvecGoVersion,
-	})
+	return WriteIndexMeta(indexDir, indexMetaFromIdentity(newIdentity, version.ZvecGoVersion))
 }
 
 // ReconcileIndex validates or resets index ownership before indexing.
@@ -92,7 +83,7 @@ func ReconcileIndex(indexDir string, identity IndexIdentity, force bool, store S
 		want := CollectionName(identity.WorkspaceRoot, identity.Profile, identity.Dimensions)
 		if meta.CollectionName != want {
 			mismatch = true
-			err = fmt.Errorf("index_owner_mismatch: collection %q does not match current workspace root (expected %q)", meta.CollectionName, want)
+			err = fmt.Errorf("%w: collection %q does not match current workspace root (expected %q)", ErrOwnerMismatch, meta.CollectionName, want)
 		}
 	}
 	if mismatch {
@@ -100,6 +91,18 @@ func ReconcileIndex(indexDir string, identity IndexIdentity, force bool, store S
 			return err
 		}
 		return ResetIndexForIdentityChange(indexDir, meta, store, identity)
+	}
+	// Identity matches: backfill any missing identity fields in an existing
+	// (possibly legacy/partial) index_meta so mixing-protection and root-move
+	// detection have complete data on subsequent runs.
+	if indexMetaIncomplete(meta) {
+		return EnsureIndexMeta(
+			indexDir,
+			identity.WorkspaceID,
+			identity.WorkspaceRoot,
+			identity.Profile,
+			identity.Dimensions,
+		)
 	}
 	return nil
 }

@@ -6,6 +6,23 @@ import (
 	"testing"
 )
 
+func TestIsLoopbackAddr(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1:8080", true},
+		{"[::1]:8080", true},
+		{"localhost:8080", true},
+		{":8080", false},
+		{"0.0.0.0:8080", false},
+	} {
+		if got := isLoopbackAddr(tc.addr); got != tc.want {
+			t.Errorf("isLoopbackAddr(%q)=%v want %v", tc.addr, got, tc.want)
+		}
+	}
+}
+
 func TestAwaitTransportResultsCleanExit(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()

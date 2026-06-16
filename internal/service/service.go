@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -37,11 +38,11 @@ type ReindexRequest struct {
 
 // Service is the core semantic search API used by MCP and HTTP transports.
 type Service interface {
-	SemanticSearch(req SearchRequest) (json.RawMessage, error)
-	GetIndexStatus() (json.RawMessage, error)
-	Reindex(req ReindexRequest) (json.RawMessage, error)
-	CheckUpdate() (json.RawMessage, error)
-	Ready() error
+	SemanticSearch(ctx context.Context, req SearchRequest) (json.RawMessage, error)
+	GetIndexStatus(ctx context.Context) (json.RawMessage, error)
+	Reindex(ctx context.Context, req ReindexRequest) (json.RawMessage, error)
+	CheckUpdate(ctx context.Context) (json.RawMessage, error)
+	Ready(ctx context.Context) error
 }
 
 // Stub implements Service with placeholder responses for the default stub build (!zvec tag).
@@ -54,7 +55,10 @@ func NewStub(settings *config.Settings) *Stub {
 	return &Stub{Settings: settings}
 }
 
-func (s *Stub) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
+func (s *Stub) SemanticSearch(ctx context.Context, req SearchRequest) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	limit := req.Limit
 	if limit == 0 && req.TopK != nil {
 		limit = *req.TopK
@@ -75,7 +79,10 @@ func (s *Stub) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 	return marshal(payload)
 }
 
-func (s *Stub) GetIndexStatus() (json.RawMessage, error) {
+func (s *Stub) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	root := s.Settings.WorkspaceRoot
 	payload := map[string]any{
 		"workspace_root":          root,
@@ -105,7 +112,10 @@ func (s *Stub) GetIndexStatus() (json.RawMessage, error) {
 	return marshal(payload)
 }
 
-func (s *Stub) Reindex(req ReindexRequest) (json.RawMessage, error) {
+func (s *Stub) Reindex(ctx context.Context, req ReindexRequest) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	payload := map[string]any{
 		"started": false,
 		"force":   req.Force,
@@ -118,7 +128,10 @@ func (s *Stub) Reindex(req ReindexRequest) (json.RawMessage, error) {
 	return marshal(payload)
 }
 
-func (s *Stub) CheckUpdate() (json.RawMessage, error) {
+func (s *Stub) CheckUpdate(ctx context.Context) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	payload := map[string]any{
 		"installed_version": version.Version,
 		"latest_version":    version.Version,
@@ -129,8 +142,8 @@ func (s *Stub) CheckUpdate() (json.RawMessage, error) {
 	return marshal(payload)
 }
 
-func (s *Stub) Ready() error {
-	return nil
+func (s *Stub) Ready(ctx context.Context) error {
+	return ctx.Err()
 }
 
 func marshal(v any) (json.RawMessage, error) {

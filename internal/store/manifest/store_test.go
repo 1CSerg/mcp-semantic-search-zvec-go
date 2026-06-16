@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +128,61 @@ func TestUpsertDeleteListClear(t *testing.T) {
 	files, chunks, err := store.Stats()
 	if err != nil || files != 0 || chunks != 0 {
 		t.Fatalf("stats files=%d chunks=%d err=%v", files, chunks, err)
+	}
+}
+
+func TestOpenEnablesWALOnLocalPath(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "manifest.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	mode, err := JournalMode(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Fatalf("journal_mode=%q", mode)
+	}
+}
+
+func TestOpenSkipsWALOnSyncedCloudPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "YandexDisk", "project", "data", "index")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MANIFEST_WAL", "auto")
+	dbPath := filepath.Join(dir, "manifest.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+
+	mode, err := JournalMode(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.EqualFold(mode, "wal") {
+		t.Fatalf("expected WAL disabled on synced path, got %q", mode)
+	}
+}
+
+func TestShouldEnableWALForcedOn(t *testing.T) {
+	t.Setenv("MANIFEST_WAL", "on")
+	dir := filepath.Join(t.TempDir(), "YandexDisk", "index")
+	if !shouldEnableWAL(filepath.Join(dir, "manifest.db")) {
+		t.Fatal("expected WAL forced on")
+	}
+}
+
+func TestShouldEnableWALForcedOff(t *testing.T) {
+	t.Setenv("MANIFEST_WAL", "off")
+	dir := t.TempDir()
+	if shouldEnableWAL(filepath.Join(dir, "manifest.db")) {
+		t.Fatal("expected WAL forced off")
 	}
 }

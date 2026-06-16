@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,7 +31,7 @@ func TestHTTPProxySemanticSearch(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, workspaceID, "token")
-	raw, err := proxy.SemanticSearch(SearchRequest{Query: "auth"})
+	raw, err := proxy.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +58,7 @@ func TestHTTPProxyStatusQuery(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws-b", "")
-	raw, err := proxy.GetIndexStatus()
+	raw, err := proxy.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +75,7 @@ func TestHTTPProxyIndexingConflict(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws", "")
-	_, err := proxy.SemanticSearch(SearchRequest{Query: "x"})
+	_, err := proxy.SemanticSearch(context.Background(), SearchRequest{Query: "x"})
 	if err != ErrIndexingInProgress {
 		t.Fatalf("err=%v", err)
 	}
@@ -89,7 +91,7 @@ func TestHTTPProxyReady(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws", "")
-	if err := proxy.Ready(); err != nil {
+	if err := proxy.Ready(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -102,7 +104,7 @@ func TestHTTPProxyReadyNotReady(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws", "")
-	if err := proxy.Ready(); err == nil || err.Error() != "index not built yet" {
+	if err := proxy.Ready(context.Background()); err == nil || err.Error() != "index not built yet" {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -121,11 +123,11 @@ func TestHTTPProxyReindexAndVersion(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws", "tok")
-	raw, err := proxy.Reindex(ReindexRequest{Force: true})
+	raw, err := proxy.Reindex(context.Background(), ReindexRequest{Force: true})
 	if err != nil || len(raw) == 0 {
 		t.Fatalf("reindex err=%v raw=%s", err, raw)
 	}
-	raw, err = proxy.CheckUpdate()
+	raw, err = proxy.CheckUpdate(context.Background())
 	if err != nil || len(raw) == 0 {
 		t.Fatalf("version err=%v raw=%s", err, raw)
 	}
@@ -141,7 +143,7 @@ func TestHTTPProxyBearerToken(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws", "secret-token")
-	if _, err := proxy.GetIndexStatus(); err != nil {
+	if _, err := proxy.GetIndexStatus(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -154,8 +156,23 @@ func TestHTTPProxyHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	proxy := NewHTTPProxy(srv.URL, "ws", "")
-	_, err := proxy.GetIndexStatus()
+	_, err := proxy.GetIndexStatus(context.Background())
 	if err == nil || err.Error() != "unknown workspace" {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestHTTPProxyRespectsContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	proxy := NewHTTPProxy(srv.URL, "ws", "")
+	_, err := proxy.GetIndexStatus(ctx)
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v", err)
 	}
 }

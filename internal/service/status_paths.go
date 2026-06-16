@@ -53,23 +53,7 @@ func pathContainsNonASCII(s string) bool {
 }
 
 func pathIsSyncedCloudDrive(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(path))
-	markers := []string{
-		"gdrive",
-		"google drive",
-		"googledrive",
-		"yandexdisk",
-		"yandex disk",
-		"onedrive",
-		"dropbox",
-		"icloud",
-	}
-	for _, marker := range markers {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	return false
+	return config.PathIsSyncedCloudDrive(path)
 }
 
 func setDiagnosticHint(diag map[string]any, hint string) {
@@ -91,6 +75,7 @@ func enrichIndexStatusDiagnostics(
 	docCount int,
 	manifestChunks int,
 	zvecOpenOK bool,
+	skippedScanPaths int,
 ) {
 	if runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
 		diag["non_ascii_index_dir"] = true
@@ -107,6 +92,11 @@ func enrichIndexStatusDiagnostics(
 			diag["synced_cloud_drive_suspected"] = true
 			setDiagnosticHint(diag, "cloud-synced folders (Google Drive/YandexDisk) can cause transient zvec errors during indexing")
 		}
+	}
+
+	if skippedScanPaths > 0 {
+		diag["scan_paths_skipped"] = skippedScanPaths
+		setDiagnosticHint(diag, fmt.Sprintf("%d path(s) skipped during workspace scan (permission or unreadable); see indexing.skipped_paths", skippedScanPaths))
 	}
 
 	if docCount > 0 && manifestChunks > 0 && docCount > manifestChunks*2 {

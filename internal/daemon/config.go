@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -17,6 +18,8 @@ const (
 // Config is the shared daemon registration file (daemon.yaml).
 type Config struct {
 	MaxOpenWorkspaces int             `yaml:"max_open_workspaces"`
+	PathContainment   string          `yaml:"path_containment"`
+	PathAllowlist     []string        `yaml:"path_allowlist"`
 	Workspaces        []WorkspaceSpec `yaml:"workspaces"`
 }
 
@@ -57,6 +60,16 @@ func normalizeConfig(cfg *Config) error {
 	if len(cfg.Workspaces) == 0 {
 		return fmt.Errorf("daemon config: workspaces list is empty")
 	}
+	mode := config.ParsePathContainmentMode(cfg.PathContainment)
+	if strings.TrimSpace(cfg.PathContainment) == "" {
+		mode = config.PathContainmentWarn
+	}
+	allowlist, err := config.AbsPaths(cfg.PathAllowlist)
+	if err != nil {
+		return fmt.Errorf("daemon config path_allowlist: %w", err)
+	}
+	cfg.PathAllowlist = allowlist
+
 	seen := make(map[string]struct{}, len(cfg.Workspaces))
 	for i := range cfg.Workspaces {
 		spec := &cfg.Workspaces[i]
@@ -83,6 +96,15 @@ func normalizeConfig(cfg *Config) error {
 			return fmt.Errorf("workspace %q index_dir: %w", spec.ID, err)
 		}
 		spec.IndexDir = indexDir
+		if err := config.ValidatePathContainment(config.PathContainmentOptions{
+			Mode:         mode,
+			FieldName:    "index_dir",
+			Path:         indexDir,
+			AllowedRoots: []string{root},
+			Allowlist:    allowlist,
+		}); err != nil {
+			return fmt.Errorf("workspace %q: %w", spec.ID, err)
+		}
 
 		if strings.TrimSpace(spec.ConfigPath) == "" {
 			spec.ConfigPath = filepath.Join(root, ".mcp-semantic-search-zvec-go", "config.yaml")
@@ -92,6 +114,14 @@ func normalizeConfig(cfg *Config) error {
 			return fmt.Errorf("workspace %q config_path: %w", spec.ID, err)
 		}
 		spec.ConfigPath = configPath
+		if err := config.ValidatePathContainment(config.PathContainmentOptions{
+			Mode:         mode,
+			FieldName:    "config_path",
+			Path:         configPath,
+			AllowedRoots: []string{root},
+		}); err != nil {
+			return fmt.Errorf("workspace %q: %w", spec.ID, err)
+		}
 	}
 	return nil
 }

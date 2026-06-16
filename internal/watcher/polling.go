@@ -60,7 +60,7 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 }
 
 func snapshot(settings *config.Settings) (map[string]int64, error) {
-	files, err := scan.Discover(scan.Options{
+	scanResult, err := scan.Discover(scan.Options{
 		Root:       settings.WorkspaceRoot,
 		Extensions: settings.App.Indexing.Extensions,
 		SkipDirs:   settings.App.Indexing.SkipDirs,
@@ -68,8 +68,8 @@ func snapshot(settings *config.Settings) (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]int64, len(files))
-	for _, rel := range files {
+	out := make(map[string]int64, len(scanResult.Files))
+	for _, rel := range scanResult.Files {
 		abs := filepath.Join(settings.WorkspaceRoot, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)
 		if err != nil {

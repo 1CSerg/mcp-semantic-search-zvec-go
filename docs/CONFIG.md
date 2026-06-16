@@ -100,11 +100,14 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 |-----|---------------|------------------|-------------|
 | `extensions` | see config.yaml | see config.yaml | File extensions to index |
 | `skip_dirs` | see config.yaml | see config.yaml | Directories to skip |
-| `lock_stale_seconds` | 300 | 30 | Reclaim stale `index.lock` |
+| `lock_stale_seconds` | 300 | 30 | Legacy/diagnostic stale hint for lock files (`isStale()`); reclaim uses OS lock |
 | `stall_seconds` | 120 | 120 | No progress → recovery |
-| `heartbeat_seconds` | 15 | 15 | Lock heartbeat interval |
+| `heartbeat_seconds` | 15 | 15 | **Deprecated** — ignored for indexing; kept for config compatibility |
+| `max_file_bytes` | 2097152 | 2097152 | Max file size to index (bytes); `0` = no limit |
+| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming line chunker |
+| `max_line_bytes` | 1048576 | 1048576 | Max single line length (bytes); `0` = no limit |
 
-Env override: `INDEXING_STALL_SECONDS` (stall detection / stale progress recovery).
+Env overrides: `INDEXING_STALL_SECONDS`, `INDEXING_MAX_FILE_BYTES`, `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES`, `INDEXING_MAX_LINE_BYTES`.
 
 ## search
 
@@ -146,9 +149,9 @@ Env overrides: `MCP_LOG_LEVEL`, `MCP_LOG_VERBOSE`, `MCP_LOG_MAX_BYTES`, `MCP_LOG
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `http_addr` | `:8080` | HTTP listen address |
+| `http_addr` | `127.0.0.1:8080` (per-project); `:8080` (daemon/Docker) | HTTP listen address |
 
-Override with `HTTP_ADDR` env.
+Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:8080` explicitly for LAN access.
 
 ## Environment variables
 
@@ -160,11 +163,23 @@ Override with `HTTP_ADDR` env.
 | `CONFIG_PATH` | `.mcp-semantic-search-zvec-go/config.yaml` | Config file |
 | `AUTO_INDEX_ON_START` | false (code); `true` in Native install `mcp.json` | Background index on start via `reindex` coordinator. **Per-project `--stdio` only** — shared daemon workspaces ignore this env; call `reindex` manually |
 | `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | Returned in `check_update` JSON (stub; GitHub API not called yet) |
-| `HTTP_ADDR` | `:8080` | HTTP bind |
+| `HTTP_ADDR` | `127.0.0.1:8080` (per-project); `:8080` (daemon/Docker) | HTTP bind |
 | `API_TOKEN` | — | HTTP Bearer auth (set in `.env`) |
 | `ENV_PATH` | auto | Path to `.env` secrets file |
+| `MCP_PATH_CONTAINMENT` | `warn` | Path validation for `INDEX_DIR` / `CONFIG_PATH`: `strict` (fail startup), `warn` (log only), `off` (disable) |
+| `INDEXING_MAX_FILE_BYTES` | from yaml (`2097152`) | Override `indexing.max_file_bytes`; `0` = no limit |
+| `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES` | from yaml (`262144`) | Override `indexing.stream_chunk_threshold_bytes` |
+| `INDEXING_MAX_LINE_BYTES` | from yaml (`1048576`) | Override `indexing.max_line_bytes`; `0` = no limit |
+| `MANIFEST_WAL` | `auto` | SQLite manifest journal: `auto` (WAL off on cloud-sync paths), `on`, `off` |
+| `MCP_CRASH_REDACT_PATHS` | `true` | Redact absolute paths in `last_crash.json` stack |
+| `MCP_PROXY_LOG_DIR` | temp subdir | Crash report dir for `--stdio-proxy` |
+| `MCP_DAEMON_LOG_DIR` / `LOG_DIR` | `./logs` | Crash/log dir for shared daemon |
 
 Planned: `EMBEDDING_PROFILE` to override `active_profile` from yaml — not implemented yet.
+
+### Path containment
+
+Resolved `INDEX_DIR` and `CONFIG_PATH` must normally stay under `WORKSPACE_ROOT`. External index locations (e.g. Docker bind-mount outside project root) require an explicit allowlist in `daemon.yaml` (`path_allowlist`). Set `MCP_PATH_CONTAINMENT=strict` in per-project mode for fail-fast hardening.
 
 ## daemon.yaml (shared daemon)
 
@@ -172,6 +187,9 @@ Shared daemon registration. Template: [templates/daemon.yaml](../templates/daemo
 
 ```yaml
 max_open_workspaces: 10
+path_containment: warn   # strict | warn | off
+path_allowlist:          # optional; paths outside workspace root (Docker index mounts)
+  - /workspaces/ws-alpha-index
 
 workspaces:
   - id: my-app
@@ -183,6 +201,8 @@ workspaces:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `max_open_workspaces` | 10 | LRU cap on concurrently opened workspace handles |
+| `path_containment` | `warn` | Validate `index_dir` / `config_path` against workspace `root` |
+| `path_allowlist` | — | Absolute paths permitted outside `root` (typically external `index_dir` mounts) |
 | `workspaces[].id` | — | Stable workspace ID (used in HTTP/MCP proxy) |
 | `workspaces[].root` | — | Project root (`WORKSPACE_ROOT`) |
 | `workspaces[].index_dir` | `<root>/.mcp-…/data/index` | Index storage |

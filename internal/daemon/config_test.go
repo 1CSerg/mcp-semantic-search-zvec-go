@@ -66,6 +66,59 @@ func TestLoadConfigDuplicateID(t *testing.T) {
 	}
 }
 
+func TestLoadConfigExternalIndexWithAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "proj")
+	externalIndex := filepath.Join(dir, "external-index")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(externalIndex, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "daemon.yaml")
+	content := `path_containment: strict
+path_allowlist:
+  - ` + strings.ReplaceAll(externalIndex, `\`, `/`) + `
+workspaces:
+  - id: app-a
+    root: ` + strings.ReplaceAll(root, `\`, `/`) + `
+    index_dir: ` + strings.ReplaceAll(externalIndex, `\`, `/`) + `
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Workspaces[0].IndexDir != externalIndex {
+		t.Fatalf("index_dir=%q want %q", cfg.Workspaces[0].IndexDir, externalIndex)
+	}
+}
+
+func TestLoadConfigExternalIndexStrictWithoutAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "proj")
+	externalIndex := filepath.Join(dir, "external-index")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "daemon.yaml")
+	content := `path_containment: strict
+workspaces:
+  - id: app-a
+    root: ` + root + `
+    index_dir: ` + externalIndex + `
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(cfgPath); err == nil {
+		t.Fatal("expected strict containment error")
+	}
+}
+
 func TestRegistryUnknownWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "proj")
@@ -106,7 +159,7 @@ func TestRegistryListWorkspaces(t *testing.T) {
 	}
 	r := NewRegistry(cfg, t.Context())
 	defer r.Close()
-	list := r.ListWorkspaces()
+	list := r.ListWorkspaces(false)
 	if len(list) != 1 || list[0].ID != "ws1" || list[0].Open {
 		t.Fatalf("list=%+v", list)
 	}

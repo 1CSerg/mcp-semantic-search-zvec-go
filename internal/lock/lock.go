@@ -48,35 +48,37 @@ func (l *Lock) Path() string {
 	return l.path
 }
 
-// TryAcquire creates the lock exclusively or reclaims a stale lock.
+// TryAcquire creates the lock exclusively using an OS-level advisory lock.
 func (l *Lock) TryAcquire() error {
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
 		return fmt.Errorf("mkdir index dir: %w", err)
 	}
-	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err == nil {
-		return l.writeAndKeep(f)
-	}
-	if !os.IsExist(err) {
+	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
 		return fmt.Errorf("open lock: %w", err)
 	}
-	if !l.isStale() {
-		return fmt.Errorf("lock held by another process: %s", filepath.Base(l.path))
-	}
-	_ = os.Remove(l.path)
-	f, err = os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("reclaim lock: %w", err)
+	if err := lockExclusiveNB(f); err != nil {
+		_ = f.Close()
+		if isLockHeld(err) {
+			return fmt.Errorf("lock held by another process: %s", filepath.Base(l.path))
+		}
+		return fmt.Errorf("lock file: %w", err)
 	}
 	return l.writeAndKeep(f)
 }
 
 func (l *Lock) writeAndKeep(f *os.File) error {
 	pid := os.Getpid()
-	line := fmt.Sprintf("%d %d\n", pid, time.Now().Unix())
-	if _, err := f.WriteString(line); err != nil {
+	startTime := processStartUnix(pid)
+	line := formatLockPayload(pid, startTime, time.Now().Unix())
+	if err := f.Truncate(0); err != nil {
+		_ = unlock(f)
 		_ = f.Close()
-		_ = os.Remove(l.path)
+		return fmt.Errorf("truncate lock: %w", err)
+	}
+	if _, err := f.WriteString(line); err != nil {
+		_ = unlock(f)
+		_ = f.Close()
 		return fmt.Errorf("write lock: %w", err)
 	}
 	l.file = f
@@ -84,19 +86,33 @@ func (l *Lock) writeAndKeep(f *os.File) error {
 	return nil
 }
 
-// Heartbeat updates lock mtime for stale detection.
+// Heartbeat refreshes the timestamp in the lock payload for diagnostics.
+// OS-level locking does not require heartbeat for mutual exclusion.
 func (l *Lock) Heartbeat() error {
 	if l.file == nil {
 		return fmt.Errorf("lock not held")
 	}
-	now := time.Now()
-	return os.Chtimes(l.path, now, now)
+	pid := os.Getpid()
+	startTime := processStartUnix(pid)
+	line := formatLockPayload(pid, startTime, time.Now().Unix())
+	if err := l.file.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := l.file.Seek(0, 0); err != nil {
+		return err
+	}
+	if _, err := l.file.WriteString(line); err != nil {
+		return err
+	}
+	l.ownerContent = line
+	return nil
 }
 
 // Release closes and removes the lock file only if this instance still owns it.
 func (l *Lock) Release() error {
 	owner := l.ownerContent
 	if l.file != nil {
+		_ = unlock(l.file)
 		_ = l.file.Close()
 		l.file = nil
 	}
@@ -109,7 +125,8 @@ func (l *Lock) Release() error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		// Another process may hold an OS lock; cannot verify ownership safely.
+		return nil
 	}
 	if string(data) != owner {
 		return nil
@@ -133,13 +150,22 @@ func (l *Lock) IsLocked() bool {
 
 // HolderPID returns the PID recorded in the lock file, if any.
 func (l *Lock) HolderPID() (int, bool) {
-	data, err := os.ReadFile(l.path)
-	if err != nil {
-		return 0, false
+	var data []byte
+	if l.file != nil && l.ownerContent != "" {
+		data = []byte(l.ownerContent)
+	} else {
+		var err error
+		data, err = os.ReadFile(l.path)
+		if err != nil {
+			return 0, false
+		}
 	}
 	fields := strings.Fields(string(data))
 	if len(fields) == 0 {
 		return 0, false
+	}
+	if payload, ok := parseLockPayload(string(data)); ok {
+		return payload.PID, true
 	}
 	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 {
@@ -148,11 +174,21 @@ func (l *Lock) HolderPID() (int, bool) {
 	return pid, true
 }
 
-// ReclaimStale removes a stale lock if present.
+// ReclaimStale removes an orphaned lock file when no process holds the OS lock.
 func (l *Lock) ReclaimStale() bool {
-	if !l.isStale() {
+	if _, err := os.Stat(l.path); err != nil {
 		return false
 	}
+	f, err := os.OpenFile(l.path, os.O_RDWR, 0o600)
+	if err != nil {
+		return false
+	}
+	if err := lockExclusiveNB(f); err != nil {
+		_ = f.Close()
+		return false
+	}
+	_ = unlock(f)
+	_ = f.Close()
 	_ = os.Remove(l.path)
 	return true
 }
@@ -169,20 +205,22 @@ func (l *Lock) isStale() bool {
 	if err != nil {
 		return true
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) >= 1 {
-		if pid, err := strconv.Atoi(fields[0]); err == nil && pid > 0 {
-			if processAlive(pid) {
-				if len(fields) >= 2 {
-					if ts, err := strconv.ParseInt(fields[1], 10, 64); err == nil {
-						age := time.Since(time.Unix(ts, 0)).Seconds()
-						if age <= l.staleSecs {
-							return false
-						}
-					}
-				}
-			}
+	if payload, ok := parseLockPayload(string(data)); ok {
+		if !processAlive(payload.PID) {
+			return true
 		}
+		if payload.Legacy {
+			age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
+			return age > l.staleSecs
+		}
+		if !processMatchesLock(payload.PID, payload.StartTime) {
+			// PID is alive but its start time differs from the one recorded in
+			// the lock: the original holder died and the PID was reused by an
+			// unrelated process, so the lock is stale.
+			return true
+		}
+		age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
+		return age > l.staleSecs
 	}
 	age := time.Since(info.ModTime()).Seconds()
 	return age > l.staleSecs

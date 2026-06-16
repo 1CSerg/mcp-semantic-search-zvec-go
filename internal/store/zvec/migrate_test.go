@@ -30,6 +30,15 @@ func (s *wipeTrackingStore) WipeCollection() error {
 	return s.wipeErr
 }
 
+func testMigrationIdentity() IndexIdentity {
+	return IndexIdentity{
+		WorkspaceID:   "ws1",
+		WorkspaceRoot: "/proj",
+		Profile:       "smoke",
+		Dimensions:    128,
+	}
+}
+
 func TestNeedsZvecGoMigrationEmptyCurrent(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
@@ -133,6 +142,20 @@ func TestNeedsZvecGoMigrationManifestOnly(t *testing.T) {
 	}
 }
 
+func TestNeedsZvecGoMigrationCorruptMeta(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index_meta.json"), []byte("{invalid"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	need, meta, err := NeedsZvecGoMigration(dir, version.ZvecGoVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !need || meta == nil {
+		t.Fatalf("need=%v meta=%+v", need, meta)
+	}
+}
+
 func TestResetIndexForZvecMigration(t *testing.T) {
 	dir := t.TempDir()
 	if err := WriteIndexMeta(dir, IndexMeta{
@@ -162,7 +185,7 @@ func TestResetIndexForZvecMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ResetIndexForZvecMigration(dir, meta, store, version.ZvecGoVersion); err != nil {
+	if err := ResetIndexForZvecMigration(dir, meta, store, version.ZvecGoVersion, testMigrationIdentity()); err != nil {
 		t.Fatal(err)
 	}
 	if !store.wiped {
@@ -172,8 +195,47 @@ func TestResetIndexForZvecMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.ZvecGoVersion != version.ZvecGoVersion || updated.WorkspaceID != "ws1" {
-		t.Fatalf("meta=%+v", updated)
+	want := indexMetaFromIdentity(testMigrationIdentity(), version.ZvecGoVersion)
+	if updated.ZvecGoVersion != want.ZvecGoVersion ||
+		updated.WorkspaceID != want.WorkspaceID ||
+		updated.WorkspaceRoot != want.WorkspaceRoot ||
+		updated.CollectionName != want.CollectionName {
+		t.Fatalf("meta=%+v want=%+v", updated, want)
+	}
+}
+
+func TestResetIndexForZvecMigrationManifestOnly(t *testing.T) {
+	dir := t.TempDir()
+	manStore, err := manifest.Open(filepath.Join(dir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manStore.Upsert(manifest.FileEntry{
+		RelativePath: "a.go",
+		MtimeNs:      1,
+		Size:         1,
+		ChunkCount:   1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	identity := testMigrationIdentity()
+	if err := ResetIndexForZvecMigration(dir, nil, nil, version.ZvecGoVersion, identity); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := indexMetaFromIdentity(identity, version.ZvecGoVersion)
+	if meta.WorkspaceID != want.WorkspaceID ||
+		meta.WorkspaceRoot != want.WorkspaceRoot ||
+		meta.CollectionName != want.CollectionName ||
+		meta.ZvecGoVersion != want.ZvecGoVersion {
+		t.Fatalf("meta=%+v want=%+v", meta, want)
 	}
 }
 
@@ -182,14 +244,15 @@ func TestResetIndexForZvecMigrationNilStore(t *testing.T) {
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ResetIndexForZvecMigration(dir, nil, nil, version.ZvecGoVersion); err != nil {
+	if err := ResetIndexForZvecMigration(dir, nil, nil, version.ZvecGoVersion, testMigrationIdentity()); err != nil {
 		t.Fatal(err)
 	}
 	meta, err := ReadIndexMeta(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.ZvecGoVersion != version.ZvecGoVersion {
+	want := indexMetaFromIdentity(testMigrationIdentity(), version.ZvecGoVersion)
+	if meta.ZvecGoVersion != want.ZvecGoVersion || meta.WorkspaceID != want.WorkspaceID {
 		t.Fatalf("meta=%+v", meta)
 	}
 }
@@ -200,7 +263,7 @@ func TestResetIndexForZvecMigrationWipeError(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &wipeTrackingStore{wipeErr: errors.New("wipe failed")}
-	err := ResetIndexForZvecMigration(dir, &IndexMeta{ZvecGoVersion: "v0.3.1"}, store, version.ZvecGoVersion)
+	err := ResetIndexForZvecMigration(dir, &IndexMeta{ZvecGoVersion: "v0.3.1"}, store, version.ZvecGoVersion, testMigrationIdentity())
 	if err == nil || err.Error() != "wipe failed" {
 		t.Fatalf("err=%v", err)
 	}

@@ -11,21 +11,26 @@ import (
 )
 
 const (
-	DefaultHTTPAddr          = ":8080"
-	DefaultSearchLimit       = 10
-	DefaultLockStaleSeconds  = 300.0
-	DefaultStallSeconds      = 120.0
-	DefaultHeartbeatSeconds  = 15.0
-	DefaultSlowSearchSeconds = 5.0
-	DefaultDegradeRatio      = 2.0
-	DefaultStatsWindow       = 20
-	DefaultWatcherDebounce   = 2.0
-	DefaultPollInterval      = 10.0
-	DefaultInstallDirName    = ".mcp-semantic-search-zvec-go"
-	DefaultIndexSubdir       = "data/index"
-	DefaultLogsSubdir        = "data/logs"
-	DefaultEmbedMaxRetries   = 3
-	DefaultEmbedRetryBaseMS  = 500
+	DefaultHTTPAddrLocal             = "127.0.0.1:8080" // per-project --http (loopback)
+	DefaultHTTPAddrDaemon            = ":8080"          // daemon / Docker (all interfaces)
+	DefaultHTTPAddr                  = DefaultHTTPAddrDaemon
+	DefaultSearchLimit               = 10
+	DefaultLockStaleSeconds          = 300.0
+	DefaultStallSeconds              = 120.0
+	DefaultHeartbeatSeconds          = 15.0
+	DefaultSlowSearchSeconds         = 5.0
+	DefaultDegradeRatio              = 2.0
+	DefaultStatsWindow               = 20
+	DefaultWatcherDebounce           = 2.0
+	DefaultPollInterval              = 10.0
+	DefaultInstallDirName            = ".mcp-semantic-search-zvec-go"
+	DefaultIndexSubdir               = "data/index"
+	DefaultLogsSubdir                = "data/logs"
+	DefaultEmbedMaxRetries           = 3
+	DefaultEmbedRetryBaseMS          = 500
+	DefaultMaxFileBytes              = 2 * 1024 * 1024 // 2 MiB
+	DefaultStreamChunkThresholdBytes = 256 * 1024      // 256 KiB
+	DefaultMaxLineBytes              = 1024 * 1024     // 1 MiB
 )
 
 // Settings holds runtime configuration from environment and YAML.
@@ -69,11 +74,14 @@ type EmbeddingProfile struct {
 }
 
 type IndexingConfig struct {
-	Extensions       []string `yaml:"extensions"`
-	SkipDirs         []string `yaml:"skip_dirs"`
-	LockStaleSeconds float64  `yaml:"lock_stale_seconds"`
-	StallSeconds     float64  `yaml:"stall_seconds"`
-	HeartbeatSeconds float64  `yaml:"heartbeat_seconds"`
+	Extensions                []string `yaml:"extensions"`
+	SkipDirs                  []string `yaml:"skip_dirs"`
+	LockStaleSeconds          float64  `yaml:"lock_stale_seconds"`
+	StallSeconds              float64  `yaml:"stall_seconds"`
+	HeartbeatSeconds          float64  `yaml:"heartbeat_seconds"`
+	MaxFileBytes              int64    `yaml:"max_file_bytes"`
+	StreamChunkThresholdBytes int64    `yaml:"stream_chunk_threshold_bytes"`
+	MaxLineBytes              int64    `yaml:"max_line_bytes"`
 }
 
 type SearchConfig struct {
@@ -125,6 +133,15 @@ func applyAppDefaults(app *AppConfig) {
 	}
 	if app.Indexing.HeartbeatSeconds == 0 {
 		app.Indexing.HeartbeatSeconds = DefaultHeartbeatSeconds
+	}
+	if app.Indexing.MaxFileBytes == 0 {
+		app.Indexing.MaxFileBytes = DefaultMaxFileBytes
+	}
+	if app.Indexing.StreamChunkThresholdBytes == 0 {
+		app.Indexing.StreamChunkThresholdBytes = DefaultStreamChunkThresholdBytes
+	}
+	if app.Indexing.MaxLineBytes == 0 {
+		app.Indexing.MaxLineBytes = DefaultMaxLineBytes
 	}
 	if app.Search.SlowThresholdSeconds == 0 {
 		app.Search.SlowThresholdSeconds = DefaultSlowSearchSeconds
@@ -249,6 +266,21 @@ func applyEnvOverrides(app *AppConfig) {
 	if v := os.Getenv("INDEXING_STALL_SECONDS"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			app.Indexing.StallSeconds = f
+		}
+	}
+	if v := os.Getenv("INDEXING_MAX_FILE_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			app.Indexing.MaxFileBytes = n
+		}
+	}
+	if v := os.Getenv("INDEXING_STREAM_CHUNK_THRESHOLD_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			app.Indexing.StreamChunkThresholdBytes = n
+		}
+	}
+	if v := os.Getenv("INDEXING_MAX_LINE_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			app.Indexing.MaxLineBytes = n
 		}
 	}
 	if v := os.Getenv("FILE_WATCHER_ENABLED"); v != "" {

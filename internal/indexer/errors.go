@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
 var errFatalEmbed = errors.New("indexing embed")
@@ -27,8 +29,7 @@ func isFatalIndexingError(err error) bool {
 	if errors.Is(err, errFatalEmbed) {
 		return true
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "index_owner_mismatch") {
+	if errors.Is(err, zvec.ErrOwnerMismatch) {
 		return true
 	}
 	return false
@@ -42,10 +43,16 @@ func isPerFileSkippable(err error) bool {
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		return true
 	}
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "file is too small") ||
-		strings.Contains(msg, "corrupt") ||
-		strings.Contains(msg, "zvec error") {
+	if errors.Is(err, zvec.ErrOwnerMismatch) {
+		return false
+	}
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "file too large for indexing") ||
+		strings.Contains(lower, "line too long for indexing") ||
+		strings.Contains(lower, "file is too small") ||
+		strings.Contains(lower, "corrupt") ||
+		strings.Contains(lower, "zvec error") {
 		return true
 	}
 	// Unknown failures (manifest/DB writes, unexpected store errors) abort the job

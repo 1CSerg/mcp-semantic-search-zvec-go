@@ -117,23 +117,23 @@ type failingService struct {
 	service.Service
 }
 
-func (failingService) Ready() error {
+func (failingService) Ready(context.Context) error {
 	return errors.New("not ready")
 }
 
-func (failingService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+func (failingService) SemanticSearch(context.Context, service.SearchRequest) (json.RawMessage, error) {
 	return nil, errors.New("search failed")
 }
 
-func (failingService) GetIndexStatus() (json.RawMessage, error) {
+func (failingService) GetIndexStatus(context.Context) (json.RawMessage, error) {
 	return nil, errors.New("status failed")
 }
 
-func (failingService) CheckUpdate() (json.RawMessage, error) {
+func (failingService) CheckUpdate(context.Context) (json.RawMessage, error) {
 	return nil, errors.New("update failed")
 }
 
-func (failingService) Reindex(service.ReindexRequest) (json.RawMessage, error) {
+func (failingService) Reindex(context.Context, service.ReindexRequest) (json.RawMessage, error) {
 	return nil, errors.New("reindex failed")
 }
 
@@ -141,7 +141,7 @@ type indexingPartialService struct {
 	service.Service
 }
 
-func (indexingPartialService) SemanticSearch(service.SearchRequest) (json.RawMessage, error) {
+func (indexingPartialService) SemanticSearch(context.Context, service.SearchRequest) (json.RawMessage, error) {
 	return json.RawMessage(`{"results":[{"path":"a.go","score":0.9}],"indexing":{"running":true},"message":"results may be incomplete while indexing is in progress"}`), nil
 }
 
@@ -166,6 +166,51 @@ func TestHandlerSearchDuringIndexing(t *testing.T) {
 	results, _ := payload["results"].([]any)
 	if len(results) != 1 {
 		t.Fatalf("results=%v", payload["results"])
+	}
+}
+
+type embedUnreachableService struct {
+	service.Service
+}
+
+func (embedUnreachableService) Ready(context.Context) error {
+	return errors.New("embeddings unreachable: Get \"http://secret:8080/v1/embeddings\": connection refused")
+}
+
+func TestHandleReadySanitizesError(t *testing.T) {
+	settings := testSettings()
+	srv := New(settings, embedUnreachableService{Service: service.NewStub(settings)})
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "secret:8080") {
+		t.Fatalf("leaked endpoint in body=%s", body)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["error"] != "embeddings unreachable" {
+		t.Fatalf("error=%q", payload["error"])
+	}
+}
+
+func TestReadyPublicMessage(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{errors.New("indexing in progress"), "indexing in progress"},
+		{errors.New("embeddings unreachable: http://x"), "embeddings unreachable"},
+		{errors.New("boom http://secret"), "not ready"},
+	}
+	for _, tc := range cases {
+		if got := readyPublicMessage(tc.err); got != tc.want {
+			t.Fatalf("readyPublicMessage(%v)=%q want %q", tc.err, got, tc.want)
+		}
 	}
 }
 
@@ -220,23 +265,91 @@ func TestHandlerServiceErrors(t *testing.T) {
 }
 
 func TestDaemonModeWorkspaceRouting(t *testing.T) {
+	root := t.TempDir()
 	settings := testSettings()
 	registry := daemon.NewRegistry(daemon.Config{
 		MaxOpenWorkspaces: 2,
 		Workspaces: []daemon.WorkspaceSpec{{
 			ID:   "ws-a",
-			Root: t.TempDir(),
+			Root: root,
 		}},
 	}, t.Context())
 	defer registry.Close()
 	srv := NewDaemon(settings, registry)
 	handler := srv.Handler()
 
-	t.Run("workspaces list", func(t *testing.T) {
+	t.Run("workspaces list default omits paths", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/workspaces", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Workspaces []map[string]any `json:"workspaces"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if len(payload.Workspaces) != 1 {
+			t.Fatalf("workspaces=%v", payload.Workspaces)
+		}
+		ws := payload.Workspaces[0]
+		if ws["id"] != "ws-a" {
+			t.Fatalf("id=%v", ws["id"])
+		}
+		for _, key := range []string{"root", "index_dir", "config_path"} {
+			if _, ok := ws[key]; ok {
+				t.Fatalf("unexpected path key %q in default response: %v", key, ws)
+			}
+		}
+	})
+
+	t.Run("include_paths without token", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/workspaces?include_paths=1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Workspaces []map[string]any `json:"workspaces"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		ws := payload.Workspaces[0]
+		if ws["root"] == "" || ws["index_dir"] == "" || ws["config_path"] == "" {
+			t.Fatalf("expected paths in response: %v", ws)
+		}
+	})
+
+	t.Run("include_paths requires bearer when token set", func(t *testing.T) {
+		authSettings := testSettings()
+		authSettings.APIToken = "secret-token"
+		authSrv := NewDaemon(authSettings, registry)
+		authHandler := authSrv.Handler()
+
+		rec := httptest.NewRecorder()
+		authHandler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/workspaces?include_paths=1", nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/v1/workspaces?include_paths=1", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rec = httptest.NewRecorder()
+		authHandler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var payload struct {
+			Workspaces []map[string]any `json:"workspaces"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		ws := payload.Workspaces[0]
+		if ws["root"] == "" {
+			t.Fatalf("expected root in authed include_paths response: %v", ws)
 		}
 	})
 

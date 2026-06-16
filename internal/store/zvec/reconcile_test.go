@@ -1,9 +1,9 @@
 package zvec
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
@@ -55,7 +55,7 @@ func TestIndexIdentityMismatchWorkspaceID(t *testing.T) {
 	if meta.WorkspaceID != "ws-a" {
 		t.Fatalf("meta=%+v", meta)
 	}
-	if !strings.Contains(err.Error(), "index_owner_mismatch") {
+	if !errors.Is(err, ErrOwnerMismatch) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -80,7 +80,7 @@ func TestReconcileIndexMismatchWithoutForce(t *testing.T) {
 		Dimensions:    3,
 	}
 	err := ReconcileIndex(dir, identity, false, nil)
-	if err == nil || !strings.Contains(err.Error(), "index_owner_mismatch") {
+	if err == nil || !errors.Is(err, ErrOwnerMismatch) {
 		t.Fatalf("err=%v", err)
 	}
 }
@@ -248,7 +248,7 @@ func TestReconcileIndexDetectsRootMoveWithPinnedID(t *testing.T) {
 		Dimensions:    3,
 	}
 	err := ReconcileIndex(dir, identity, false, nil)
-	if err == nil || !strings.Contains(err.Error(), "index_owner_mismatch") {
+	if err == nil || !errors.Is(err, ErrOwnerMismatch) {
 		t.Fatalf("expected collection mismatch, err=%v", err)
 	}
 }

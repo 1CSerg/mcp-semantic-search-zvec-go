@@ -172,7 +172,7 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetIndexStatus: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestPhase1SemanticSearch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := p.SemanticSearch(SearchRequest{Query: "hello"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"})
 	if err != nil {
 		t.Fatalf("SemanticSearch: %v", err)
 	}
@@ -216,6 +216,19 @@ func TestPhase1SemanticSearch(t *testing.T) {
 	}
 	if _, ok := payload["message"]; !ok {
 		t.Fatalf("expected zvec stub message, payload=%v", payload)
+	}
+}
+
+func TestSemanticSearchContextCanceled(t *testing.T) {
+	p, err := NewPhase1(phase1Settings(t, "http://127.0.0.1:9/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = p.SemanticSearch(ctx, SearchRequest{Query: "hello"})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -243,7 +256,7 @@ func TestPhase1SemanticSearchWithMockZvec(t *testing.T) {
 		}},
 	}
 
-	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
 	if err != nil {
 		t.Fatalf("SemanticSearch: %v", err)
 	}
@@ -267,7 +280,7 @@ func TestPhase1SemanticSearchNoEmbed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.SemanticSearch(SearchRequest{Query: "hello"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"})
 	if err != nil {
 		t.Fatalf("SemanticSearch: %v", err)
 	}
@@ -290,7 +303,7 @@ func TestPhase1SemanticSearchEmbedError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.SemanticSearch(SearchRequest{Query: "hello"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"})
 	if err != nil {
 		t.Fatalf("SemanticSearch: %v", err)
 	}
@@ -318,13 +331,13 @@ func TestPhase1ReindexCheckUpdateReady(t *testing.T) {
 	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Ready(); err != nil {
+	if err := p.Ready(context.Background()); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
-	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
+	if _, err := p.Reindex(context.Background(), ReindexRequest{Force: true}); err != nil {
 		t.Fatalf("Reindex: %v", err)
 	}
-	raw, err := p.CheckUpdate()
+	raw, err := p.CheckUpdate(context.Background())
 	if err != nil {
 		t.Fatalf("CheckUpdate: %v", err)
 	}
@@ -380,7 +393,7 @@ func TestPhase1GetIndexStatusWithManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,10 +415,10 @@ func TestSemanticSearchWhileIndexing(t *testing.T) {
 	}
 	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
 	p.zvec = &mockZvecStore{hits: []zvec.SearchHit{{Path: "internal/auth.go", Score: 0.9, Snippet: "auth"}}}
-	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
+	if _, err := p.Reindex(context.Background(), ReindexRequest{Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -433,7 +446,7 @@ func TestReindexNoCoordinator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.Reindex(ReindexRequest{Force: true})
+	raw, err := p.Reindex(context.Background(), ReindexRequest{Force: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,10 +466,10 @@ func TestReadyWhenIndexing(t *testing.T) {
 	}
 	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
 	p.zvec = &mockZvecStore{}
-	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
+	if _, err := p.Reindex(context.Background(), ReindexRequest{Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Ready(); err == nil {
+	if err := p.Ready(context.Background()); err == nil {
 		t.Fatal("expected indexing in progress error")
 	}
 }
@@ -469,10 +482,10 @@ func TestGetIndexStatusSearchPerformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.zvec = &mockZvecStore{hits: []zvec.SearchHit{{Path: "a.go", Score: 1, Snippet: "x"}}}
-	if _, err := p.SemanticSearch(SearchRequest{Query: "hello"}); err != nil {
+	if _, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +514,7 @@ func TestStartFileWatcherEnabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p.StartFileWatcher(ctx)
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +544,7 @@ func TestStartFileWatcherDisabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	p.StartFileWatcher(ctx)
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +570,7 @@ func TestSemanticSearchZvecGenericError(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.zvec = &mockZvecStore{err: errors.New("search failed")}
-	raw, err := p.SemanticSearch(SearchRequest{Query: "x"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +596,7 @@ func TestSemanticSearchIndexingWithoutCoordinator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.SemanticSearch(SearchRequest{Query: "auth"})
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
@@ -608,10 +621,10 @@ func TestReindexAlreadyRunning(t *testing.T) {
 	}
 	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
 	p.zvec = &mockZvecStore{}
-	if _, err := p.Reindex(ReindexRequest{Force: true}); err != nil {
+	if _, err := p.Reindex(context.Background(), ReindexRequest{Force: true}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.Reindex(ReindexRequest{Force: true})
+	raw, err := p.Reindex(context.Background(), ReindexRequest{Force: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -651,7 +664,7 @@ func TestGetIndexStatusProgressWithoutCoordinator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -678,7 +691,7 @@ func TestSemanticSearchPathGlob(t *testing.T) {
 	}
 	glob := "*.go"
 	p.zvec = &mockZvecStore{hits: []zvec.SearchHit{{Path: "a.go", Score: 1, Snippet: "x"}}}
-	if _, err := p.SemanticSearch(SearchRequest{Query: "x", PathGlob: &glob}); err != nil {
+	if _, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "x", PathGlob: &glob}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -704,7 +717,7 @@ func TestReadyNoIndexMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Ready(); err == nil || err.Error() != "index not built yet" {
+	if err := p.Ready(context.Background()); err == nil || err.Error() != "index not built yet" {
 		t.Fatalf("Ready: %v", err)
 	}
 }
@@ -720,7 +733,7 @@ func TestReadyEmbeddingsUnreachable(t *testing.T) {
 	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Ready(); err == nil || !strings.Contains(err.Error(), "embeddings unreachable") {
+	if err := p.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "embeddings unreachable") {
 		t.Fatalf("Ready: %v", err)
 	}
 }
@@ -739,7 +752,7 @@ func TestReadyMissingCollection(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.zvec = &mockZvecStore{openErr: zvec.ErrCollectionMissing}
-	if err := p.Ready(); err == nil || err.Error() != "index not built yet" {
+	if err := p.Ready(context.Background()); err == nil || err.Error() != "index not built yet" {
 		t.Fatalf("Ready: %v", err)
 	}
 }
@@ -778,6 +791,9 @@ func phase1MigrationSettings(t *testing.T, autoIndex bool) (*config.Settings, st
 		AutoIndexOnStart: autoIndex,
 		App: config.AppConfig{
 			ActiveProfile: "test",
+			Profiles: map[string]config.EmbeddingProfile{
+				"test": {Provider: "openai_compatible", Dimensions: 3},
+			},
 			Indexing: config.IndexingConfig{
 				Extensions:       []string{".go"},
 				LockStaleSeconds: 300,
@@ -840,7 +856,7 @@ func TestGetIndexStatusZvecGoVersions(t *testing.T) {
 			Dimensions:    3,
 		},
 	}
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -889,10 +905,56 @@ func TestPrepareStartupMigratesWithAutoIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.ZvecGoVersion != version.ZvecGoVersion {
+	if meta.ZvecGoVersion != version.ZvecGoVersion || meta.WorkspaceID != "ws1" {
 		t.Fatalf("meta=%+v", meta)
 	}
 	waitCoordinatorIdle(t, p)
+}
+
+func TestPrepareStartupMigratesManifestOnly(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manStore, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCollection := zvec.CollectionName(settings.WorkspaceRoot, settings.App.ActiveProfile, profile.Dimensions)
+	if meta.WorkspaceID != settings.WorkspaceID ||
+		meta.WorkspaceRoot != settings.WorkspaceRoot ||
+		meta.CollectionName != wantCollection ||
+		meta.ZvecGoVersion != version.ZvecGoVersion {
+		t.Fatalf("meta=%+v", meta)
+	}
+	if coord.IsRunning() {
+		t.Fatal("expected no background reindex when AUTO_INDEX_ON_START=false")
+	}
 }
 
 func TestPrepareStartupMigratesWithoutAutoIndex(t *testing.T) {
@@ -923,6 +985,13 @@ func TestPrepareStartupMigratesWithoutAutoIndex(t *testing.T) {
 
 	if !store.wasWipeCalled() {
 		t.Fatal("expected wipe during migration")
+	}
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ZvecGoVersion != version.ZvecGoVersion || meta.WorkspaceID != "ws1" {
+		t.Fatalf("meta=%+v", meta)
 	}
 	if coord.IsRunning() {
 		t.Fatal("expected no background reindex when AUTO_INDEX_ON_START=false")
@@ -1055,7 +1124,7 @@ func TestGetIndexStatusStartupMsg(t *testing.T) {
 	}
 	p.PrepareStartup()
 
-	raw, err := p.GetIndexStatus()
+	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1076,6 +1145,7 @@ func TestPrepareStartupNilCoordinator(t *testing.T) {
 
 func TestPrepareStartupMigrationCheckError(t *testing.T) {
 	settings, indexDir := phase1MigrationSettings(t, true)
+	settings.App.Profiles = nil
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

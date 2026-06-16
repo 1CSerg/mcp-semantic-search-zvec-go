@@ -22,14 +22,15 @@ import (
 
 // Phase1 wires manifest read, embeddings, zvec store, and the indexer.
 type Phase1 struct {
-	Settings    *config.Settings
-	embed       embeddings.Embedder
-	zvec        zvec.Store
-	zvecCfg     zvec.Config
-	coordinator *indexer.Coordinator
-	searchStats *SearchStats
-	watcherInst *watcher.Watcher
-	startupMsg  string
+	Settings     *config.Settings
+	embed        embeddings.Embedder
+	zvec         zvec.Store
+	zvecCfg      zvec.Config
+	coordinator  *indexer.Coordinator
+	searchStats  *SearchStats
+	watcherInst  *watcher.Watcher
+	startupMsg   string
+	lifecycleCtx context.Context
 }
 
 // NewPhase1 creates the production service (zvec + indexer).
@@ -67,18 +68,31 @@ func NewPhase1(settings *config.Settings) (*Phase1, error) {
 	return p, nil
 }
 
+// SetLifecycleContext binds process/workspace shutdown context for background indexing.
+func (p *Phase1) SetLifecycleContext(ctx context.Context) {
+	p.lifecycleCtx = ctx
+	if p.coordinator != nil {
+		p.coordinator.SetLifecycleContext(ctx)
+	}
+}
+
 func (p *Phase1) manifestStats() (files, chunks int) {
 	dbPath := filepath.Join(p.Settings.IndexDir, "manifest.db")
 	if _, err := os.Stat(dbPath); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("manifest stat failed", "path", dbPath, "err", err)
+		}
 		return 0, 0
 	}
 	store, err := manifest.Open(dbPath)
 	if err != nil {
+		slog.Warn("manifest open for stats failed", "path", dbPath, "err", err)
 		return 0, 0
 	}
 	defer store.Close()
 	f, c, err := store.Stats()
 	if err != nil {
+		slog.Warn("manifest stats failed", "path", dbPath, "err", err)
 		return 0, 0
 	}
 	return f, c
@@ -103,7 +117,10 @@ func (p *Phase1) isIndexingRunning() bool {
 	return p.indexingProgress().Running
 }
 
-func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
+func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	start := time.Now()
 	limit := req.Limit
 	if limit == 0 && req.TopK != nil {
@@ -123,14 +140,20 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 		})
 	}
 
-	ctx := context.Background()
 	vector, err := p.embed.EmbedQuery(ctx, req.Query)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return marshal(map[string]any{
 			"query":   req.Query,
 			"results": []any{},
 			"message": fmt.Sprintf("embedding failed: %v", err),
 		})
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	hits, err := p.zvec.Search(vector, limit, derefString(req.PathGlob))
@@ -188,7 +211,10 @@ func (p *Phase1) SemanticSearch(req SearchRequest) (json.RawMessage, error) {
 	return marshal(payload)
 }
 
-func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
+func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	files, chunks := p.manifestStats()
 	profile, profileErr := p.Settings.ActiveProfile()
 
@@ -225,7 +251,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 			filesFailed = int(n)
 		}
 	}
-	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks, zvecOpenOK)
+	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks, zvecOpenOK, len(idx.SkippedPaths))
 	payload := map[string]any{
 		"workspace_root":          root,
 		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),
@@ -271,7 +297,10 @@ func (p *Phase1) indexZvecGoVersion() string {
 	return meta.ZvecGoVersion
 }
 
-func (p *Phase1) Reindex(req ReindexRequest) (json.RawMessage, error) {
+func (p *Phase1) Reindex(ctx context.Context, req ReindexRequest) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if p.coordinator == nil {
 		return marshal(map[string]any{
 			"started": false,
@@ -305,7 +334,10 @@ func (p *Phase1) Reindex(req ReindexRequest) (json.RawMessage, error) {
 	})
 }
 
-func (p *Phase1) CheckUpdate() (json.RawMessage, error) {
+func (p *Phase1) CheckUpdate(ctx context.Context) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return marshal(map[string]any{
 		"installed_version": version.Version,
 		"latest_version":    version.Version,
@@ -314,7 +346,10 @@ func (p *Phase1) CheckUpdate() (json.RawMessage, error) {
 	})
 }
 
-func (p *Phase1) Ready() error {
+func (p *Phase1) Ready(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if p.isIndexingRunning() {
 		return fmt.Errorf("indexing in progress")
 	}
@@ -331,7 +366,7 @@ func (p *Phase1) Ready() error {
 	if err := zvec.ValidateIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.App.ActiveProfile, profile.Dimensions); err != nil {
 		return err
 	}
-	if err := p.embed.HealthCheck(context.Background()); err != nil {
+	if err := p.embed.HealthCheck(ctx); err != nil {
 		return fmt.Errorf("embeddings unreachable: %w", err)
 	}
 	if err := p.openZvecWithRecovery(); err != nil {
@@ -429,7 +464,19 @@ func (p *Phase1) runZvecGoMigrationIfNeeded() bool {
 	}
 	slog.Info("zvec-go version changed; resetting index", "from", from, "to", version.ZvecGoVersion)
 
-	if err := zvec.ResetIndexForZvecMigration(p.Settings.IndexDir, meta, p.zvec, version.ZvecGoVersion); err != nil {
+	profile, err := p.Settings.ActiveProfile()
+	if err != nil {
+		slog.Warn("zvec-go migration reset skipped", "err", err)
+		return false
+	}
+	identity := zvec.IndexIdentity{
+		WorkspaceID:   p.Settings.WorkspaceID,
+		WorkspaceRoot: p.Settings.WorkspaceRoot,
+		Profile:       p.Settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+
+	if err := zvec.ResetIndexForZvecMigration(p.Settings.IndexDir, meta, p.zvec, version.ZvecGoVersion, identity); err != nil {
 		slog.Warn("zvec-go migration reset failed", "err", err)
 		return false
 	}

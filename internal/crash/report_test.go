@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,58 @@ func TestWriteMkdirBlocked(t *testing.T) {
 	}
 }
 
+func TestSanitizeStackRedactsRoot(t *testing.T) {
+	root := filepath.Join("/Users", "alice", "project")
+	stack := "panic at " + root + "/internal/foo.go:42"
+	got := SanitizeStack(stack, root)
+	if got == stack {
+		t.Fatalf("stack not redacted: %q", got)
+	}
+	if !contains(got, "<redacted>") {
+		t.Fatalf("got=%q", got)
+	}
+}
+
+func TestWriteWithOptionsRedactsWorkspaceRoot(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "secret-workspace")
+	if err := WriteWithOptions(dir, "0.1.0", fmtError("boom"), WriteOptions{
+		RedactPaths:   true,
+		WorkspaceRoot: root,
+		WorkspaceID:   "ws-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "last_crash.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.WorkspaceRoot == root {
+		t.Fatalf("workspace root leaked: %q", report.WorkspaceRoot)
+	}
+	if report.WorkspaceID != "ws-1" {
+		t.Fatalf("workspace_id=%q", report.WorkspaceID)
+	}
+	if contains(report.Stack, root) {
+		t.Fatalf("stack leaked path: %q", report.Stack)
+	}
+}
+
+func TestSanitizeStackUsesStringsContains(t *testing.T) {
+	got := SanitizeStack("at /Users/alice/foo.go", "/Users/alice")
+	if !strings.Contains(got, "<redacted>") {
+		t.Fatalf("got=%q", got)
+	}
+}
+
 type fmtError string
 
 func (e fmtError) Error() string { return string(e) }
+
+func contains(s, sub string) bool {
+	return strings.Contains(s, sub)
+}

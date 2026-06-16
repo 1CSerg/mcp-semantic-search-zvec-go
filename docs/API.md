@@ -149,17 +149,34 @@ Example:
 
 List registered workspaces in shared daemon mode (`--daemon`). Returns `501` in per-project mode.
 
-Response:
+By default the response includes only workspace `id` and whether the handle is currently `open` — no filesystem paths.
+
+Query parameter `include_paths=1` (or `true` / `yes`) adds absolute `root`, `index_dir`, and `config_path` from `daemon.yaml`. When `API_TOKEN` is set, `include_paths` requires a valid `Authorization: Bearer` header (same as other endpoints).
+
+Default response:
 
 ```json
 {
   "workspaces": [
     {
       "id": "my-app",
+      "open": true
+    }
+  ]
+}
+```
+
+With `?include_paths=1`:
+
+```json
+{
+  "workspaces": [
+    {
+      "id": "my-app",
+      "open": true,
       "root": "/path/to/my-app",
       "index_dir": "/path/to/my-app/.mcp-semantic-search-zvec-go/data/index",
-      "config_path": "/path/to/my-app/.mcp-semantic-search-zvec-go/config.yaml",
-      "open": true
+      "config_path": "/path/to/my-app/.mcp-semantic-search-zvec-go/config.yaml"
     }
   ]
 }
@@ -175,7 +192,7 @@ No flags → `--stdio` (per-project MCP). `--version` / `-version` prints versio
 |------|------|-------------|
 | `--stdio` | Per-project | MCP server over stdin/stdout |
 | `--http` | Per-project | HTTP REST API |
-| `--http-addr` | Both | Listen address (default `:8080` or `server.http_addr`) |
+| `--http-addr` | Both | Listen address (default `127.0.0.1:8080` per-project, `:8080` daemon, or `server.http_addr`) |
 | `--config` | Per-project | Override `CONFIG_PATH` |
 | `--daemon` | Shared daemon | Multi-workspace HTTP daemon (implies `--http`) |
 | `--daemon-config` | Shared daemon | Path to `daemon.yaml` (or `WORKSPACES_CONFIG`) |

@@ -36,7 +36,7 @@ func TestLoadWithOptionsGitHubRepoDefault(t *testing.T) {
 }
 
 func TestLoadWorkspaceFromSpecEmptyID(t *testing.T) {
-	if _, err := LoadWorkspaceFromSpec("", t.TempDir(), "", ""); err == nil {
+	if _, err := LoadWorkspaceFromSpec("", t.TempDir(), "", "", LoadOptions{}); err == nil {
 		t.Fatal("expected error")
 	}
 }

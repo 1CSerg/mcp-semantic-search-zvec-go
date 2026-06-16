@@ -31,7 +31,7 @@ func NeedsZvecGoMigration(indexDir, current string) (bool, *IndexMeta, error) {
 
 	meta, err := ReadIndexMeta(indexDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if os.IsNotExist(err) || IndexHasData(indexDir) {
 			return true, &IndexMeta{}, nil
 		}
 		return false, nil, err
@@ -42,11 +42,8 @@ func NeedsZvecGoMigration(indexDir, current string) (bool, *IndexMeta, error) {
 	return true, meta, nil
 }
 
-// ResetIndexForZvecMigration wipes zvec data and manifest, then records the new zvec-go version in index_meta.
-func ResetIndexForZvecMigration(indexDir string, meta *IndexMeta, store Store, newVersion string) error {
-	if meta == nil {
-		meta = &IndexMeta{}
-	}
+// ResetIndexForZvecMigration wipes zvec data and manifest, then writes full index_meta for identity.
+func ResetIndexForZvecMigration(indexDir string, _ *IndexMeta, store Store, newVersion string, identity IndexIdentity) error {
 	if store != nil {
 		if err := store.WipeCollection(); err != nil && !errors.Is(err, ErrNotLinked) {
 			return err
@@ -68,6 +65,5 @@ func ResetIndexForZvecMigration(indexDir string, meta *IndexMeta, store Store, n
 		}
 	}
 
-	meta.ZvecGoVersion = newVersion
-	return WriteIndexMeta(indexDir, *meta)
+	return WriteIndexMeta(indexDir, indexMetaFromIdentity(identity, newVersion))
 }

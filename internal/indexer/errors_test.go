@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
 func TestIsPerFileSkippable(t *testing.T) {
@@ -25,7 +27,7 @@ func TestIsPerFileSkippable(t *testing.T) {
 		context.Canceled,
 		context.DeadlineExceeded,
 		fatalEmbedErr(errors.New("boom")),
-		errors.New("index_owner_mismatch: ..."),
+		fmt.Errorf("%w: details", zvec.ErrOwnerMismatch),
 		errors.New("manifest get foo: database is locked"),
 		errors.New("some unexpected store failure"),
 	}
@@ -33,5 +35,15 @@ func TestIsPerFileSkippable(t *testing.T) {
 		if isPerFileSkippable(err) {
 			t.Fatalf("expected fatal (non-skippable): %v", err)
 		}
+	}
+}
+
+func TestIsFatalIndexingErrorOwnerMismatch(t *testing.T) {
+	err := fmt.Errorf("%w: index belongs to workspace_id %q, current is %q", zvec.ErrOwnerMismatch, "ws-a", "ws-b")
+	if !isFatalIndexingError(err) {
+		t.Fatal("expected fatal owner mismatch")
+	}
+	if !errors.Is(err, zvec.ErrOwnerMismatch) {
+		t.Fatal("expected ErrOwnerMismatch in chain")
 	}
 }

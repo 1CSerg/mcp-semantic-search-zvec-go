@@ -57,7 +57,7 @@ func TestRegistryOpenWorkspace(t *testing.T) {
 	if _, err := r.GetService("ws-a"); err != nil {
 		t.Fatalf("open ws-a: %v", err)
 	}
-	list := r.ListWorkspaces()
+	list := r.ListWorkspaces(false)
 	openCount := 0
 	for _, ws := range list {
 		if ws.Open {
@@ -71,7 +71,7 @@ func TestRegistryOpenWorkspace(t *testing.T) {
 	if _, err := r.GetService("ws-b"); err != nil {
 		t.Fatalf("open ws-b: %v", err)
 	}
-	list = r.ListWorkspaces()
+	list = r.ListWorkspaces(false)
 	openCount = 0
 	var openIDs []string
 	for _, ws := range list {
@@ -82,6 +82,38 @@ func TestRegistryOpenWorkspace(t *testing.T) {
 	}
 	if openCount != 1 {
 		t.Fatalf("expected LRU to keep one open, got %d (%v)", openCount, openIDs)
+	}
+}
+
+func TestRegistryListWorkspacesIncludePaths(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "proj")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{
+		Workspaces: []WorkspaceSpec{{ID: "ws1", Root: root}},
+	}
+	if err := normalizeConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRegistry(cfg, t.Context())
+	defer r.Close()
+
+	summary := r.ListWorkspaces(false)
+	if len(summary) != 1 {
+		t.Fatalf("summary len=%d", len(summary))
+	}
+	if summary[0].Root != "" || summary[0].IndexDir != "" || summary[0].ConfigPath != "" {
+		t.Fatalf("summary should omit paths: %+v", summary[0])
+	}
+
+	full := r.ListWorkspaces(true)
+	if len(full) != 1 {
+		t.Fatalf("full len=%d", len(full))
+	}
+	if full[0].Root == "" || full[0].IndexDir == "" || full[0].ConfigPath == "" {
+		t.Fatalf("full should include paths: %+v", full[0])
 	}
 }
 
@@ -108,7 +140,7 @@ func TestRegistryCloseAll(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Close()
-	list := r.ListWorkspaces()
+	list := r.ListWorkspaces(false)
 	for _, ws := range list {
 		if ws.Open {
 			t.Fatalf("workspace still open after Close: %+v", ws)

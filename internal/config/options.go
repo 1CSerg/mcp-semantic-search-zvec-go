@@ -23,6 +23,10 @@ type LoadOptions struct {
 	Secrets map[string]string
 	// UseProcessEnv merges process environment for overrides and secret lookup (default per-project mode).
 	UseProcessEnv bool
+	// PathContainment controls validation of INDEX_DIR/CONFIG_PATH against workspace root.
+	PathContainment PathContainmentMode
+	// PathAllowlist permits paths outside workspace root (daemon Docker index mounts).
+	PathAllowlist []string
 }
 
 // Load reads environment variables and YAML config (per-project compatibility wrapper).
@@ -88,6 +92,11 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 		return nil, err
 	}
 
+	mode := resolvePathContainmentMode(opts)
+	if err := validateSettingsPaths(workspace, indexDir, configPath, mode, opts.PathAllowlist); err != nil {
+		return nil, err
+	}
+
 	secrets := cloneSecrets(opts.Secrets)
 	if secrets == nil {
 		secrets = make(map[string]string)
@@ -113,7 +122,7 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 		autoIndex = strings.EqualFold(envOr("AUTO_INDEX_ON_START", "false"), "true")
 	}
 
-	httpAddr := DefaultHTTPAddr
+	httpAddr := DefaultHTTPAddrLocal
 	if app.Server.HTTPAddr != "" {
 		httpAddr = app.Server.HTTPAddr
 	}
@@ -140,6 +149,10 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 		} else {
 			githubRepo = "1CSerg/mcp-semantic-search-zvec-go"
 		}
+	}
+
+	if err := validateSettingsPaths(workspace, indexDir, configPath, resolvePathContainmentMode(opts), opts.PathAllowlist); err != nil {
+		return nil, err
 	}
 
 	return &Settings{
@@ -231,7 +244,7 @@ func lookupSecret(secrets map[string]string, key string, useProcessEnv bool) str
 }
 
 // LoadWorkspaceFromSpec loads one daemon workspace entry.
-func LoadWorkspaceFromSpec(id, root, indexDir, configPath string) (*Settings, error) {
+func LoadWorkspaceFromSpec(id, root, indexDir, configPath string, opts LoadOptions) (*Settings, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, fmt.Errorf("workspace id is required")
 	}
@@ -240,12 +253,16 @@ func LoadWorkspaceFromSpec(id, root, indexDir, configPath string) (*Settings, er
 		return nil, fmt.Errorf("workspace root: %w", err)
 	}
 	auto := false
-	return LoadWithOptions(LoadOptions{
-		WorkspaceRoot:    rootAbs,
-		WorkspaceID:      id,
-		IndexDir:         indexDir,
-		ConfigPath:       configPath,
-		AutoIndexOnStart: &auto,
-		UseProcessEnv:    false,
-	})
+	if opts.AutoIndexOnStart != nil {
+		auto = *opts.AutoIndexOnStart
+	}
+	opts.WorkspaceRoot = rootAbs
+	opts.WorkspaceID = id
+	opts.IndexDir = indexDir
+	opts.ConfigPath = configPath
+	opts.UseProcessEnv = false
+	if opts.AutoIndexOnStart == nil {
+		opts.AutoIndexOnStart = &auto
+	}
+	return LoadWithOptions(opts)
 }

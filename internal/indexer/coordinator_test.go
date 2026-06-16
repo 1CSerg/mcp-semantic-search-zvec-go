@@ -633,3 +633,54 @@ func TestCoordinatorSkipsPerFileZvecError(t *testing.T) {
 		t.Fatal("failed file should not be in manifest")
 	}
 }
+
+func TestCoordinatorRunStopsOnLifecycleCancel(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		name := filepath.Join(root, "pkg", fmt.Sprintf("file_%d.go", i))
+		if err := os.WriteFile(name, []byte("package pkg\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+				HeartbeatSeconds: 15,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+
+	lifeCtx, cancel := context.WithCancel(context.Background())
+	c.SetLifecycleContext(lifeCtx)
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) && c.IsRunning() {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if c.IsRunning() {
+		t.Fatal("expected indexing to stop after lifecycle cancel")
+	}
+	cur := c.CurrentProgress()
+	if cur.Error == "" && cur.State != StateIdle {
+		t.Fatalf("progress=%+v", cur)
+	}
+}

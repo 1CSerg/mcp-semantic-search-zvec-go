@@ -68,17 +68,22 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token := s.settings.APIToken; token != "" {
-			auth := r.Header.Get("Authorization")
-			expected := "Bearer " + token
-			if subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) != 1 {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-				return
-			}
+		if token := s.settings.APIToken; token != "" && !bearerAuthorized(r, token) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
 		}
 		w.Header().Set("X-Server-Version", version.Version)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func bearerAuthorized(r *http.Request, token string) bool {
+	if token == "" {
+		return true
+	}
+	auth := r.Header.Get("Authorization")
+	expected := "Bearer " + token
+	return subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) == 1
 }
 
 // ListenAndServe starts the HTTP server until ctx is cancelled.
@@ -123,18 +128,19 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		writeWorkspaceError(w, err)
 		return
 	}
-	if err := svc.Ready(); err != nil {
+	if err := svc.Ready(r.Context()); err != nil {
+		slog.Warn("ready check failed", "err", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
-			"error":  err.Error(),
+			"error":  readyPublicMessage(err),
 		})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
 
-func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
-	raw, err := s.svc.CheckUpdate()
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.svc.CheckUpdate(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -158,7 +164,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeWorkspaceError(w, err)
 		return
 	}
-	raw, err := svc.SemanticSearch(req)
+	raw, err := svc.SemanticSearch(r.Context(), req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -173,7 +179,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeWorkspaceError(w, err)
 		return
 	}
-	raw, err := svc.GetIndexStatus()
+	raw, err := svc.GetIndexStatus(r.Context())
 	if err != nil {
 		writeError(w, err)
 		return
@@ -195,7 +201,7 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 		writeWorkspaceError(w, err)
 		return
 	}
-	raw, err := svc.Reindex(req)
+	raw, err := svc.Reindex(r.Context(), req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -203,7 +209,7 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 	writeRawJSON(w, http.StatusOK, raw)
 }
 
-func (s *Server) handleWorkspaces(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	if !s.daemon || s.registry == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{
 			"error":   "shared daemon workspace list — per-project mode",
@@ -211,9 +217,23 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, _ *http.Request) {
 		})
 		return
 	}
+	includePaths := queryTruthy(r.URL.Query().Get("include_paths"))
+	if includePaths && s.settings.APIToken != "" && !bearerAuthorized(r, s.settings.APIToken) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"workspaces": s.registry.ListWorkspaces(),
+		"workspaces": s.registry.ListWorkspaces(includePaths),
 	})
+}
+
+func queryTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) resolveService(r *http.Request, workspaceID string) (service.Service, error) {
@@ -273,9 +293,52 @@ func writeRawJSON(w http.ResponseWriter, status int, raw json.RawMessage) {
 	_, _ = w.Write(raw)
 }
 
+// statusClientClosedRequest mirrors nginx's non-standard 499 for a client that
+// disconnected before the response completed.
+const statusClientClosedRequest = 499
+
 func writeError(w http.ResponseWriter, err error) {
+	// Map cancellation/timeout to dedicated statuses; a generic 500 would be
+	// misleading and the client is usually already gone.
+	switch {
+	case errors.Is(err, context.Canceled):
+		slog.Debug("request canceled by client", "err", err)
+		writeJSON(w, statusClientClosedRequest, map[string]string{"error": "request canceled"})
+		return
+	case errors.Is(err, context.DeadlineExceeded):
+		slog.Warn("request timed out", "err", err)
+		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "request timed out"})
+		return
+	}
 	// Log the detailed error server-side; return a generic message so internal
 	// paths, zvec internals, and embedding endpoint details are not leaked.
 	slog.Error("request failed", "err", err)
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+}
+
+// readyPublicMessage returns a client-safe readiness error without URLs or paths.
+func readyPublicMessage(err error) string {
+	if err == nil {
+		return "not ready"
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "request canceled"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "indexing in progress"):
+		return "indexing in progress"
+	case strings.Contains(msg, "index not built yet"):
+		return "index not built yet"
+	case strings.Contains(msg, "embedding provider not configured"):
+		return "embedding provider not configured"
+	case strings.Contains(msg, "embeddings unreachable"):
+		return "embeddings unreachable"
+	case strings.Contains(msg, "index_owner_mismatch"):
+		return "index_owner_mismatch: run reindex with force=true"
+	case strings.Contains(msg, "profile") && strings.Contains(msg, "not found"):
+		return "embedding profile not configured"
+	default:
+		return "not ready"
+	}
 }

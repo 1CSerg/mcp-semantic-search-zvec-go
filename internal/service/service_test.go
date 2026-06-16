@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,7 +45,7 @@ func TestStubGetIndexStatus(t *testing.T) {
 		},
 	})
 
-	raw, err := s.GetIndexStatus()
+	raw, err := s.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatalf("GetIndexStatus: %v", err)
 	}
@@ -64,7 +66,7 @@ func TestStubGetIndexStatus(t *testing.T) {
 
 func TestStubSemanticSearch(t *testing.T) {
 	s := NewStub(&config.Settings{App: config.AppConfig{ActiveProfile: "x", Profiles: map[string]config.EmbeddingProfile{"x": {}}}})
-	raw, err := s.SemanticSearch(SearchRequest{Query: "auth middleware"})
+	raw, err := s.SemanticSearch(context.Background(), SearchRequest{Query: "auth middleware"})
 	if err != nil {
 		t.Fatalf("SemanticSearch: %v", err)
 	}
@@ -79,14 +81,14 @@ func TestStubSemanticSearch(t *testing.T) {
 
 func TestStubReady(t *testing.T) {
 	s := NewStub(&config.Settings{})
-	if err := s.Ready(); err != nil {
+	if err := s.Ready(context.Background()); err != nil {
 		t.Fatalf("Ready: %v", err)
 	}
 }
 
 func TestStubReindex(t *testing.T) {
 	s := NewStub(&config.Settings{})
-	raw, err := s.Reindex(ReindexRequest{Force: true})
+	raw, err := s.Reindex(context.Background(), ReindexRequest{Force: true})
 	if err != nil {
 		t.Fatalf("Reindex: %v", err)
 	}
@@ -101,7 +103,7 @@ func TestStubReindex(t *testing.T) {
 
 func TestStubCheckUpdate(t *testing.T) {
 	s := NewStub(&config.Settings{GitHubRepo: "org/repo"})
-	raw, err := s.CheckUpdate()
+	raw, err := s.CheckUpdate(context.Background())
 	if err != nil {
 		t.Fatalf("CheckUpdate: %v", err)
 	}
@@ -117,7 +119,7 @@ func TestStubCheckUpdate(t *testing.T) {
 func TestStubSemanticSearchTopK(t *testing.T) {
 	topK := 5
 	s := NewStub(&config.Settings{App: config.AppConfig{ActiveProfile: "x", Profiles: map[string]config.EmbeddingProfile{"x": {}}}})
-	raw, err := s.SemanticSearch(SearchRequest{Query: "q", TopK: &topK})
+	raw, err := s.SemanticSearch(context.Background(), SearchRequest{Query: "q", TopK: &topK})
 	if err != nil {
 		t.Fatalf("SemanticSearch: %v", err)
 	}
@@ -127,5 +129,14 @@ func TestStubSemanticSearchTopK(t *testing.T) {
 	}
 	if payload["limit"] != float64(5) {
 		t.Fatalf("limit=%v", payload["limit"])
+	}
+}
+
+func TestStubContextCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s := NewStub(&config.Settings{})
+	if _, err := s.SemanticSearch(ctx, SearchRequest{Query: "q"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SemanticSearch err=%v", err)
 	}
 }

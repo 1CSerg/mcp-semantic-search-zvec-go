@@ -1,6 +1,8 @@
 # Shared daemon registration (Phase 5).
 # Env alternative: WORKSPACES_CONFIG=/path/to/daemon.yaml
 max_open_workspaces: 10
+# path_containment: warn   # strict | warn | off — validate index_dir/config_path under root
+# path_allowlist: []       # optional external index mounts outside workspace root
 
 workspaces:
   - id: my-app

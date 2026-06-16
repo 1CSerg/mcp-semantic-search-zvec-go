@@ -36,9 +36,10 @@ type Coordinator struct {
 	progress *ProgressStore
 	lock     *lock.Lock
 
-	mu          sync.Mutex
-	running     bool
-	curProgress Progress
+	mu           sync.Mutex
+	running      bool
+	curProgress  Progress
+	lifecycleCtx context.Context
 }
 
 // NewCoordinator creates an indexing coordinator.
@@ -52,6 +53,18 @@ func NewCoordinator(settings *config.Settings, profile config.EmbeddingProfile, 
 		progress: NewProgressStore(settings.IndexDir),
 		lock:     lock.New(settings.IndexDir, settings.App.Indexing.LockStaleSeconds),
 	}
+}
+
+// SetLifecycleContext binds shutdown context for background indexing runs.
+func (c *Coordinator) SetLifecycleContext(ctx context.Context) {
+	c.lifecycleCtx = ctx
+}
+
+func (c *Coordinator) runContext() context.Context {
+	if c.lifecycleCtx != nil {
+		return c.lifecycleCtx
+	}
+	return context.Background()
 }
 
 // IsRunning reports whether a job is active in this process.
@@ -114,7 +127,7 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 
 	go func() {
-		filesFailed, err := c.run(context.Background(), force)
+		filesFailed, finishFiles, finishChunks, err := c.run(c.runContext(), force)
 		_ = c.lock.Release()
 		c.mu.Lock()
 		c.running = false
@@ -122,9 +135,13 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 			c.curProgress = FinishError(c.curProgress, err)
 		} else if filesFailed > 0 {
 			c.curProgress = FinishIdleWithWarnings(c.curProgress, filesFailed)
+			if finishFiles > 0 {
+				c.curProgress.FilesTotal = finishFiles
+				c.curProgress.FilesDone = finishFiles
+			}
+			c.curProgress.ChunksIndexed = finishChunks
 		} else {
-			files, chunks := c.countStats()
-			c.curProgress = FinishIdle(c.curProgress, files, chunks)
+			c.curProgress = FinishIdle(c.curProgress, finishFiles, finishChunks)
 		}
 		if err := c.progress.Save(c.curProgress); err != nil {
 			slog.Warn("persist final indexing progress failed", "err", err)
@@ -135,9 +152,9 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	return p, nil
 }
 
-func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err error) {
+func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, finishFiles, finishChunks int, err error) {
 	if err := os.MkdirAll(c.Settings.IndexDir, 0o755); err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
 
 	if err := zvec.ReconcileIndex(
@@ -151,57 +168,62 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err
 		force,
 		c.Zvec,
 	); err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
 
 	manifestPath := filepath.Join(c.Settings.IndexDir, "manifest.db")
 	manStore, err := manifest.Open(manifestPath)
 	if err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
 	defer manStore.Close()
 
 	if force {
 		if err := manStore.Clear(); err != nil {
-			return 0, err
+			return 0, 0, 0, err
 		}
 		if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
-			return 0, err
+			return 0, 0, 0, err
 		}
 	}
 
-	files, err := scan.Discover(scan.Options{
+	scanResult, err := scan.Discover(scan.Options{
 		Root:       c.Settings.WorkspaceRoot,
 		Extensions: c.Settings.App.Indexing.Extensions,
 		SkipDirs:   c.Settings.App.Indexing.SkipDirs,
 	})
 	if err != nil {
-		return 0, err
+		return 0, 0, 0, err
 	}
+	files := scanResult.Files
 
 	discovered := make(map[string]struct{}, len(files))
-	totalChunks := 0
-	heartbeat := time.Duration(c.Settings.App.Indexing.HeartbeatSeconds * float64(time.Second))
-	if heartbeat <= 0 {
-		heartbeat = 15 * time.Second
-	}
-	lastBeat := time.Now()
 	stallWatch := NewStallWatcher(c.Settings.App.Indexing.StallSeconds)
 
 	c.updateProgress(func(p *Progress) {
 		p.FilesTotal = len(files)
-		p.Message = fmt.Sprintf("discovered %d files", len(files))
+		p.ScanMethod = scanResult.Method
+		p.ScanWarnings = append([]string(nil), scanResult.Warnings...)
+		p.SkippedPaths = append([]string(nil), scanResult.SkippedPaths...)
+		msg := fmt.Sprintf("discovered %d files via %s", len(files), scanResult.Method)
+		if len(scanResult.Warnings) > 0 {
+			msg += "; " + scanResult.Warnings[0]
+		}
+		if len(scanResult.SkippedPaths) > 0 {
+			msg += fmt.Sprintf("; %d paths skipped", len(scanResult.SkippedPaths))
+		}
+		p.Message = msg
 	})
 	stallWatch.Touch()
 
 	for i, rel := range files {
 		select {
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return 0, 0, 0, ctx.Err()
 		default:
 		}
 		if err := stallWatch.Check(); err != nil {
-			return 0, err
+			return 0, 0, 0, err
 		}
 		discovered[rel] = struct{}{}
 		c.updateProgress(func(p *Progress) {
@@ -213,7 +235,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err
 
 		if err := c.indexFile(ctx, manStore, rel, force); err != nil {
 			if isFatalIndexingError(err) {
-				return 0, fmt.Errorf("%s: %w", rel, err)
+				return 0, 0, 0, fmt.Errorf("%s: %w", rel, err)
 			}
 			if isPerFileSkippable(err) {
 				filesFailed++
@@ -225,27 +247,16 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err
 				stallWatch.Touch()
 				continue
 			}
-			return 0, fmt.Errorf("%s: %w", rel, err)
+			return 0, 0, 0, fmt.Errorf("%s: %w", rel, err)
 		}
-		entry, err := manStore.Get(rel)
-		if err == nil {
-			totalChunks += entry.ChunkCount
-			c.updateProgress(func(p *Progress) {
-				p.ChunksIndexed = totalChunks
-			})
-			stallWatch.Touch()
-		}
-
-		if time.Since(lastBeat) >= heartbeat {
-			_ = c.lock.Heartbeat()
-			lastBeat = time.Now()
-		}
+		c.refreshChunkProgress(manStore)
+		stallWatch.Touch()
 	}
 
 	if !force {
 		existing, err := manStore.List()
 		if err != nil {
-			return 0, err
+			return 0, 0, 0, err
 		}
 		for _, e := range existing {
 			if _, ok := discovered[e.RelativePath]; ok {
@@ -253,11 +264,11 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err
 			}
 			if len(e.DocIDs) > 0 {
 				if err := c.Zvec.DeleteByIDs(e.DocIDs); err != nil && !isZvecUnavailable(err) {
-					return 0, err
+					return 0, 0, 0, err
 				}
 			}
 			if err := manStore.Delete(e.RelativePath); err != nil {
-				return 0, err
+				return 0, 0, 0, err
 			}
 		}
 	}
@@ -266,8 +277,20 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err
 		p.FilesDone = len(files)
 		p.CurrentFile = ""
 	})
+	c.refreshChunkProgress(manStore)
 	stallWatch.Touch()
-	return filesFailed, nil
+
+	finishFiles, finishChunks, statsErr := manifestStats(manStore)
+	if statsErr != nil {
+		// Fall back to the work done in this run instead of reporting 0/0,
+		// which would wipe files_total/files_done on the success path.
+		c.mu.Lock()
+		finishChunks = c.curProgress.ChunksIndexed
+		c.mu.Unlock()
+		finishFiles = len(files)
+		slog.Warn("manifest stats at finish failed", "err", statsErr)
+	}
+	return filesFailed, finishFiles, finishChunks, nil
 }
 
 func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool) error {
@@ -288,7 +311,11 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		}
 	}
 
-	chunks, err := chunk.ReadAndChunk(c.Settings.WorkspaceRoot, rel, chunk.Options{})
+	chunks, err := chunk.ReadAndChunk(c.Settings.WorkspaceRoot, rel, chunk.Options{
+		MaxFileBytes:         c.Settings.App.Indexing.MaxFileBytes,
+		StreamThresholdBytes: c.Settings.App.Indexing.StreamChunkThresholdBytes,
+		MaxLineBytes:         c.Settings.App.Indexing.MaxLineBytes,
+	})
 	if err != nil {
 		return err
 	}
@@ -340,17 +367,22 @@ func (c *Coordinator) updateProgress(fn func(*Progress)) {
 	}
 }
 
-func (c *Coordinator) countStats() (files, chunks int) {
-	manStore, err := manifest.Open(filepath.Join(c.Settings.IndexDir, "manifest.db"))
+func (c *Coordinator) refreshChunkProgress(manStore *manifest.Store) {
+	_, chunks, err := manifestStats(manStore)
 	if err != nil {
-		return 0, 0
+		slog.Debug("manifest stats refresh failed", "err", err)
+		return
 	}
-	defer manStore.Close()
-	f, ch, err := manStore.Stats()
-	if err != nil {
-		return 0, 0
+	c.updateProgress(func(p *Progress) {
+		p.ChunksIndexed = chunks
+	})
+}
+
+func manifestStats(manStore *manifest.Store) (files, chunks int, err error) {
+	if manStore == nil {
+		return 0, 0, fmt.Errorf("manifest store is nil")
 	}
-	return f, ch
+	return manStore.Stats()
 }
 
 func isZvecUnavailable(err error) bool {
