@@ -139,4 +139,10 @@ func TestStubContextCanceled(t *testing.T) {
 	if _, err := s.SemanticSearch(ctx, SearchRequest{Query: "q"}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("SemanticSearch err=%v", err)
 	}
+	if _, err := s.GetIndexStatus(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("GetIndexStatus err=%v", err)
+	}
+	if _, err := s.Reindex(ctx, ReindexRequest{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Reindex err=%v", err)
+	}
 }

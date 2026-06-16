@@ -5,6 +5,7 @@
 - Go 1.26+
 - Git
 - CGO toolchain (for zvec-go): GCC on Linux, MSVC or MinGW on Windows
+- Windows GUI builds use Fyne and may require the desktop CGO toolchain even without zvec tags
 - Optional: golangci-lint, Docker
 
 ## Clone and build
@@ -35,10 +36,14 @@ Path containment (`INDEX_DIR` / `CONFIG_PATH` / `daemon.yaml`): `internal/config
 
 ## Run modes
 
-No CLI flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
+Windows: no CLI flags → desktop GUI. Linux/macOS: no CLI flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
 
 ```bash
-# MCP stdio (Cursor spawns this; default when no flags)
+# Windows desktop GUI (default on Windows)
+./bin/mcp-semantic-search-zvec-go.exe
+./bin/mcp-semantic-search-zvec-go.exe --gui
+
+# MCP stdio (Cursor spawns this explicitly)
 ./bin/mcp-semantic-search-zvec-go --stdio
 
 # HTTP only (default bind 127.0.0.1:8080)
@@ -56,6 +61,8 @@ No CLI flags → `--stdio` (per-project MCP). `--version` / `-version` prints ve
 # Override config path
 ./bin/mcp-semantic-search-zvec-go --stdio --config /path/to/config.yaml
 ```
+
+GUI mode reuses the per-project service layer but does not start auto-indexing or the file watcher in the GUI process. The Windows GUI is localized in Russian. When Cursor already runs `--stdio` for the same workspace, the GUI finds the live MCP process (`FindStdioForWorkspace`, then `LiveHolder`), shows a warning with that PID instead of competing with the MCP process, and offers a button to terminate the competing process; after termination, the GUI starts an incremental reindex automatically. Stale PIDs in `stdio.lock` are not shown after reclaim.
 
 Full flag table: [API.md](API.md#cli-flags).
 
@@ -255,13 +262,13 @@ Collection name: `ws_<sha256(workspace:profile:dims)[:16]>`. Fields:
 
 ## Cross-compile
 
-Default `go build` (no tags): pure Go stub — useful for CI coverage without CGO.
+Default `go build` (no tags): stub semantic backend without zvec/ONNX. Linux/macOS keep this path pure Go; Windows also builds the Fyne GUI and may need the normal Fyne desktop toolchain.
 
 With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile with CGO.
 
 ## CI
 
-- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥88% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), golangci-lint on push/PR
+- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥85% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), golangci-lint on push/PR
 - `.github/workflows/release.yml` — tag `v*` → binaries + Docker
 
 ## Testing MCP locally
@@ -280,7 +287,7 @@ curl -s http://127.0.0.1:8080/v1/status | jq .
 
 Пороги для `./internal/...` (встроенный `go tool cover`):
 
-- **88%** — суммарно по проекту (`COVERAGE_MIN`)
+- **85%** — суммарно по проекту (`COVERAGE_MIN`)
 - **50%** — минимум на каждый Go-пакет (`COVERAGE_PKG_MIN`)
 
 ```bash

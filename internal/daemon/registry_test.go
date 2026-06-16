@@ -125,6 +125,14 @@ func TestRegistryGetServiceRequiresID(t *testing.T) {
 	}
 }
 
+func TestNewRegistryNilContext(t *testing.T) {
+	r := NewRegistry(Config{Workspaces: []WorkspaceSpec{{ID: "x", Root: t.TempDir()}}}, nil)
+	defer r.Close()
+	if r.rootCtx == nil {
+		t.Fatal("expected non-nil root context")
+	}
+}
+
 func TestRegistryCloseAll(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "proj")
 	if err := os.MkdirAll(root, 0o755); err != nil {

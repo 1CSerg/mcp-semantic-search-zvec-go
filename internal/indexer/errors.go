@@ -39,6 +39,9 @@ func isPerFileSkippable(err error) bool {
 	if isFatalIndexingError(err) {
 		return false
 	}
+	if isZvecLockError(err) {
+		return false
+	}
 	// File-level I/O issues (vanished file, permission) affect one path only.
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		return true
@@ -58,4 +61,12 @@ func isPerFileSkippable(err error) bool {
 	// Unknown failures (manifest/DB writes, unexpected store errors) abort the job
 	// rather than silently skipping every file and producing a half-built index.
 	return false
+}
+
+func isZvecLockError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "lock file") || strings.Contains(msg, "can't open lock")
 }

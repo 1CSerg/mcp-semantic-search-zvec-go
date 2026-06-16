@@ -51,6 +51,13 @@ func (s *CollectionStore) Open() error {
 	return s.openCollection(true)
 }
 
+// IsOpen reports whether this process holds an open collection handle.
+func (s *CollectionStore) IsOpen() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.open && s.col != nil
+}
+
 // Close closes the collection handle.
 func (s *CollectionStore) Close() error {
 	s.mu.Lock()
@@ -336,24 +343,11 @@ func (s *CollectionStore) newCollectionOptions(readOnly bool) *zvec.CollectionOp
 }
 
 func reclaimStaleLock(collectionPath string) bool {
-	removed := false
-	entries, err := os.ReadDir(collectionPath)
-	if err != nil {
-		return false
+	reclaimed := reclaimCollectionLockDir(collectionPath)
+	if reclaimed {
+		slog.Info("reclaimed orphaned zvec collection lock", "path", collectionPath)
 	}
-	for _, e := range entries {
-		name := e.Name()
-		if name == "LOCK" || name == "lock" || name == ".lock" {
-			// Only reached after a failed open, i.e. duplicate stdio processes
-			// were already terminated upstream. Log before removing so an
-			// erroneously reclaimed live lock is auditable in server.log.
-			slog.Warn("reclaiming zvec collection lock after failed open", "path", filepath.Join(collectionPath, name))
-			if err := os.Remove(filepath.Join(collectionPath, name)); err == nil {
-				removed = true
-			}
-		}
-	}
-	return removed
+	return reclaimed
 }
 
 // IsCollectionMissing reports whether err is ErrCollectionMissing.

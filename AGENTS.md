@@ -68,6 +68,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | Docker + несколько репо | `docker-compose.daemon.yml` + `-McpMode Proxy` в install.ps1 на Windows |
 | Empty search, indexing idle | `reindex`; check `index_status` |
 | `zvec_open_ok: false`, LOCK error, `zvec_doc_count: 0` | Duplicate `--stdio` processes — restart Cursor; check `index_status.diagnostics`; re-run install; `reindex` with `force: true` if needed |
+| `--stdio` остался после закрытия Cursor/launcher | Сервер завершится сам, если исчезнет родительская цепочка запуска (`powershell`/`cmd` или Cursor). Если закрыт только workspace, но Cursor держит launcher живым, нужен Restart MCP/IDE или `--stop-stdio-for-workspace`. Для отладки: `MCP_DISABLE_PARENT_WATCH=true` |
 | After MCP binary update (zvec-go bump) | Index resets on first start; in **Native** mode with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |
 | `index_owner_mismatch` | Call MCP `reindex` with `force: true`. In **Native** mode with `AUTO_INDEX_ON_START=true` this runs on next start; keep separate `INDEX_DIR` per project if you share one clone |
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
@@ -76,7 +77,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 
 ## Shared daemon (optional)
 
-По умолчанию — per-project `--stdio`. Для нескольких проектов в одном окне Cursor: `daemon.yaml` → `--daemon` → `--stdio-proxy`.
+Install по умолчанию настраивает per-project `--stdio` через явный launcher. На Windows запуск exe без ключей открывает GUI. Для нескольких проектов в одном окне Cursor: `daemon.yaml` → `--daemon` → `--stdio-proxy`.
 
 Подробнее: [INSTALL.md](INSTALL.md#shared-daemon), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/CONFIG.md](docs/CONFIG.md#daemonyaml-phase-5).
 

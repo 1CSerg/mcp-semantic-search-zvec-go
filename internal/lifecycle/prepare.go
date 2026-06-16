@@ -44,7 +44,13 @@ func PrepareStdio(settings *config.Settings) (*lock.Lock, error) {
 		if idxLock.ReclaimStale() {
 			slog.Info("reclaimed stale index lock", "path", idxLock.Path())
 		}
-		if err := indexer.RecoverStalledProgress(settings.IndexDir, settings.App.Indexing.StallSeconds); err != nil {
+		if stdioLock.ReclaimStale() {
+			slog.Info("reclaimed stale stdio lock", "path", stdioLock.Path())
+		}
+		if err := indexer.RecoverStalledProgress(settings.IndexDir, settings.App.Indexing.StallSeconds, func() bool {
+			_, ok := FindStdioForWorkspace(settings.WorkspaceRoot, os.Getpid())
+			return ok
+		}); err != nil {
 			return nil, err
 		}
 
@@ -52,7 +58,7 @@ func PrepareStdio(settings *config.Settings) (*lock.Lock, error) {
 			return stdioLock, nil
 		}
 		lastErr = err
-		if pid, ok := stdioLock.HolderPID(); ok {
+		if pid, ok := stdioLock.LiveHolder(); ok {
 			slog.Warn("stdio lock held by another process", "holder_pid", pid, "attempt", attempt+1)
 		} else {
 			slog.Warn("stdio lock acquire failed", "err", err, "attempt", attempt+1)

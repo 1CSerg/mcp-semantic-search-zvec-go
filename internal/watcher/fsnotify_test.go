@@ -68,6 +68,24 @@ func TestFSNotifyBackendRun(t *testing.T) {
 	}
 }
 
+func TestFSNotifyBackendContextCancel(t *testing.T) {
+	root := t.TempDir()
+	settings := &config.Settings{WorkspaceRoot: root}
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan string, 1)
+	done := make(chan struct{})
+	go func() {
+		_ = newFSNotifyBackend().run(ctx, settings, events)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("run did not exit after context cancel")
+	}
+}
+
 func TestFSNotifyBackendDetectsNewDirectory(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("v1"), 0o644); err != nil {

@@ -8,6 +8,64 @@ import (
 	"testing"
 )
 
+func TestDiscoverGitExcludesWorktreeDeleted(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "keep.go"), []byte("package keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "gone.go"), []byte("package gone"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	init := exec.Command("git", "init", dir)
+	init.Dir = dir
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	add := exec.Command("git", "add", "keep.go", "gone.go")
+	add.Dir = dir
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Skipf("git add: %v %s", err, out)
+	}
+	if err := os.Remove(filepath.Join(dir, "gone.go")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Discover(Options{
+		Root:       dir,
+		Extensions: []string{".go"},
+		SkipDirs:   []string{".git"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Method != "git" {
+		t.Fatalf("method=%q", result.Method)
+	}
+	if len(result.Files) != 1 || result.Files[0] != "keep.go" {
+		t.Fatalf("files=%v", result.Files)
+	}
+	if len(result.SkippedPaths) != 1 || result.SkippedPaths[0] != "gone.go" {
+		t.Fatalf("skipped=%v", result.SkippedPaths)
+	}
+}
+
+func TestExcludeMissingByStat(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "keep.go")
+	if err := os.WriteFile(keep, []byte("package keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := []string{"keep.go", "missing.go"}
+	kept, skipped := excludeMissingByStat(dir, files)
+	if len(kept) != 1 || kept[0] != "keep.go" {
+		t.Fatalf("kept=%v", kept)
+	}
+	if len(skipped) != 1 || skipped[0] != "missing.go" {
+		t.Fatalf("skipped=%v", skipped)
+	}
+}
+
 func TestDiscoverGit(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
@@ -75,6 +133,30 @@ func TestDiscoverWalk(t *testing.T) {
 	}
 }
 
+func TestDiscoverWalkSkipsNestedDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "vendor", "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "vendor", "pkg", "dep.go"), []byte("package dep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := discoverWalk(dir, Options{
+		Extensions: []string{".go"},
+		SkipDirs:   []string{"vendor"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0] != "main.go" {
+		t.Fatalf("files=%v", result.Files)
+	}
+}
+
 func TestDiscoverWalkRecordsSkippedPaths(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unreadable directory semantics differ on Windows")
@@ -104,6 +186,17 @@ func TestDiscoverWalkRecordsSkippedPaths(t *testing.T) {
 func TestDiscoverEmptyRoot(t *testing.T) {
 	if _, err := Discover(Options{}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestRelForSkip(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "pkg", "skip.go")
+	if got := relForSkip(root, child); got != "pkg/skip.go" {
+		t.Fatalf("relForSkip=%q", got)
+	}
+	if got := relForSkip(root, ""); got != "" {
+		t.Fatalf("relForSkip empty=%q", got)
 	}
 }
 

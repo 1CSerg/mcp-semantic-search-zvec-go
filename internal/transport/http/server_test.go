@@ -206,12 +206,38 @@ func TestReadyPublicMessage(t *testing.T) {
 		{errors.New("indexing in progress"), "indexing in progress"},
 		{errors.New("embeddings unreachable: http://x"), "embeddings unreachable"},
 		{errors.New("boom http://secret"), "not ready"},
+		{context.Canceled, "request canceled"},
+		{context.DeadlineExceeded, "request canceled"},
 	}
 	for _, tc := range cases {
 		if got := readyPublicMessage(tc.err); got != tc.want {
 			t.Fatalf("readyPublicMessage(%v)=%q want %q", tc.err, got, tc.want)
 		}
 	}
+}
+
+func TestWriteErrorStatuses(t *testing.T) {
+	t.Run("canceled", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeError(rec, context.Canceled)
+		if rec.Code != statusClientClosedRequest {
+			t.Fatalf("status=%d", rec.Code)
+		}
+	})
+	t.Run("deadline", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeError(rec, context.DeadlineExceeded)
+		if rec.Code != http.StatusGatewayTimeout {
+			t.Fatalf("status=%d", rec.Code)
+		}
+	})
+	t.Run("internal", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		writeError(rec, errors.New("secret path /tmp/index"))
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status=%d", rec.Code)
+		}
+	})
 }
 
 func TestHandlerServiceErrors(t *testing.T) {

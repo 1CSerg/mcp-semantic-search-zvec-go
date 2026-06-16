@@ -57,10 +57,8 @@ func forceReclaimLocks(indexDir string) error {
 	stdioLock := lock.NewStdio(indexDir, defaultLockStaleSeconds)
 	if stdioLock.ReclaimStale() {
 		slog.Info("reclaimed stale stdio lock", "path", stdioLock.Path())
-	} else if stdioLock.IsLocked() {
-		if pid, ok := stdioLock.HolderPID(); ok {
-			slog.Warn("stdio lock still held by a live process; not removing", "holder_pid", pid, "path", stdioLock.Path())
-		}
+	} else if pid, ok := stdioLock.LiveHolder(); ok {
+		slog.Warn("stdio lock still held by a live process; not removing", "holder_pid", pid, "path", stdioLock.Path())
 	}
 
 	idxLock := lock.New(indexDir, defaultLockStaleSeconds)

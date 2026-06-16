@@ -1,7 +1,8 @@
 # mcp-semantic-search-zvec-go
 
-Отказоустойчивый сервис **семантического поиска** по исходному коду и документации. Один Go-бинарник — два транспорта:
+Отказоустойчивый сервис **семантического поиска** по исходному коду и документации. Один Go-бинарник — desktop GUI на Windows и два серверных транспорта:
 
+- **Windows GUI** — окно для статуса индексации, переиндексации, поиска и просмотра результатов
 - **MCP stdio** — для Cursor, Roo Code и других MCP-хостов (агенты)
 - **HTTP REST** — для любого другого ПО
 
@@ -15,6 +16,8 @@
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
 go build -o bin/mcp-semantic-search-zvec-go ./cmd/mcp-semantic-search-zvec-go   # stub
+
+# Windows GUI: .\bin\mcp-semantic-search-zvec-go.exe
 
 # HTTP API (stub — health/status only)
 ./bin/mcp-semantic-search-zvec-go --http

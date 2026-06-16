@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ import (
 
 func TestRecoverStalledProgressIdle(t *testing.T) {
 	dir := t.TempDir()
-	if err := RecoverStalledProgress(dir, 60); err != nil {
+	if err := RecoverStalledProgress(dir, 60, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -21,7 +22,7 @@ func TestRecoverStalledProgressRunningNoLock(t *testing.T) {
 	if err := store.Save(StartRunning(false)); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecoverStalledProgress(dir, 60); err != nil {
+	if err := RecoverStalledProgress(dir, 60, nil); err != nil {
 		t.Fatal(err)
 	}
 	p, err := store.Load()
@@ -30,6 +31,28 @@ func TestRecoverStalledProgressRunningNoLock(t *testing.T) {
 	}
 	if p.Running {
 		t.Fatal("expected recovered idle state")
+	}
+}
+
+func TestRecoverStalledProgressStaleLockPayload(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProgressStore(dir)
+	if err := store.Save(StartRunning(false)); err != nil {
+		t.Fatal(err)
+	}
+	deadPID := 999999
+	if err := os.WriteFile(filepath.Join(dir, "index.lock"), []byte("999999 1 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverStalledProgress(dir, 60, nil); err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Running {
+		t.Fatalf("expected recovered idle state with dead lock pid %d", deadPID)
 	}
 }
 
@@ -56,7 +79,7 @@ func TestRecoverStalledProgressWithActiveLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer l.Release()
-	if err := RecoverStalledProgress(dir, 60); err != nil {
+	if err := RecoverStalledProgress(dir, 60, nil); err != nil {
 		t.Fatal(err)
 	}
 	p, err := store.Load()

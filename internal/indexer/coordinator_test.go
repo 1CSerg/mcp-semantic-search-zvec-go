@@ -41,6 +41,7 @@ func newMemZvec() *memZvec {
 }
 
 func (s *memZvec) Open() error  { return nil }
+func (s *memZvec) IsOpen() bool { return true }
 func (s *memZvec) Close() error { return nil }
 func (s *memZvec) DocCount() (int, error) {
 	s.mu.Lock()
@@ -71,6 +72,33 @@ func (s *memZvec) WipeCollection() error {
 	return nil
 }
 
+func waitCoordinatorIdle(t *testing.T, c *Coordinator) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		p := c.CurrentProgress()
+		if !c.IsRunning() && (p.State == StateIdle || p.State == StateError) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("coordinator did not become idle")
+}
+
+func releaseCoordinatorTestResources(c *Coordinator) {
+	_ = c.lock.Release()
+	_ = c.Zvec.Close()
+}
+
+func registerCoordinatorTestCleanup(t *testing.T, c *Coordinator) {
+	t.Helper()
+	t.Setenv("MANIFEST_WAL", "off")
+	t.Cleanup(func() {
+		waitCoordinatorIdle(t, c)
+		releaseCoordinatorTestResources(c)
+	})
+}
+
 func TestCoordinatorStartRecoversStaleProgress(t *testing.T) {
 	root := t.TempDir()
 	indexDir := filepath.Join(root, "index")
@@ -99,6 +127,7 @@ func TestCoordinatorStartRecoversStaleProgress(t *testing.T) {
 		ProfileName:   "test",
 		Dimensions:    4,
 	})
+	registerCoordinatorTestCleanup(t, c)
 	pgr, err := c.Start(false)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -106,10 +135,7 @@ func TestCoordinatorStartRecoversStaleProgress(t *testing.T) {
 	if !pgr.Running {
 		t.Fatal("expected running progress")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 }
 
 func TestCoordinatorIndexesFile(t *testing.T) {
@@ -141,6 +167,7 @@ func TestCoordinatorIndexesFile(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 8}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 8}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	p, err := c.Start(true)
 	if err != nil {
@@ -150,14 +177,7 @@ func TestCoordinatorIndexesFile(t *testing.T) {
 		t.Fatalf("progress=%+v", p)
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		cur := c.CurrentProgress()
-		if !cur.Running && cur.State == StateIdle {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	cur := c.CurrentProgress()
 	if cur.Running || cur.State != StateIdle {
 		t.Fatalf("final progress=%+v", cur)
@@ -208,23 +228,19 @@ func TestCoordinatorSkipsUnchangedFiles(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	if _, err := c.Start(true); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	calls := 0
 	embed := &countingEmbedder{mockEmbedder: mockEmbedder{dims: 4}, calls: &calls}
 	c.Embed = embed
 	if _, err := c.Start(false); err != nil {
 		t.Fatal(err)
 	}
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	if calls != 0 {
 		t.Fatalf("expected no embed calls for unchanged file, got %d", calls)
 	}
@@ -258,6 +274,7 @@ func TestCoordinatorAlreadyRunning(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: settings.IndexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	if _, err := c.Start(true); err != nil {
 		t.Fatal(err)
@@ -268,10 +285,7 @@ func TestCoordinatorAlreadyRunning(t *testing.T) {
 	if _, err := c.Start(true); err == nil {
 		t.Fatal("expected already running error")
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 }
 
 func TestIsZvecUnavailable(t *testing.T) {
@@ -368,23 +382,19 @@ func TestCoordinatorIncrementalRemovesDeletedFile(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	if _, err := c.Start(true); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Start(false); err != nil {
 		t.Fatal(err)
 	}
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -417,13 +427,11 @@ func TestCoordinatorEmbedFailure(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &failingEmbedder{}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 	if _, err := c.Start(true); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	p := c.CurrentProgress()
 	if p.State != StateError {
 		t.Fatalf("progress=%+v", p)
@@ -519,14 +527,12 @@ func TestCoordinatorForceReindexOwnerMismatch(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: newRoot, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	if _, err := c.Start(true); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	p := c.CurrentProgress()
 	if p.State != StateIdle {
 		t.Fatalf("progress=%+v", p)
@@ -598,14 +604,12 @@ func TestCoordinatorSkipsPerFileZvecError(t *testing.T) {
 	store := newSelectiveFailZvec(".cursor/rules/rule.mdc")
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	if _, err := c.Start(true); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	p := c.CurrentProgress()
 	if p.State != StateIdle {
 		t.Fatalf("progress=%+v", p)
@@ -664,6 +668,7 @@ func TestCoordinatorRunStopsOnLifecycleCancel(t *testing.T) {
 	store := newMemZvec()
 	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
 	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
 
 	lifeCtx, cancel := context.WithCancel(context.Background())
 	c.SetLifecycleContext(lifeCtx)
@@ -672,15 +677,22 @@ func TestCoordinatorRunStopsOnLifecycleCancel(t *testing.T) {
 	}
 	cancel()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && c.IsRunning() {
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitCoordinatorIdle(t, c)
 	if c.IsRunning() {
 		t.Fatal("expected indexing to stop after lifecycle cancel")
 	}
 	cur := c.CurrentProgress()
 	if cur.Error == "" && cur.State != StateIdle {
 		t.Fatalf("progress=%+v", cur)
+	}
+}
+
+func TestManifestStatsNil(t *testing.T) {
+	files, chunks, err := manifestStats(nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if files != 0 || chunks != 0 {
+		t.Fatalf("files=%d chunks=%d", files, chunks)
 	}
 }

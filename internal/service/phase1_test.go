@@ -30,15 +30,23 @@ type mockZvecStore struct {
 	openErr    error
 	wipeErr    error
 	wipeCalled bool
+	open       bool
+	closeCalls int
 }
 
 func (m *mockZvecStore) Open() error {
 	if m.openErr != nil {
 		return m.openErr
 	}
+	m.open = true
 	return nil
 }
-func (m *mockZvecStore) Close() error                                 { return nil }
+func (m *mockZvecStore) IsOpen() bool { return m.open }
+func (m *mockZvecStore) Close() error {
+	m.closeCalls++
+	m.open = false
+	return nil
+}
 func (m *mockZvecStore) DocCount() (int, error)                       { return len(m.hits), nil }
 func (m *mockZvecStore) UpsertChunks([]zvec.Chunk, [][]float32) error { return nil }
 func (m *mockZvecStore) DeleteByIDs([]string) error                   { return nil }
@@ -59,6 +67,38 @@ func (m *mockZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error)
 		return nil, m.err
 	}
 	return m.hits, nil
+}
+
+type recoveringZvecStore struct {
+	mockZvecStore
+	opens int
+}
+
+func (r *recoveringZvecStore) Open() error {
+	r.opens++
+	if r.opens == 1 {
+		return errors.New(`Can't open lock file: test lock`)
+	}
+	return r.openErr
+}
+
+type lockFailZvecStore struct{ mockZvecStore }
+
+func (lockFailZvecStore) Open() error {
+	return errors.New(`Can't open lock file: test lock`)
+}
+
+type searchLockZvecStore struct {
+	mockZvecStore
+	attempts int
+}
+
+func (s *searchLockZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error) {
+	s.attempts++
+	if s.attempts == 1 {
+		return nil, errors.New(`Can't open lock file: test lock`)
+	}
+	return []zvec.SearchHit{{Path: "pkg/auth.go", Score: 0.9, Snippet: "func Auth()"}}, nil
 }
 
 func insertManifestRow(t *testing.T, indexDir, path string, chunks int) error {
@@ -762,6 +802,9 @@ func TestPhase1Close(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
+	if err := (&Phase1{}).Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type phase1StubEmbedder struct {
@@ -1173,4 +1216,348 @@ func TestPrepareStartupMigrationCheckError(t *testing.T) {
 		t.Fatal("unexpected wipe on corrupt meta")
 	}
 	waitCoordinatorIdle(t, p)
+}
+
+func TestPhase1SetLifecycleContext(t *testing.T) {
+	settings := phase1Settings(t, modelsEmbedServer(t).URL)
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.SetLifecycleContext(ctx)
+	if p.coordinator == nil {
+		t.Fatal("expected coordinator")
+	}
+}
+
+func TestPhase1StartFileWatcherNilCoordinator(t *testing.T) {
+	p := &Phase1{Settings: phase1Settings(t, "")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.StartFileWatcher(ctx)
+	if p.watcherInst != nil {
+		t.Fatal("expected no watcher without coordinator")
+	}
+}
+
+func TestPhase1StartFileWatcher(t *testing.T) {
+	settings := phase1Settings(t, modelsEmbedServer(t).URL)
+	settings.App.FileWatcher.Enabled = true
+	settings.App.FileWatcher.Backend = "polling"
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p.StartFileWatcher(ctx)
+	if p.watcherInst == nil {
+		t.Fatal("expected watcher instance")
+	}
+}
+
+func TestPhase1GetIndexStatusRecoversZvecLock(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &recoveringZvecStore{}
+	p.zvec = store
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["zvec_open_ok"] != true {
+		t.Fatalf("payload=%v", payload)
+	}
+	if store.opens < 2 {
+		t.Fatalf("opens=%d, want recovery retry", store.opens)
+	}
+}
+
+func TestPhase1GetIndexStatusLockErrorDiagnostic(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &lockFailZvecStore{}
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	diag, ok := payload["diagnostics"].(map[string]any)
+	if !ok || diag["duplicate_stdio_suspected"] != true {
+		t.Fatalf("diagnostics=%v", payload["diagnostics"])
+	}
+}
+
+func TestPhase1CheckUpdateContextCanceled(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.CheckUpdate(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CheckUpdate err=%v", err)
+	}
+}
+
+func TestPhase1SemanticSearchLockRecovery(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &searchLockZvecStore{}
+	p.zvec = store
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	results, ok := payload["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("payload=%v attempts=%d", payload, store.attempts)
+	}
+	if store.attempts < 2 {
+		t.Fatalf("attempts=%d, want retry after lock recovery", store.attempts)
+	}
+}
+
+type docCountErrZvecStore struct{ mockZvecStore }
+
+func (docCountErrZvecStore) DocCount() (int, error) {
+	return 0, errors.New("doc count failed")
+}
+
+func TestPhase1GetIndexStatusContextCanceled(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.GetIndexStatus(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("GetIndexStatus err=%v", err)
+	}
+}
+
+func TestPhase1GetIndexStatusDocCountError(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &docCountErrZvecStore{}
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["zvec_error"] != "doc count failed" {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestPhase1GetIndexStatusProfileError(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	settings := phase1Settings(t, srv.URL+"/v1")
+	settings.App.ActiveProfile = "missing"
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := payload["message"].(string)
+	if msg == "" || !strings.Contains(msg, "missing") {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestPhase1GetIndexStatusOnnxModelPath(t *testing.T) {
+	dir := t.TempDir()
+	modelPath := filepath.Join(dir, "model.onnx")
+	if err := os.WriteFile(modelPath, []byte("onnx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := &config.Settings{
+		WorkspaceRoot: dir,
+		IndexDir:      filepath.Join(dir, "index"),
+		ConfigPath:    filepath.Join(dir, "config.yaml"),
+		App: config.AppConfig{
+			ActiveProfile: "onnx",
+			Profiles: map[string]config.EmbeddingProfile{
+				"onnx": {
+					Provider:   "onnx",
+					ModelPath:  modelPath,
+					Dimensions: 3,
+				},
+			},
+		},
+	}
+	p := &Phase1{
+		Settings:    settings,
+		searchStats: NewSearchStats(settings.App.Search),
+		zvec:        &mockZvecStore{},
+		zvecCfg: zvec.Config{
+			IndexDir:      settings.IndexDir,
+			WorkspaceRoot: settings.WorkspaceRoot,
+			ProfileName:   settings.App.ActiveProfile,
+			Dimensions:    3,
+		},
+	}
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["embedding_model_path"] != "model.onnx" {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestPhase1GetIndexStatusStartupMessage(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.startupMsg = "migration finished"
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["message"] != "migration finished" {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestPhase1ReadyActiveProfileError(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	settings := phase1Settings(t, srv.URL+"/v1")
+	settings.App.ActiveProfile = "missing"
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Ready(context.Background()); err == nil {
+		t.Fatal("expected profile error")
+	}
+}
+
+func TestPhase1ReadyOpenZvecGenericError(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexDir := p.Settings.IndexDir
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.EnsureIndexMeta(indexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &mockZvecStore{openErr: errors.New("zvec open failed")}
+	if err := p.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "zvec open failed") {
+		t.Fatalf("Ready err=%v", err)
+	}
+}
+
+func TestOpenZvecWithRecoverySkipsWhenOpen(t *testing.T) {
+	store := &mockZvecStore{open: true}
+	p := &Phase1{zvec: store}
+	if err := p.openZvecWithRecovery(); err != nil {
+		t.Fatalf("openZvecWithRecovery: %v", err)
+	}
+	if store.closeCalls != 0 {
+		t.Fatalf("closeCalls=%d, want 0", store.closeCalls)
+	}
+}
+
+type lockRecoverZvecStore struct {
+	mockZvecStore
+	openAttempts int
+}
+
+func (s *lockRecoverZvecStore) Open() error {
+	s.openAttempts++
+	if s.openAttempts == 1 {
+		return errors.New(`Can't open lock file: test lock`)
+	}
+	s.open = true
+	return nil
+}
+
+func TestOpenZvecWithRecoveryNoCloseWhileIndexing(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(p.Settings.IndexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prog := indexer.NewProgressStore(p.Settings.IndexDir)
+	if err := prog.Save(indexer.Progress{State: indexer.StateRunning, Running: true}); err != nil {
+		t.Fatal(err)
+	}
+	p.coordinator = nil
+	store := &lockRecoverZvecStore{}
+	p.zvec = store
+	if err := p.openZvecWithRecovery(); err != nil {
+		t.Fatalf("openZvecWithRecovery: %v", err)
+	}
+	if store.closeCalls != 0 {
+		t.Fatalf("closeCalls=%d, want 0 while indexing", store.closeCalls)
+	}
+	if !store.open {
+		t.Fatal("expected zvec open after recovery")
+	}
 }

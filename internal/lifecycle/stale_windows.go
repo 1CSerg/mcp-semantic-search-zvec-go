@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
+func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, fmt.Errorf("process snapshot: %w", err)
@@ -23,7 +23,7 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 	var pe windows.ProcessEntry32
 	pe.Size = uint32(unsafe.Sizeof(pe))
 
-	var stopped []int
+	var pids []int
 	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
 		pid := int(pe.ProcessID)
 		name := windows.UTF16ToString(pe.ExeFile[:])
@@ -32,20 +32,32 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 		}
 		cmdline, err := processCommandLine(uint32(pid))
 		if err != nil {
-			slog.Warn("stale stdio scan: read cmdline failed", "pid", pid, "err", err)
+			slog.Warn("stdio scan: read cmdline failed", "pid", pid, "err", err)
 			continue
 		}
 		if !matchesStaleStdio(cmdline, workspace, pid, selfPID) {
 			continue
 		}
+		pids = append(pids, pid)
+	}
+	if err != nil && err != syscall.ERROR_NO_MORE_FILES {
+		return pids, err
+	}
+	return pids, nil
+}
+
+func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
+	pids, err := listStdioPIDs(workspace, selfPID)
+	if err != nil {
+		return nil, err
+	}
+	var stopped []int
+	for _, pid := range pids {
 		if err := terminatePID(pid); err != nil {
 			slog.Warn("stale stdio scan: terminate failed", "pid", pid, "err", err)
 			continue
 		}
 		stopped = append(stopped, pid)
-	}
-	if err != nil && err != syscall.ERROR_NO_MORE_FILES {
-		return stopped, err
 	}
 	return stopped, nil
 }

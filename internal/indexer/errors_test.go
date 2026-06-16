@@ -30,6 +30,7 @@ func TestIsPerFileSkippable(t *testing.T) {
 		fmt.Errorf("%w: details", zvec.ErrOwnerMismatch),
 		errors.New("manifest get foo: database is locked"),
 		errors.New("some unexpected store failure"),
+		errors.New(`zvec error [INTERNAL_ERROR]: Can't open lock file: /tmp/ws/LOCK`),
 	}
 	for _, err := range fatal {
 		if isPerFileSkippable(err) {

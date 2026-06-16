@@ -138,3 +138,24 @@ func TestIsPathUnderRootWindowsDriveCase(t *testing.T) {
 		t.Fatalf("%q should be under %q (case-insensitive)", path, root)
 	}
 }
+
+func TestPathIsSyncedCloudDrive(t *testing.T) {
+	if !PathIsSyncedCloudDrive(`C:/Users/alice/YandexDisk/project`) {
+		t.Fatal("expected YandexDisk path to match")
+	}
+	if !PathIsSyncedCloudDrive(`G:/Google Drive/repo`) {
+		t.Fatal("expected Google Drive marker")
+	}
+	if PathIsSyncedCloudDrive(filepath.Join(t.TempDir(), "local")) {
+		t.Fatal("expected local temp path to not match")
+	}
+}
+
+func TestStripPathSeparators(t *testing.T) {
+	if got := stripPathSeparators("Yandex.Disk"); got != "yandexdisk" {
+		t.Fatalf("got=%q", got)
+	}
+	if got := stripPathSeparators("My-Drive"); got != "mydrive" {
+		t.Fatalf("got=%q", got)
+	}
+}

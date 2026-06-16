@@ -36,10 +36,19 @@ func TestProgressStoreRoundTrip(t *testing.T) {
 
 func TestToIndexingMap(t *testing.T) {
 	p := StartRunning(false)
+	p.FilesTotal = 4
 	p.FilesDone = 1
+	p.StartedAt = "2026-01-01T00:00:00Z"
+	p.UpdatedAt = "2026-01-01T00:00:10Z"
 	m := p.ToIndexingMap()
 	if m["running"] != true {
 		t.Fatalf("map=%v", m)
+	}
+	if m["percent"] != 25.0 {
+		t.Fatalf("percent=%v map=%v", m["percent"], m)
+	}
+	if m["remaining_seconds"] != 30 {
+		t.Fatalf("remaining_seconds=%v map=%v", m["remaining_seconds"], m)
 	}
 }
 
@@ -128,5 +137,30 @@ func TestFinishIdleWithWarningsFailedFilesInMap(t *testing.T) {
 	files, ok := m["failed_files"].([]string)
 	if !ok || len(files) != 1 || files[0] != "bad.mdc" {
 		t.Fatalf("map=%v", m)
+	}
+}
+
+func TestProgressPercentBounds(t *testing.T) {
+	p := Progress{FilesTotal: 3, FilesDone: 4}
+	if got := p.Percent(); got != 100 {
+		t.Fatalf("Percent()=%v, want 100", got)
+	}
+	p.FilesDone = -1
+	if got := p.Percent(); got != 0 {
+		t.Fatalf("Percent()=%v, want 0", got)
+	}
+}
+
+func TestRemainingSecondsUnavailable(t *testing.T) {
+	tests := []Progress{
+		{Running: false, FilesTotal: 10, FilesDone: 1, StartedAt: "2026-01-01T00:00:00Z"},
+		{Running: true, FilesTotal: 10, FilesDone: 0, StartedAt: "2026-01-01T00:00:00Z"},
+		{Running: true, FilesTotal: 10, FilesDone: 10, StartedAt: "2026-01-01T00:00:00Z"},
+		{Running: true, FilesTotal: 10, FilesDone: 1, StartedAt: "bad"},
+	}
+	for _, tt := range tests {
+		if got, ok := tt.RemainingSeconds(); ok {
+			t.Fatalf("RemainingSeconds()=%v, true for %+v", got, tt)
+		}
 	}
 }

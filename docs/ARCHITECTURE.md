@@ -107,8 +107,9 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 ### index.lock
 
 - OS advisory exclusive lock (`flock` on Unix, `LockFileEx` on Windows) on an open fd for the holder's lifetime.
-- Content: `PID` + Unix timestamp (diagnostics, `HolderPID`); format unchanged from earlier versions.
-- `TryAcquire`: open `O_CREATE|O_RDWR`, non-blocking exclusive lock; no `O_EXCL` / TOCTOU reclaim.
+- Content: `PID` + start time + heartbeat (diagnostics, `HolderPID` / `LiveHolder`); format unchanged from earlier versions.
+- `LiveHolder`: returns PID only when that process is alive and matches the identity recorded in the lock file (guards against stale or reused PIDs).
+- `TryAcquire`: reclaims orphaned lock files first, then open `O_CREATE|O_RDWR`, non-blocking exclusive lock; no `O_EXCL` / TOCTOU reclaim.
 - `ReclaimStale`: open + non-blocking lock; if acquired, file is orphaned (holder crashed) → remove.
 - `lock_stale_seconds` / `isStale()` retained for maintenance diagnostics only (uninstall, legacy files).
 - `heartbeat_seconds` is deprecated for mutual exclusion; indexing no longer calls `Heartbeat`.
@@ -117,7 +118,9 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 
 - Acquired at `--stdio` startup in `PrepareStdio` (per workspace `INDEX_DIR`).
 - Ensures only one native MCP stdio process serves a project index at a time.
-- Before acquire: `stopStaleStdioInstances` kills prior `--stdio` processes matched by workspace path (case-insensitive on Windows) or `bin/workspace-root.txt`.
+- Before acquire: `stopStaleStdioInstances` kills prior `--stdio` processes matched by workspace path (case-insensitive on Windows) or `bin/workspace-root.txt`; orphaned `stdio.lock` files are reclaimed when the OS lock is released.
+- Lock diagnostics use `LiveHolder` (alive PID + start-time match), not raw `HolderPID` alone.
+- Windows GUI detects a competing MCP via `FindStdioForWorkspace` (process scan for `--stdio` + workspace), then `LiveHolder` as fallback; stale lock payloads are not shown to the user.
 - If acquire fails after retries, process exits with a clear stderr hint (Cursor may show MCP error briefly — preferred over broken search).
 - Released on normal shutdown.
 
@@ -128,6 +131,7 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 | Idempotent zvec open | Avoid double-open LOCK errors |
 | SIGTERM handler | Close collection, remove lock |
 | stdio client disconnect | Exit process after MCP session ends (`awaitTransportResults`); cancels ctx and stops file watcher |
+| stdio parent watch | Exit when a stdio launch-chain ancestor (`powershell`/`cmd` or Cursor) dies |
 | Stale process cleanup | `internal/lifecycle` kills prior `--stdio` instance by exe + workspace path on startup |
 | stdio.lock singleton | Block second `--stdio` process for same workspace |
 | zvec lock recovery | On LOCK error: kill duplicate stdio, close handle, retry open (`SemanticSearch`, `index_status`) |

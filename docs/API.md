@@ -93,6 +93,8 @@ During indexing: HTTP 200 with partial `results` from already indexed chunks, pl
 
 Same JSON as MCP `index_status`. In shared daemon mode, pass `?workspace_id=` or header `X-Workspace-ID`.
 
+The `indexing` object includes the lifecycle state plus progress details when available: `files_total`, `files_done`, `percent`, `remaining_seconds`, `chunks_indexed`, `current_file`, timestamps, warnings, and errors. `remaining_seconds` is an estimate based on file throughput and may be absent before enough progress is known.
+
 ---
 
 ### Reindex
@@ -186,10 +188,11 @@ With `?include_paths=1`:
 
 ## CLI flags
 
-No flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
+Windows no flags → desktop GUI. Linux/macOS no flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
 
 | Flag | Mode | Description |
 |------|------|-------------|
+| `--gui` | Desktop GUI | Windows desktop UI for status, reindex, search, and result viewing |
 | `--stdio` | Per-project | MCP server over stdin/stdout |
 | `--http` | Per-project | HTTP REST API |
 | `--http-addr` | Both | Listen address (default `127.0.0.1:8080` per-project, `:8080` daemon, or `server.http_addr`) |
@@ -202,7 +205,7 @@ No flags → `--stdio` (per-project MCP). `--version` / `-version` prints versio
 | `--stop-stdio-for-workspace` | Maintenance | Stop stale `--stdio` MCP instances for workspace and exit |
 | `--index-dir` | Maintenance | Index directory for lock reclaim (optional; with `--stop-stdio-for-workspace`) |
 
-Per-project (default): `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Shared daemon: `--daemon --daemon-config …`. Cursor multi-repo: `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
+Per-project MCP: `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Shared daemon: `--daemon --daemon-config …`. Cursor multi-repo: `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
 
 See also [DEVELOPMENT.md](DEVELOPMENT.md#run-modes).
 

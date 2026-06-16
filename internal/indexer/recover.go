@@ -7,7 +7,9 @@ import (
 )
 
 // RecoverStalledProgress resets persisted running state when lock is absent or stale.
-func RecoverStalledProgress(indexDir string, stallSeconds float64) error {
+// hasLivePeer, when non-nil, can suppress recovery while another live indexer peer exists
+// (for example a --stdio MCP process for the same workspace).
+func RecoverStalledProgress(indexDir string, stallSeconds float64, hasLivePeer func() bool) error {
 	if stallSeconds <= 0 {
 		stallSeconds = 120
 	}
@@ -17,8 +19,16 @@ func RecoverStalledProgress(indexDir string, stallSeconds float64) error {
 		return err
 	}
 	l := lock.New(indexDir, stallSeconds)
-	if l.IsLocked() && !l.ReclaimStale() {
-		return nil
+	if !l.ReclaimStale() {
+		if _, ok := l.LiveHolder(); ok {
+			return nil
+		}
+		if hasLivePeer != nil && hasLivePeer() {
+			return nil
+		}
+		if l.IsLocked() {
+			return nil
+		}
 	}
 	p = FinishError(p, errStalledRecovery)
 	return store.Save(p)

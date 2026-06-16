@@ -53,6 +53,8 @@ your-project/
 
 The whole `.mcp-semantic-search-zvec-go/` directory is gitignored. On first install, `.env` is copied from `templates/env.example` if it does not exist yet.
 
+On Windows, starting `mcp-semantic-search-zvec-go.exe` without flags opens the desktop GUI for status, reindex, search, and result viewing. Cursor MCP wiring still uses `run-mcp-stdio.ps1`, which passes `--stdio` explicitly. If Cursor already has the MCP process running for the same workspace, the GUI scans for a live `--stdio` process (and falls back to a verified `stdio.lock` holder via `LiveHolder`), shows a warning with that PID, and does not start its own auto-index or file watcher. Stale PIDs left in `stdio.lock` after a crashed MCP are ignored once the lock is reclaimed.
+
 ## Update / повторный install
 
 Re-run the same install command from an updated clone or release. The script:
@@ -80,7 +82,7 @@ REPLACE_CONFIG=1 TARGET_ROOT="$PWD" bash .../scripts/install/install.sh
 
 If merge dependencies are missing and `config.yaml` already exists, install **preserves** your file and prints a warning.
 
-After moving the project to a new path, call MCP `reindex` with `force: true`, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
+After moving the project to a new path, call MCP `reindex` with `force: true`, use the Windows GUI force rebuild action, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
 
 ## Configure secrets
 
@@ -149,6 +151,8 @@ Linux/macOS: `${workspaceFolder}` + бинарник в проекте (see `tem
 Симптомы: `index_status` → `zvec_open_ok: false`, `zvec_error` содержит `Can't open lock file`, `zvec_doc_count: 0` при ненулевом `indexed_chunks_manifest`; `semantic_search` возвращает пустой `results`.
 
 Причина: два процесса `mcp-semantic-search-zvec-go --stdio` на один workspace (часто после restart Cursor без завершения старого MCP).
+
+В `--stdio` и `--stdio-proxy` сервер следит за цепочкой запуска (`powershell`/`cmd` и Cursor) и завершает себя, когда один из этих процессов исчезает. Это не срабатывает при обычном закрытии workspace, если Cursor продолжает держать MCP launcher живым. Для ручной отладки watchdog можно отключить переменной `MCP_DISABLE_PARENT_WATCH=true`.
 
 Fix:
 

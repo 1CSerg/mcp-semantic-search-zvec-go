@@ -13,13 +13,13 @@ import (
 	"time"
 )
 
-func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
+func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, fmt.Errorf("read /proc: %w", err)
 	}
 
-	var stopped []int
+	var pids []int
 	for _, ent := range entries {
 		if !ent.IsDir() {
 			continue
@@ -30,13 +30,25 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 		}
 		cmdline, err := os.ReadFile(filepath.Join("/proc", ent.Name(), "cmdline"))
 		if err != nil {
-			slog.Warn("stale stdio scan: read cmdline failed", "pid", pid, "err", err)
+			slog.Warn("stdio scan: read cmdline failed", "pid", pid, "err", err)
 			continue
 		}
 		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
 		if !matchesStaleStdio(line, workspace, pid, selfPID) {
 			continue
 		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
+func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
+	pids, err := listStdioPIDs(workspace, selfPID)
+	if err != nil {
+		return nil, err
+	}
+	var stopped []int
+	for _, pid := range pids {
 		if err := terminatePID(pid); err != nil {
 			slog.Warn("stale stdio scan: terminate failed", "pid", pid, "err", err)
 			continue

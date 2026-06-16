@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
 
 // ErrNotLinked is returned when the binary was built without the zvec CGO tag.
@@ -44,6 +46,7 @@ type SearchHit struct {
 // Store abstracts zvec collection operations.
 type Store interface {
 	Open() error
+	IsOpen() bool
 	Close() error
 	DocCount() (int, error)
 	UpsertChunks(chunks []Chunk, vectors [][]float32) error
@@ -81,4 +84,31 @@ func IndexMetaPath(indexDir string) string {
 func IndexMetaPresent(indexDir string) bool {
 	_, err := os.Stat(IndexMetaPath(indexDir))
 	return err == nil
+}
+
+// ReclaimCollectionLock removes orphaned zvec collection LOCK files under cfg.
+func ReclaimCollectionLock(cfg Config) bool {
+	return reclaimCollectionLockDir(CollectionPath(cfg))
+}
+
+func reclaimCollectionLockDir(collectionPath string) bool {
+	entries, err := os.ReadDir(collectionPath)
+	if err != nil {
+		return false
+	}
+	removed := false
+	for _, e := range entries {
+		name := e.Name()
+		if name == "LOCK" || name == "lock" || name == ".lock" {
+			lockPath := filepath.Join(collectionPath, name)
+			if reclaimCollectionLockFile(lockPath) {
+				removed = true
+			}
+		}
+	}
+	return removed
+}
+
+func reclaimCollectionLockFile(lockPath string) bool {
+	return lock.ReclaimOrphanedFile(lockPath)
 }

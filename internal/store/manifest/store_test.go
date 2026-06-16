@@ -186,3 +186,59 @@ func TestShouldEnableWALForcedOff(t *testing.T) {
 		t.Fatal("expected WAL forced off")
 	}
 }
+
+func TestWalSkipReasonAuto(t *testing.T) {
+	t.Setenv("MANIFEST_WAL", "")
+	if reason := walSkipReason(filepath.Join(t.TempDir(), "manifest.db")); reason != "auto" {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
+func TestGetInvalidDocIDsJSON(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = store.db.Exec(`
+		INSERT INTO file_manifest (relative_path, mtime_ns, size, chunk_count, doc_ids)
+		VALUES (?, ?, ?, ?, ?)
+	`, "bad.go", 1, 10, 1, `{not-json`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get("bad.go"); err == nil {
+		t.Fatal("expected decode error")
+	}
+}
+
+func TestListInvalidDocIDsJSON(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, err = store.db.Exec(`
+		INSERT INTO file_manifest (relative_path, mtime_ns, size, chunk_count, doc_ids)
+		VALUES (?, ?, ?, ?, ?)
+	`, "bad.go", 1, 10, 1, `{not-json`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.List(); err == nil {
+		t.Fatal("expected decode error")
+	}
+}
+
+func TestJournalModeInvalidPath(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "blocked")
+	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := JournalMode(filepath.Join(blocked, "manifest.db")); err == nil {
+		t.Fatal("expected open error")
+	}
+}

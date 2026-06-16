@@ -4,7 +4,8 @@ package lock
 
 import "syscall"
 
-func processAlive(pid int) bool {
+// ProcessAlive reports whether a process with pid is currently alive.
+func ProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -15,4 +16,8 @@ func processAlive(pid int) bool {
 	}
 	_ = syscall.CloseHandle(h)
 	return true
+}
+
+func processAlive(pid int) bool {
+	return ProcessAlive(pid)
 }

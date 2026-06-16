@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -31,6 +32,9 @@ type Phase1 struct {
 	watcherInst  *watcher.Watcher
 	startupMsg   string
 	lifecycleCtx context.Context
+
+	zvecLockWarnMu   sync.Mutex
+	lastZvecLockWarn time.Time
 }
 
 // NewPhase1 creates the production service (zvec + indexer).
@@ -158,8 +162,7 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 
 	hits, err := p.zvec.Search(vector, limit, derefString(req.PathGlob))
 	if err != nil && lifecycle.IsZvecLockError(err) {
-		if recErr := lifecycle.RecoverDuplicateStdio(p.Settings); recErr == nil {
-			_ = p.zvec.Close()
+		if recErr := p.recoverZvecLock(); recErr == nil {
 			hits, err = p.zvec.Search(vector, limit, derefString(req.PathGlob))
 		}
 	}
@@ -517,14 +520,37 @@ func derefString(p *string) string {
 }
 
 func (p *Phase1) openZvecWithRecovery() error {
+	if p.zvec.IsOpen() {
+		return nil
+	}
 	err := p.zvec.Open()
 	if err == nil || !lifecycle.IsZvecLockError(err) {
 		return err
 	}
-	slog.Warn("zvec open lock error, attempting recovery", "err", err)
-	if recErr := lifecycle.RecoverDuplicateStdio(p.Settings); recErr != nil {
+	p.logZvecLockWarn(err)
+	if recErr := p.recoverZvecLock(); recErr != nil {
 		return err
 	}
-	_ = p.zvec.Close()
 	return p.zvec.Open()
+}
+
+func (p *Phase1) logZvecLockWarn(err error) {
+	p.zvecLockWarnMu.Lock()
+	defer p.zvecLockWarnMu.Unlock()
+	if time.Since(p.lastZvecLockWarn) < 30*time.Second {
+		return
+	}
+	p.lastZvecLockWarn = time.Now()
+	slog.Warn("zvec open lock error, attempting recovery", "err", err)
+}
+
+func (p *Phase1) recoverZvecLock() error {
+	if recErr := lifecycle.RecoverDuplicateStdio(p.Settings); recErr != nil {
+		return recErr
+	}
+	zvec.ReclaimCollectionLock(p.zvecCfg)
+	if !p.isIndexingRunning() {
+		_ = p.zvec.Close()
+	}
+	return nil
 }

@@ -3,6 +3,7 @@ package indexer
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -184,6 +185,7 @@ func (p Progress) ToIndexingMap() map[string]any {
 	}
 	if p.FilesTotal > 0 {
 		m["files_total"] = p.FilesTotal
+		m["percent"] = p.Percent()
 	}
 	if p.FilesDone > 0 {
 		m["files_done"] = p.FilesDone
@@ -224,5 +226,51 @@ func (p Progress) ToIndexingMap() map[string]any {
 	if p.FinishedAt != "" {
 		m["finished_at"] = p.FinishedAt
 	}
+	if remaining, ok := p.RemainingSeconds(); ok {
+		m["remaining_seconds"] = remaining
+	}
 	return m
+}
+
+// Percent returns indexing completion as a 0..100 value rounded to one decimal.
+func (p Progress) Percent() float64 {
+	if p.FilesTotal <= 0 {
+		return 0
+	}
+	done := p.FilesDone
+	if done < 0 {
+		done = 0
+	}
+	if done > p.FilesTotal {
+		done = p.FilesTotal
+	}
+	percent := (float64(done) / float64(p.FilesTotal)) * 100
+	return math.Round(percent*10) / 10
+}
+
+// RemainingSeconds estimates remaining indexing time from file throughput.
+func (p Progress) RemainingSeconds() (int, bool) {
+	if !p.Running || p.FilesTotal <= 0 || p.FilesDone <= 0 || p.FilesDone >= p.FilesTotal || p.StartedAt == "" {
+		return 0, false
+	}
+	startedAt, err := time.Parse(time.RFC3339, p.StartedAt)
+	if err != nil {
+		return 0, false
+	}
+	updatedAt := time.Now().UTC()
+	if p.UpdatedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, p.UpdatedAt); err == nil {
+			updatedAt = parsed
+		}
+	}
+	elapsed := updatedAt.Sub(startedAt)
+	if elapsed <= 0 {
+		return 0, false
+	}
+	secondsPerFile := elapsed.Seconds() / float64(p.FilesDone)
+	remaining := int(math.Ceil(secondsPerFile * float64(p.FilesTotal-p.FilesDone)))
+	if remaining < 0 {
+		return 0, false
+	}
+	return remaining, true
 }

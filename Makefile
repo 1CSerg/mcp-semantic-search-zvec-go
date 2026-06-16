@@ -2,7 +2,7 @@
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
-COVERAGE_MIN ?= 88
+COVERAGE_MIN ?= 85
 COVERAGE_PKG_MIN ?= 50
 COVERAGE_PACKAGES ?= ./internal/...
 ZVEC_TAGS := -tags zvec

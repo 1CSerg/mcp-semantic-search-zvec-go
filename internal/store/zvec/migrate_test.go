@@ -16,6 +16,7 @@ type wipeTrackingStore struct {
 }
 
 func (s *wipeTrackingStore) Open() error  { return nil }
+func (s *wipeTrackingStore) IsOpen() bool { return false }
 func (s *wipeTrackingStore) Close() error { return nil }
 func (s *wipeTrackingStore) DocCount() (int, error) {
 	return 0, nil

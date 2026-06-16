@@ -150,3 +150,25 @@ func TestReadAndChunkSmallFileInlinePath(t *testing.T) {
 	want := FileChunks(rel, content, opts)
 	assertChunksEqual(t, want, chunks)
 }
+
+func TestStreamChunkNoTrailingNewline(t *testing.T) {
+	content := []byte("line1\nline2")
+	path := writeTempFile(t, content)
+	streamed, err := streamChunk(path, "f.go", Options{WindowLines: 2, OverlapLines: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inline := FileChunks("f.go", content, Options{WindowLines: 2, OverlapLines: 0})
+	assertChunksEqual(t, inline, streamed)
+}
+
+func TestStreamChunkClassicMacLineEnding(t *testing.T) {
+	content := []byte("line1\rline2\r")
+	path := writeTempFile(t, content)
+	streamed, err := streamChunk(path, "f.go", Options{WindowLines: 2, OverlapLines: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inline := FileChunks("f.go", content, Options{WindowLines: 2, OverlapLines: 0})
+	assertChunksEqual(t, inline, streamed)
+}

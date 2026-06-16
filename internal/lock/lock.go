@@ -49,7 +49,9 @@ func (l *Lock) Path() string {
 }
 
 // TryAcquire creates the lock exclusively using an OS-level advisory lock.
+// Orphaned lock files (dead holder PID, released OS lock) are reclaimed first.
 func (l *Lock) TryAcquire() error {
+	_ = l.ReclaimStale()
 	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
 		return fmt.Errorf("mkdir index dir: %w", err)
 	}
@@ -169,6 +171,43 @@ func (l *Lock) HolderPID() (int, bool) {
 	}
 	pid, err := strconv.Atoi(fields[0])
 	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+// LiveHolder returns the PID of the current lock holder only when that process
+// is alive and matches the identity recorded in the lock file.
+func (l *Lock) LiveHolder() (int, bool) {
+	if l.file != nil && l.ownerContent != "" {
+		return l.liveHolderFromPayload(l.ownerContent)
+	}
+	data, err := os.ReadFile(l.path)
+	if err != nil {
+		return 0, false
+	}
+	return l.liveHolderFromPayload(string(data))
+}
+
+func (l *Lock) liveHolderFromPayload(data string) (int, bool) {
+	if payload, ok := parseLockPayload(data); ok {
+		if !processAlive(payload.PID) {
+			return 0, false
+		}
+		if payload.Legacy {
+			return payload.PID, true
+		}
+		if !processMatchesLock(payload.PID, payload.StartTime) {
+			return 0, false
+		}
+		return payload.PID, true
+	}
+	fields := strings.Fields(strings.TrimSpace(data))
+	if len(fields) == 0 {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 || !processAlive(pid) {
 		return 0, false
 	}
 	return pid, true

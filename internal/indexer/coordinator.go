@@ -92,7 +92,7 @@ func (c *Coordinator) CurrentProgress() Progress {
 
 // Start launches indexing in the background. Returns initial progress snapshot.
 func (c *Coordinator) Start(force bool) (Progress, error) {
-	_ = RecoverStalledProgress(c.Settings.IndexDir, c.Settings.App.Indexing.StallSeconds)
+	_ = RecoverStalledProgress(c.Settings.IndexDir, c.Settings.App.Indexing.StallSeconds, nil)
 
 	c.mu.Lock()
 	if c.running {

@@ -2,18 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/gui"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/logging"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
@@ -39,6 +42,7 @@ func run() int {
 		stdioProxy         bool
 		httpFlag           bool
 		daemonFlag         bool
+		guiFlag            bool
 		httpAddr           string
 		configPath         string
 		daemonConfig       string
@@ -47,13 +51,11 @@ func run() int {
 		stopStdioWorkspace string
 		stopStdioIndexDir  string
 	)
-	if len(os.Args) == 1 {
-		stdio = true
-	}
 	flag.BoolVar(&stdio, "stdio", false, "Run MCP server over stdin/stdout (per-project mode)")
 	flag.BoolVar(&stdioProxy, "stdio-proxy", false, "Run MCP stdio proxy to shared daemon HTTP API")
 	flag.BoolVar(&httpFlag, "http", false, "Run HTTP REST API server")
 	flag.BoolVar(&daemonFlag, "daemon", false, "Run shared multi-workspace HTTP daemon")
+	flag.BoolVar(&guiFlag, "gui", false, "Run the Windows desktop GUI")
 	flag.StringVar(&httpAddr, "http-addr", "", "HTTP listen address (default 127.0.0.1:8080 per-project, :8080 daemon, or config server.http_addr)")
 	flag.StringVar(&configPath, "config", "", "Override CONFIG_PATH")
 	flag.StringVar(&daemonConfig, "daemon-config", "", "Path to daemon.yaml (or WORKSPACES_CONFIG env)")
@@ -67,21 +69,25 @@ func run() int {
 		return runStopStdio(stopStdioWorkspace, stopStdioIndexDir)
 	}
 
-	if stdioProxy {
-		stdio = true
-		httpFlag = false
-		daemonFlag = false
-	}
-	if daemonFlag {
-		httpFlag = true
-		stdio = false
-	}
-
-	if !stdio && !httpFlag {
-		fmt.Fprintf(os.Stderr, "usage: %s [--stdio|--stdio-proxy] [--http|--daemon] [flags]\n", filepath.Base(os.Args[0]))
-		fmt.Fprintf(os.Stderr, "  At least one of --stdio, --stdio-proxy, --http, or --daemon is required.\n")
+	mode, err := resolveRunMode(runMode{
+		stdio:      stdio,
+		stdioProxy: stdioProxy,
+		httpFlag:   httpFlag,
+		daemonFlag: daemonFlag,
+		guiFlag:    guiFlag,
+	}, runtime.GOOS, flag.NFlag())
+	if err != nil {
+		switch {
+		case errors.Is(err, errModeConflict):
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+		default:
+			fmt.Fprintf(os.Stderr, "usage: %s [--gui|--stdio|--stdio-proxy] [--http|--daemon] [flags]\n", filepath.Base(os.Args[0]))
+			fmt.Fprintf(os.Stderr, "  At least one of --gui, --stdio, --stdio-proxy, --http, or --daemon is required.\n")
+		}
 		return 2
 	}
+	stdio, stdioProxy, httpFlag, daemonFlag, guiFlag = mode.stdio, mode.stdioProxy, mode.httpFlag, mode.daemonFlag, mode.guiFlag
+
 	if stdioProxy && strings.TrimSpace(workspaceID) == "" {
 		fmt.Fprintf(os.Stderr, "--stdio-proxy requires --workspace-id\n")
 		return 2
@@ -92,6 +98,12 @@ func run() int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if stdio || stdioProxy {
+		lifecycle.StartParentWatch(ctx, stop)
+		if ctx.Err() != nil {
+			return 0
+		}
+	}
 
 	if daemonFlag {
 		return runDaemon(ctx, stop, httpAddr, daemonConfig)
@@ -99,41 +111,155 @@ func run() int {
 	if stdioProxy {
 		return runStdioProxy(ctx, workspaceID, daemonURL)
 	}
+	if guiFlag {
+		return runGUI(ctx, stop)
+	}
 	return runPerProject(ctx, stop, stdio, httpFlag, httpAddr)
 }
 
+type runMode struct {
+	stdio      bool
+	stdioProxy bool
+	httpFlag   bool
+	daemonFlag bool
+	guiFlag    bool
+}
+
+var (
+	errModeConflict = errors.New("--gui cannot be combined with --stdio, --stdio-proxy, --http, or --daemon")
+	errNoMode       = errors.New("no run mode selected")
+)
+
+// resolveRunMode applies no-flag defaults and mode overrides, returning the
+// effective mode or a usage error. nflag is the number of flags actually set
+// (flag.NFlag()); when zero, OS-specific defaults apply. This is separated from
+// run for testability, since flag.BoolVar resets bound variables to their
+// declared default and would otherwise clobber pre-parse assignments.
+func resolveRunMode(in runMode, goos string, nflag int) (runMode, error) {
+	if nflag == 0 {
+		in.stdio, in.guiFlag = defaultNoArgsModes(goos)
+	}
+	if in.stdioProxy {
+		in.stdio = true
+		in.httpFlag = false
+		in.daemonFlag = false
+	}
+	if in.daemonFlag {
+		in.httpFlag = true
+		in.stdio = false
+	}
+	if in.guiFlag && (in.stdio || in.stdioProxy || in.httpFlag || in.daemonFlag) {
+		return in, errModeConflict
+	}
+	if !in.stdio && !in.httpFlag && !in.guiFlag {
+		return in, errNoMode
+	}
+	return in, nil
+}
+
+func defaultNoArgsModes(goos string) (stdio, gui bool) {
+	if goos == "windows" {
+		return false, true
+	}
+	return true, false
+}
+
 func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag bool, httpAddr string) int {
-	settings, err := loadSettings()
+	rt, err := setupPerProject(ctx, perProjectOptions{
+		Stdio:            stdio,
+		StartBackgrounds: true,
+	})
 	if err != nil {
-		slog.Error("config load failed", "err", err)
+		slog.Error("per-project setup failed", "err", err)
 		return 1
 	}
-
-	_, logCloser, err := logging.Setup(settings)
-	if err != nil {
-		slog.Warn("file logging setup failed, using stderr only", "err", err)
-	} else {
-		defer logCloser.Close()
-	}
+	defer rt.Close()
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = crash.WriteWithOptions(settings.LogsDir(), version.Version, r, crash.WriteOptions{
+			_ = crash.WriteWithOptions(rt.settings.LogsDir(), version.Version, r, crash.WriteOptions{
 				RedactPaths:   crash.RedactPathsEnabled(),
-				WorkspaceRoot: settings.WorkspaceRoot,
+				WorkspaceRoot: rt.settings.WorkspaceRoot,
 			})
 			panic(r)
 		}
 	}()
 
-	if stdio {
+	slog.Info("starting", "version", version.Version, "workspace", rt.settings.WorkspaceRoot, "mode", "per-project")
+	return serveTransports(ctx, stop, rt.settings, rt.svc, httpFlag, httpAddr, stdio)
+}
+
+func runGUI(ctx context.Context, stop context.CancelFunc) int {
+	rt, err := setupPerProject(ctx, perProjectOptions{
+		Stdio:            false,
+		StartBackgrounds: false,
+	})
+	if err != nil {
+		slog.Error("gui setup failed", "err", err)
+		return 1
+	}
+	defer rt.Close()
+
+	defer func() {
+		if r := recover(); r != nil {
+			_ = crash.WriteWithOptions(rt.settings.LogsDir(), version.Version, r, crash.WriteOptions{
+				RedactPaths:   crash.RedactPathsEnabled(),
+				WorkspaceRoot: rt.settings.WorkspaceRoot,
+			})
+			panic(r)
+		}
+	}()
+
+	slog.Info("starting", "version", version.Version, "workspace", rt.settings.WorkspaceRoot, "mode", "gui")
+	if err := gui.Run(ctx, rt.settings, rt.svc); err != nil {
+		slog.Error("gui error", "err", err)
+		stop()
+		return 1
+	}
+	stop()
+	return 0
+}
+
+type perProjectRuntime struct {
+	settings *config.Settings
+	svc      service.Service
+	cleanup  []func()
+}
+
+type perProjectOptions struct {
+	Stdio            bool
+	StartBackgrounds bool
+}
+
+func (rt *perProjectRuntime) Close() {
+	for i := len(rt.cleanup) - 1; i >= 0; i-- {
+		rt.cleanup[i]()
+	}
+}
+
+func setupPerProject(ctx context.Context, opts perProjectOptions) (*perProjectRuntime, error) {
+	settings, err := loadSettings()
+	if err != nil {
+		return nil, fmt.Errorf("config load failed: %w", err)
+	}
+
+	rt := &perProjectRuntime{settings: settings}
+	_, logCloser, err := logging.Setup(settings)
+	if err != nil {
+		slog.Warn("file logging setup failed, using stderr only", "err", err)
+	} else {
+		rt.cleanup = append(rt.cleanup, func() { _ = logCloser.Close() })
+	}
+
+	if opts.Stdio {
 		stdioLock, err := lifecycle.PrepareStdio(settings)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Hint: restart Cursor or kill extra mcp-semantic-search-zvec-go.exe processes for this workspace.\n")
-			return 1
+			rt.Close()
+			return nil, err
 		}
-		defer func() { _ = stdioLock.Release() }()
+		rt.cleanup = append(rt.cleanup, func() { _ = stdioLock.Release() })
 	}
 
 	var svc service.Service = service.NewStub(settings)
@@ -142,17 +268,20 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 		phase1 = p
 		svc = phase1
 		phase1.SetLifecycleContext(ctx)
-		phase1.PrepareStartup()
+		rt.cleanup = append(rt.cleanup, func() { _ = phase1.Close() })
+		if opts.StartBackgrounds {
+			phase1.PrepareStartup()
+		}
 	} else {
 		slog.Warn("phase1 service init failed, using stub", "err", err)
 	}
 
-	if phase1 != nil {
+	if phase1 != nil && opts.StartBackgrounds {
 		phase1.StartFileWatcher(ctx)
 	}
 
-	slog.Info("starting", "version", version.Version, "workspace", settings.WorkspaceRoot, "mode", "per-project")
-	return serveTransports(ctx, stop, settings, svc, httpFlag, httpAddr, stdio)
+	rt.svc = svc
+	return rt, nil
 }
 
 func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonConfigPath string) int {

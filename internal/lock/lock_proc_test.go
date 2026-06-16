@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,12 +71,63 @@ func TestCrossProcessReclaimStale(t *testing.T) {
 	_ = l.Release()
 }
 
+func TestCrossProcessStdioLockFile(t *testing.T) {
+	dir := t.TempDir()
+	child := startLockHelperFile(t, dir, StdioLockFileName, "hold", 2*time.Second)
+	defer func() { _ = child.Process.Kill() }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if NewStdio(dir, 300).IsLocked() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("stdio lock file did not appear")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestCrossProcessStdioLiveHolder(t *testing.T) {
+	dir := t.TempDir()
+	child := startLockHelperFile(t, dir, StdioLockFileName, "hold", 2*time.Second)
+	defer func() { _ = child.Process.Kill() }()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		l := NewStdio(dir, 300)
+		if !l.IsLocked() {
+			if time.Now().After(deadline) {
+				t.Fatal("stdio lock file did not appear")
+			}
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		if pid, ok := l.LiveHolder(); ok && pid != os.Getpid() {
+			return
+		}
+		if time.Now().After(deadline) {
+			pid, holderOK := l.HolderPID()
+			livePID, liveOK := l.LiveHolder()
+			data, _ := os.ReadFile(l.Path())
+			t.Fatalf("live holder not detected: holder=%v pid=%d live=%v livePID=%d file=%q alive=%v",
+				holderOK, pid, liveOK, livePID, strings.TrimSpace(string(data)), ProcessAlive(pid))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func startLockHelper(t *testing.T, dir, mode string, hold time.Duration) *exec.Cmd {
+	return startLockHelperFile(t, dir, lockFileName, mode, hold)
+}
+
+func startLockHelperFile(t *testing.T, dir, fileName, mode string, hold time.Duration) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=TestLockHelperProcess")
 	cmd.Env = append(os.Environ(),
 		lockHelperEnv+"=1",
 		"MCP_LOCK_TEST_DIR="+dir,
+		"MCP_LOCK_TEST_FILE="+fileName,
 		"MCP_LOCK_TEST_MODE="+mode,
 		fmt.Sprintf("MCP_LOCK_TEST_HOLD=%d", hold),
 	)
@@ -94,7 +146,11 @@ func TestLockHelperProcess(t *testing.T) {
 	if dir == "" {
 		t.Fatal("MCP_LOCK_TEST_DIR not set")
 	}
-	l := New(dir, 300)
+	fileName := os.Getenv("MCP_LOCK_TEST_FILE")
+	if fileName == "" {
+		fileName = lockFileName
+	}
+	l := NewWithName(dir, fileName, 300)
 	if err := l.TryAcquire(); err != nil {
 		t.Fatalf("TryAcquire: %v", err)
 	}

@@ -102,6 +102,55 @@ func TestSanitizeStackUsesStringsContains(t *testing.T) {
 	}
 }
 
+func TestProxyLogDir(t *testing.T) {
+	t.Setenv("MCP_PROXY_LOG_DIR", filepath.Join(t.TempDir(), "proxy-logs"))
+	if got := ProxyLogDir(); got == "" {
+		t.Fatal("expected non-empty proxy log dir")
+	}
+}
+
+func TestDaemonLogDir(t *testing.T) {
+	t.Setenv("MCP_DAEMON_LOG_DIR", filepath.Join(t.TempDir(), "daemon-logs"))
+	if got := DaemonLogDir(); got == "" {
+		t.Fatal("expected non-empty daemon log dir")
+	}
+	t.Setenv("MCP_DAEMON_LOG_DIR", "")
+	t.Setenv("LOG_DIR", filepath.Join(t.TempDir(), "logs"))
+	if got := DaemonLogDir(); got == "" {
+		t.Fatal("expected LOG_DIR fallback")
+	}
+}
+
+func TestRedactPath(t *testing.T) {
+	if got := RedactPath(""); got != "" {
+		t.Fatalf("empty path: got=%q", got)
+	}
+	root := t.TempDir()
+	inside := filepath.Join(root, "internal", "foo.go")
+	if got := RedactPath(inside, root); got != "<redacted>" {
+		t.Fatalf("inside root: got=%q", got)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		t.Skip("no home dir")
+	}
+	homePath := filepath.Join(home, "secret.txt")
+	if got := RedactPath(homePath); got != "<home>" {
+		t.Fatalf("home path: got=%q", got)
+	}
+}
+
+func TestRedactPathsEnabled(t *testing.T) {
+	t.Setenv("MCP_CRASH_REDACT_PATHS", "")
+	if !RedactPathsEnabled() {
+		t.Fatal("expected default enabled")
+	}
+	t.Setenv("MCP_CRASH_REDACT_PATHS", "false")
+	if RedactPathsEnabled() {
+		t.Fatal("expected disabled when env is false")
+	}
+}
+
 type fmtError string
 
 func (e fmtError) Error() string { return string(e) }
