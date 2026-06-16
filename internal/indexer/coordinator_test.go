@@ -617,6 +617,9 @@ func TestCoordinatorSkipsPerFileZvecError(t *testing.T) {
 	if _, ok := m["file_errors"]; ok {
 		t.Fatalf("file_errors should not be in index_status: map=%v", m)
 	}
+	if len(p.FailedFiles) != 1 || p.FailedFiles[0] != ".cursor/rules/rule.mdc" {
+		t.Fatalf("failed_files=%v", p.FailedFiles)
+	}
 
 	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
 	if err != nil {

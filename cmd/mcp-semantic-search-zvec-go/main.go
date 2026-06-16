@@ -176,6 +176,15 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 		defer logCloser.Close()
 	}
 
+	defer func() {
+		if r := recover(); r != nil {
+			_ = crash.Write(settings.LogsDir(), version.Version, "", r)
+			panic(r)
+		}
+	}()
+
+	warnIfOpenHTTP(settings.HTTPAddr, settings.APIToken)
+
 	registry := daemon.NewRegistry(daemonCfg, ctx)
 	defer registry.Close()
 
@@ -203,6 +212,12 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 }
 
 func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("mcp stdio proxy panic", "panic", fmt.Sprint(r))
+			panic(r)
+		}
+	}()
 	if daemonURL == "" {
 		daemonURL = "http://127.0.0.1:8080"
 	}
@@ -246,6 +261,7 @@ func serveTransports(ctx context.Context, stop context.CancelFunc, settings *con
 		if addr == "" {
 			addr = settings.HTTPAddr
 		}
+		warnIfOpenHTTP(addr, settings.APIToken)
 		httpSrv := httptransport.New(settings, svc)
 		go func() {
 			if err := httpSrv.ListenAndServe(ctx, addr); err != nil {
@@ -318,6 +334,33 @@ func runStopStdio(workspace, indexDir string) int {
 		fmt.Fprintf(os.Stderr, "stopped PID %d\n", pid)
 	}
 	return 0
+}
+
+// warnIfOpenHTTP warns when the HTTP API is exposed without an API_TOKEN,
+// loudly if it binds to a non-loopback interface (reachable from the network).
+func warnIfOpenHTTP(addr, token string) {
+	if strings.TrimSpace(token) != "" {
+		return
+	}
+	if isLoopbackAddr(addr) {
+		slog.Warn("HTTP API has no API_TOKEN; all endpoints are unauthenticated", "addr", addr)
+		return
+	}
+	slog.Warn("HTTP API has no API_TOKEN and binds to a non-loopback address; the API is open to the network. Set API_TOKEN or bind to 127.0.0.1", "addr", addr)
+}
+
+func isLoopbackAddr(addr string) bool {
+	host := addr
+	if i := strings.LastIndex(addr, ":"); i >= 0 {
+		host = addr[:i]
+	}
+	host = strings.Trim(host, "[]")
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	default:
+		return false
+	}
 }
 
 func loadSettings() (*config.Settings, error) {

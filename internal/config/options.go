@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,7 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
+	warnPlaintextAPIKeys(&app, configPath)
 	if opts.UseProcessEnv {
 		applyEnvOverrides(&app)
 	}
@@ -187,6 +189,17 @@ func cloneSecrets(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// warnPlaintextAPIKeys flags profiles that hardcode api_key in YAML, which leaks
+// the secret to disk. Prefer api_key_env + .env (kept out of version control).
+func warnPlaintextAPIKeys(app *AppConfig, configPath string) {
+	for name, p := range app.Profiles {
+		if strings.TrimSpace(p.APIKey) != "" {
+			slog.Warn("plaintext api_key in config.yaml is insecure; use api_key_env with a .env secret instead",
+				"profile", name, "config", configPath)
+		}
+	}
 }
 
 func applyProfileSecrets(app *AppConfig, secrets map[string]string, useProcessEnv bool) {

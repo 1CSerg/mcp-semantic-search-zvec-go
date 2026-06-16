@@ -24,7 +24,7 @@ func newRotatingWriter(path string, maxBytes, backupCount int) (*rotatingWriter,
 	if backupCount <= 0 {
 		backupCount = 3
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
 	w := &rotatingWriter{
@@ -46,7 +46,7 @@ func (w *rotatingWriter) open() error {
 	if info != nil {
 		w.size = info.Size()
 	}
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}

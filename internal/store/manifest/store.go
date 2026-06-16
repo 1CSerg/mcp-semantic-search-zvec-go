@@ -19,6 +19,14 @@ func Open(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open manifest db: %w", err)
 	}
+	// Serialize access on a single connection and wait on cross-process locks
+	// instead of failing fast with "database is locked" (status reads and the
+	// indexer can hold separate handles to the same file concurrently).
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure manifest db: %w", err)
+	}
 	s := &Store{db: db}
 	if err := s.ensureSchema(); err != nil {
 		_ = db.Close()
@@ -77,7 +85,9 @@ func (s *Store) Get(relativePath string) (*FileEntry, error) {
 	if err := row.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON); err != nil {
 		return nil, err
 	}
-	_ = json.Unmarshal([]byte(docIDsJSON), &e.DocIDs)
+	if err := json.Unmarshal([]byte(docIDsJSON), &e.DocIDs); err != nil {
+		return nil, fmt.Errorf("decode doc_ids for %q: %w", relativePath, err)
+	}
 	return &e, nil
 }
 
@@ -122,7 +132,9 @@ func (s *Store) List() ([]FileEntry, error) {
 		if err := rows.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(docIDsJSON), &e.DocIDs)
+		if err := json.Unmarshal([]byte(docIDsJSON), &e.DocIDs); err != nil {
+			return nil, fmt.Errorf("decode doc_ids for %q: %w", e.RelativePath, err)
+		}
 		out = append(out, e)
 	}
 	return out, rows.Err()

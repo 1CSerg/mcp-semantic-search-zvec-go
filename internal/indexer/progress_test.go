@@ -64,7 +64,7 @@ func TestFinishIdleWithWarnings(t *testing.T) {
 	if p.State != StateIdle || p.Running || p.FilesFailed != 2 {
 		t.Fatalf("progress=%+v", p)
 	}
-	if p.Message != "indexing complete with 2 file errors (see server.log)" {
+	if p.Message != "indexing complete with 2 file errors (see diagnostics.log_file; paths in indexing.failed_files)" {
 		t.Fatalf("message=%q", p.Message)
 	}
 	m := p.ToIndexingMap()
@@ -107,5 +107,26 @@ func TestProgressLoadInvalidJSON(t *testing.T) {
 	}
 	if _, err := store.Load(); err == nil {
 		t.Fatal("expected unmarshal error")
+	}
+}
+
+func TestAppendFailedFile(t *testing.T) {
+	p := StartRunning(true)
+	AppendFailedFile(&p, "a.go")
+	AppendFailedFile(&p, "a.go")
+	AppendFailedFile(&p, "b.go")
+	if len(p.FailedFiles) != 2 {
+		t.Fatalf("failed_files=%v", p.FailedFiles)
+	}
+}
+
+func TestFinishIdleWithWarningsFailedFilesInMap(t *testing.T) {
+	p := StartRunning(true)
+	AppendFailedFile(&p, "bad.mdc")
+	p = FinishIdleWithWarnings(p, 1)
+	m := p.ToIndexingMap()
+	files, ok := m["failed_files"].([]string)
+	if !ok || len(files) != 1 || files[0] != "bad.mdc" {
+		t.Fatalf("map=%v", m)
 	}
 }

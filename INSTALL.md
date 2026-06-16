@@ -162,11 +162,12 @@ Fix:
 
 Симптомы: `index_status` → `indexing.state: idle`, `indexing.files_failed > 0` (часто zvec `File is too small` на отдельном файле).
 
-Это **не** fatal: остальные файлы проиндексированы, `semantic_search` работает по ним. Пути и текст ошибок — только в `.mcp-semantic-search-zvec-go/data/logs/server.log` (`index file skipped`).
+Это **не** fatal: остальные файлы проиндексированы, `semantic_search` работает по ним. Пропущенные пути — в `indexing.failed_files` (до 20); полный текст ошибок — в `diagnostics.log_file` (`index file skipped`).
 
 Fix:
 
-1. Tail `.mcp-semantic-search-zvec-go/data/logs/server.log` — строки `index file skipped`.
+1. `index_status` → `indexing.failed_files` и `diagnostics.log_file`.
+2. Tail `diagnostics.log_file` — строки `index file skipped`.
 2. MCP `reindex` с `force: true` для проблемных путей или всего индекса.
 3. Отличие от fatal: при `indexing.state: error` job прерван (embed down, `index_owner_mismatch`, stall) — см. таблицу troubleshooting в [AGENTS.md](AGENTS.md).
 

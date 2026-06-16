@@ -43,6 +43,9 @@ profiles:
     batch_size: 32
     # Таймаут HTTP-запроса к API эмбеддингов (секунды).
     timeout_seconds: 60
+    # Повторы при transient HTTP 429/5xx (всего попыток на batch; по умолчанию 3).
+    # max_retries: 3
+    # retry_base_ms: 500
 
   # LM Studio: популярная open-source модель Qwen3 Embedding (имя модели — из LM Studio).
   lmstudio_qwen:

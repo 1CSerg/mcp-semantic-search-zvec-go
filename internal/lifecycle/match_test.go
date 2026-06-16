@@ -84,6 +84,19 @@ func TestCmdlineContainsWorkspaceEmpty(t *testing.T) {
 	}
 }
 
+func TestPathContainsPathSegmentBoundary(t *testing.T) {
+	// A workspace path must not match a sibling with a shared prefix.
+	if pathContainsPath(`/home/user/proj-evil/bin/app --stdio`, `/home/user/proj`) {
+		t.Fatal("expected no match across segment boundary (proj vs proj-evil)")
+	}
+	if !pathContainsPath(`/home/user/proj/bin/app --stdio`, `/home/user/proj`) {
+		t.Fatal("expected match when needle ends on a separator")
+	}
+	if !pathContainsPath(`--stdio WORKSPACE_ROOT=/home/user/proj`, `/home/user/proj`) {
+		t.Fatal("expected match when needle ends at end of string")
+	}
+}
+
 func TestCmdlineContainsWorkspace(t *testing.T) {
 	ws := `/home/user/project`
 	if !cmdlineContainsWorkspace(`/home/user/project/bin/mcp-semantic-search-zvec-go --stdio`, ws) {

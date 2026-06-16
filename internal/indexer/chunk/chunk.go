@@ -80,11 +80,27 @@ func FileChunks(relativePath string, content []byte, opts Options) []zvec.Chunk 
 
 // ReadAndChunk reads a file from disk and returns chunks.
 func ReadAndChunk(root, relativePath string, opts Options) ([]zvec.Chunk, error) {
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relativePath)))
+	abs, err := resolveWithinRoot(root, relativePath)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(abs)
 	if err != nil {
 		return nil, err
 	}
 	return FileChunks(relativePath, data, opts), nil
+}
+
+// resolveWithinRoot joins root and relativePath and verifies the result stays
+// under root, rejecting "../" escapes and absolute path injection.
+func resolveWithinRoot(root, relativePath string) (string, error) {
+	rootClean := filepath.Clean(root)
+	abs := filepath.Clean(filepath.Join(rootClean, filepath.FromSlash(relativePath)))
+	rootWithSep := rootClean + string(filepath.Separator)
+	if abs != rootClean && !strings.HasPrefix(abs, rootWithSep) {
+		return "", fmt.Errorf("path %q escapes workspace root", relativePath)
+	}
+	return abs, nil
 }
 
 func stripUTF8BOM(content []byte) []byte {

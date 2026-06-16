@@ -42,6 +42,8 @@ Semantic search uses **embedding** models (vectorization), not chat LLMs. All cl
 | `api_key` | openai_compatible | Deprecated — use `.env` |
 | `batch_size` | all | Indexing batch size (default 32) |
 | `timeout_seconds` | openai_compatible | HTTP timeout |
+| `max_retries` | openai_compatible | Total HTTP attempts per embed batch on transient 429/5xx (default 3) |
+| `retry_base_ms` | openai_compatible | Initial backoff between retries in ms (default 500, exponential) |
 | `extra_headers` | openai_compatible | Additional HTTP headers |
 | `model_path` | onnx | Directory with `model_optimized.onnx` |
 

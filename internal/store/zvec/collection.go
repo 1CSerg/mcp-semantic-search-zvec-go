@@ -5,6 +5,7 @@ package zvec
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,10 +164,12 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 		}
 	}
 
+	// Hold the lock across the whole query: the underlying CGO handle can be
+	// closed by Close/WipeCollection or mutated by writes, so the read path must
+	// be serialized with them to avoid a use-after-close / data race.
 	s.mu.Lock()
-	col := s.col
-	s.mu.Unlock()
-	if col == nil {
+	defer s.mu.Unlock()
+	if s.col == nil {
 		return nil, ErrCollectionMissing
 	}
 
@@ -185,7 +188,7 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 		return nil, err
 	}
 
-	results, err := col.Query(q)
+	results, err := s.col.Query(q)
 	if err != nil {
 		return nil, err
 	}
@@ -210,14 +213,17 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 
 // WipeCollection removes the on-disk collection directory.
 func (s *CollectionStore) WipeCollection() error {
-	if err := s.Close(); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(s.path); err != nil {
-		return fmt.Errorf("remove collection: %w", err)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.col != nil {
+		s.col.Close()
+		s.col = nil
 	}
 	s.open = false
 	s.readOnly = false
+	if err := os.RemoveAll(s.path); err != nil {
+		return fmt.Errorf("remove collection: %w", err)
+	}
 	return nil
 }
 
@@ -225,7 +231,10 @@ func (s *CollectionStore) ensureWritable() error {
 	if err := s.openCollection(false); err != nil {
 		return err
 	}
-	if s.readOnly {
+	s.mu.Lock()
+	readOnly := s.readOnly
+	s.mu.Unlock()
+	if readOnly {
 		return fmt.Errorf("collection opened read-only")
 	}
 	return nil
@@ -335,6 +344,10 @@ func reclaimStaleLock(collectionPath string) bool {
 	for _, e := range entries {
 		name := e.Name()
 		if name == "LOCK" || name == "lock" || name == ".lock" {
+			// Only reached after a failed open, i.e. duplicate stdio processes
+			// were already terminated upstream. Log before removing so an
+			// erroneously reclaimed live lock is auditable in server.log.
+			slog.Warn("reclaiming zvec collection lock after failed open", "path", filepath.Join(collectionPath, name))
 			if err := os.Remove(filepath.Join(collectionPath, name)); err == nil {
 				removed = true
 			}

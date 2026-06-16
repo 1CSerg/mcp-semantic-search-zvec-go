@@ -112,6 +112,9 @@ func textResult(text string) *mcp.CallToolResult {
 }
 
 func toolError(err error) (*mcp.CallToolResult, any, error) {
+	// stdio MCP is a local, single-user transport; the detailed message is
+	// intentionally surfaced to the agent (e.g. index_owner_mismatch hints).
+	slog.Warn("mcp tool error", "err", err)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("error: %v", err)},

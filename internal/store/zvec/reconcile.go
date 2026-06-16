@@ -2,6 +2,7 @@ package zvec
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -83,6 +84,16 @@ func ReconcileIndex(indexDir string, identity IndexIdentity, force bool, store S
 	mismatch, meta, err := IndexIdentityMismatch(indexDir, identity.WorkspaceID, identity.Profile, identity.Dimensions)
 	if err != nil && !mismatch {
 		return err
+	}
+	// Detect a workspace_root move even when WORKSPACE_ID is pinned: the zvec
+	// collection name is derived from the root, so a changed name means the
+	// existing vectors belong to a different on-disk location.
+	if !mismatch && meta != nil && meta.CollectionName != "" {
+		want := CollectionName(identity.WorkspaceRoot, identity.Profile, identity.Dimensions)
+		if meta.CollectionName != want {
+			mismatch = true
+			err = fmt.Errorf("index_owner_mismatch: collection %q does not match current workspace root (expected %q)", meta.CollectionName, want)
+		}
 	}
 	if mismatch {
 		if !force {

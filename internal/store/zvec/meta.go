@@ -38,7 +38,7 @@ func ReadIndexMeta(indexDir string) (*IndexMeta, error) {
 
 // WriteIndexMeta writes index_meta.json.
 func WriteIndexMeta(indexDir string, meta IndexMeta) error {
-	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+	if err := os.MkdirAll(indexDir, 0o700); err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -51,10 +51,14 @@ func WriteIndexMeta(indexDir string, meta IndexMeta) error {
 		return err
 	}
 	tmp := IndexMetaPath(indexDir) + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, IndexMetaPath(indexDir))
+	if err := os.Rename(tmp, IndexMetaPath(indexDir)); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // ValidateIndexMeta checks owner/profile/dimensions match.

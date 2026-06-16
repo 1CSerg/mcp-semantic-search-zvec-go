@@ -225,7 +225,7 @@ func (p *Phase1) GetIndexStatus() (json.RawMessage, error) {
 			filesFailed = int(n)
 		}
 	}
-	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks)
+	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks, zvecOpenOK)
 	payload := map[string]any{
 		"workspace_root":          root,
 		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),

@@ -136,8 +136,16 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 ## Security
 
 - Workspace mounted read-only in Docker.
-- HTTP optional `API_TOKEN` Bearer auth.
-- Index contains source snippets — keep `data/` out of git.
+- HTTP `API_TOKEN` Bearer auth (constant-time compare). When unset, the API is
+  unauthenticated and a warning is logged on startup — loudly if the listen
+  address is non-loopback (network-reachable). Bind to `127.0.0.1` or set a token.
+- Secrets from `.env` (anything matching `*TOKEN*`, `*SECRET*`, `*PASSWORD*`,
+  `*API_KEY*`, `*CREDENTIAL*`) are loaded into a private in-memory map and are
+  **not** exported to the process environment (`os.Setenv`), so they don't leak
+  via `/proc/<pid>/environ` or to child processes. Plaintext `api_key` in
+  `config.yaml` is discouraged and logs a warning — prefer `api_key_env` + `.env`.
+- Index contains source snippets — keep `data/` out of git; `data/` and `logs/`
+  are created with `0700`/`0600` permissions.
 - Default embeddings via local HTTP need no cloud API keys.
 
 ## Versioning

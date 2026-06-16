@@ -228,6 +228,31 @@ func TestReconcileIndexNoMeta(t *testing.T) {
 	}
 }
 
+func TestReconcileIndexDetectsRootMoveWithPinnedID(t *testing.T) {
+	dir := t.TempDir()
+	oldRoot := filepath.Join(t.TempDir(), "old")
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:         "pinned-id",
+		WorkspaceRoot:       oldRoot,
+		EmbeddingProfile:    "test",
+		EmbeddingDimensions: 3,
+		CollectionName:      CollectionName(oldRoot, "test", 3),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Same workspace_id, but the root moved -> collection name differs.
+	identity := IndexIdentity{
+		WorkspaceID:   "pinned-id",
+		WorkspaceRoot: filepath.Join(t.TempDir(), "new"),
+		Profile:       "test",
+		Dimensions:    3,
+	}
+	err := ReconcileIndex(dir, identity, false, nil)
+	if err == nil || !strings.Contains(err.Error(), "index_owner_mismatch") {
+		t.Fatalf("expected collection mismatch, err=%v", err)
+	}
+}
+
 func TestReconcileIndexNoMismatch(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "ws")

@@ -80,7 +80,22 @@ func pathContainsPath(haystack, needle string) bool {
 	}
 	h := normalizePathForCompare(haystack)
 	n := normalizePathForCompare(needle)
-	return strings.Contains(h, n)
+	// Require the match to end on a path-segment boundary (separator or end of
+	// string) so workspace "...\proj" does not match "...\proj-evil".
+	from := 0
+	for from <= len(h)-len(n) {
+		i := strings.Index(h[from:], n)
+		if i < 0 {
+			return false
+		}
+		idx := from + i
+		after := idx + len(n)
+		if after == len(h) || h[after] == '\\' {
+			return true
+		}
+		from = idx + 1
+	}
+	return false
 }
 
 func cmdlineContainsWorkspace(cmdline, workspace string) bool {

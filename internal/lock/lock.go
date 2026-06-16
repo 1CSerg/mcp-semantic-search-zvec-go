@@ -50,10 +50,10 @@ func (l *Lock) Path() string {
 
 // TryAcquire creates the lock exclusively or reclaims a stale lock.
 func (l *Lock) TryAcquire() error {
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
 		return fmt.Errorf("mkdir index dir: %w", err)
 	}
-	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
 		return l.writeAndKeep(f)
 	}
@@ -64,7 +64,7 @@ func (l *Lock) TryAcquire() error {
 		return fmt.Errorf("lock held by another process: %s", filepath.Base(l.path))
 	}
 	_ = os.Remove(l.path)
-	f, err = os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err = os.OpenFile(l.path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("reclaim lock: %w", err)
 	}

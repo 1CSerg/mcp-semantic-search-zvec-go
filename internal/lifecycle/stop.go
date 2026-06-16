@@ -50,18 +50,17 @@ func forceReclaimLocks(indexDir string) error {
 	if indexDir == "" {
 		return nil
 	}
+	// Matching --stdio instances for this workspace were already terminated by
+	// stopStaleStdioInstances (identity-checked). Here we only reclaim locks
+	// that are provably stale (dead PID or expired) and never blindly kill the
+	// recorded PID or remove a lock whose holder is still alive.
 	stdioLock := lock.NewStdio(indexDir, defaultLockStaleSeconds)
-	if pid, ok := stdioLock.HolderPID(); ok && pid != os.Getpid() {
-		if err := terminatePID(pid); err != nil {
-			slog.Warn("terminate stdio lock holder failed", "pid", pid, "err", err)
-		} else {
-			time.Sleep(killGrace)
-		}
-	}
 	if stdioLock.ReclaimStale() {
 		slog.Info("reclaimed stale stdio lock", "path", stdioLock.Path())
-	} else if _, err := os.Stat(stdioLock.Path()); err == nil {
-		_ = os.Remove(stdioLock.Path())
+	} else if stdioLock.IsLocked() {
+		if pid, ok := stdioLock.HolderPID(); ok {
+			slog.Warn("stdio lock still held by a live process; not removing", "holder_pid", pid, "path", stdioLock.Path())
+		}
 	}
 
 	idxLock := lock.New(indexDir, defaultLockStaleSeconds)

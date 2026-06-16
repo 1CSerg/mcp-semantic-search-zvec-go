@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 )
@@ -78,7 +79,43 @@ func TestEmbedBatch(t *testing.T) {
 	}
 }
 
-func TestEmbedHTTPError(t *testing.T) {
+func TestEmbedHTTP500Retries(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("Internal Server Error"))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"index": 0, "embedding": []float64{0.1, 0.2}},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(config.EmbeddingProfile{
+		Model:       "test",
+		BaseURL:     srv.URL + "/v1",
+		Dimensions:  2,
+		MaxRetries:  3,
+		RetryBaseMS: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vec, err := c.EmbedQuery(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vec) != 2 || calls != 3 {
+		t.Fatalf("len=%d calls=%d", len(vec), calls)
+	}
+}
+
+func TestEmbedHTTP400NoRetry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("bad request"))
@@ -126,6 +163,66 @@ func TestHealthCheckServerError(t *testing.T) {
 	}
 	if err := c.HealthCheck(context.Background()); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestHealthCheck429Retries(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(config.EmbeddingProfile{
+		Model:       "test",
+		BaseURL:     srv.URL + "/v1",
+		MaxRetries:  2,
+		RetryBaseMS: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HealthCheck(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d", calls)
+	}
+}
+
+func TestHealthCheckRespectsContextDeadline(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(config.EmbeddingProfile{
+		Model:       "test",
+		BaseURL:     srv.URL + "/v1",
+		MaxRetries:  10,
+		RetryBaseMS: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if err := c.HealthCheck(ctx); err == nil {
+		t.Fatal("expected deadline error")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("healthcheck ignored context deadline: elapsed=%v", elapsed)
+	}
+	if calls >= 10 {
+		t.Fatalf("expected deadline to stop retries, calls=%d", calls)
 	}
 }
 

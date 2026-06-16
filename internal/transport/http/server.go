@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,7 +70,8 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token := s.settings.APIToken; token != "" {
 			auth := r.Header.Get("Authorization")
-			if auth != "Bearer "+token {
+			expected := "Bearer " + token
+			if subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) != 1 {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
@@ -85,6 +87,9 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -269,5 +274,8 @@ func writeRawJSON(w http.ResponseWriter, status int, raw json.RawMessage) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	// Log the detailed error server-side; return a generic message so internal
+	// paths, zvec internals, and embedding endpoint details are not leaked.
+	slog.Error("request failed", "err", err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }

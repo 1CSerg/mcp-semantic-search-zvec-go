@@ -2,6 +2,8 @@ package indexer
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -124,7 +126,9 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 			files, chunks := c.countStats()
 			c.curProgress = FinishIdle(c.curProgress, files, chunks)
 		}
-		_ = c.progress.Save(c.curProgress)
+		if err := c.progress.Save(c.curProgress); err != nil {
+			slog.Warn("persist final indexing progress failed", "err", err)
+		}
 		c.mu.Unlock()
 	}()
 
@@ -216,6 +220,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, err
 				slog.Warn("index file skipped", "path", rel, "err", err)
 				c.updateProgress(func(p *Progress) {
 					p.FilesFailed = filesFailed
+					AppendFailedFile(p, rel)
 				})
 				stallWatch.Touch()
 				continue
@@ -274,7 +279,10 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 
 	var old *manifest.FileEntry
 	if !force {
-		old, _ = manStore.Get(rel)
+		old, err = manStore.Get(rel)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("manifest get %s: %w", rel, err)
+		}
 		if old != nil && old.MtimeNs == info.ModTime().UnixNano() && old.Size == info.Size() {
 			return nil
 		}
@@ -291,7 +299,9 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 	}
 
 	if len(chunks) == 0 {
-		_ = manStore.Delete(rel)
+		if err := manStore.Delete(rel); err != nil {
+			return fmt.Errorf("manifest delete %s: %w", rel, err)
+		}
 		return nil
 	}
 
@@ -325,7 +335,9 @@ func (c *Coordinator) updateProgress(fn func(*Progress)) {
 	defer c.mu.Unlock()
 	fn(&c.curProgress)
 	c.curProgress.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	_ = c.progress.Save(c.curProgress)
+	if err := c.progress.Save(c.curProgress); err != nil {
+		slog.Warn("persist indexing progress failed", "err", err)
+	}
 }
 
 func (c *Coordinator) countStats() (files, chunks int) {

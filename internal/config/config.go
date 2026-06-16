@@ -24,6 +24,8 @@ const (
 	DefaultInstallDirName    = ".mcp-semantic-search-zvec-go"
 	DefaultIndexSubdir       = "data/index"
 	DefaultLogsSubdir        = "data/logs"
+	DefaultEmbedMaxRetries   = 3
+	DefaultEmbedRetryBaseMS  = 500
 )
 
 // Settings holds runtime configuration from environment and YAML.
@@ -61,6 +63,8 @@ type EmbeddingProfile struct {
 	APIKey         string            `yaml:"api_key"`
 	BatchSize      int               `yaml:"batch_size"`
 	TimeoutSeconds float64           `yaml:"timeout_seconds"`
+	MaxRetries     int               `yaml:"max_retries"`
+	RetryBaseMS    int               `yaml:"retry_base_ms"`
 	ExtraHeaders   map[string]string `yaml:"extra_headers"`
 }
 
@@ -158,6 +162,12 @@ func applyAppDefaults(app *AppConfig) {
 		}
 		if p.TimeoutSeconds == 0 {
 			p.TimeoutSeconds = 60
+		}
+		if p.MaxRetries == 0 {
+			p.MaxRetries = DefaultEmbedMaxRetries
+		}
+		if p.RetryBaseMS == 0 {
+			p.RetryBaseMS = DefaultEmbedRetryBaseMS
 		}
 		app.Profiles[name] = p
 	}

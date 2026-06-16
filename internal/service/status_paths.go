@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -35,8 +36,10 @@ func statusRelativePath(workspaceRoot, path string) string {
 }
 
 func indexStatusDiagnostics(settings *config.Settings) map[string]any {
+	logDir := settings.LogsDir()
 	return map[string]any{
-		"log_dir": statusRelativePath(settings.WorkspaceRoot, settings.LogsDir()),
+		"log_dir":  statusRelativePath(settings.WorkspaceRoot, logDir),
+		"log_file": statusRelativePath(settings.WorkspaceRoot, filepath.Join(logDir, "server.log")),
 	}
 }
 
@@ -49,27 +52,66 @@ func pathContainsNonASCII(s string) bool {
 	return false
 }
 
+func pathIsSyncedCloudDrive(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(path))
+	markers := []string{
+		"gdrive",
+		"google drive",
+		"googledrive",
+		"yandexdisk",
+		"yandex disk",
+		"onedrive",
+		"dropbox",
+		"icloud",
+	}
+	for _, marker := range markers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func setDiagnosticHint(diag map[string]any, hint string) {
+	hint = strings.TrimSpace(hint)
+	if hint == "" {
+		return
+	}
+	if existing, ok := diag["hint"].(string); ok && strings.TrimSpace(existing) != "" {
+		diag["hint"] = strings.TrimSpace(existing + "; " + hint)
+		return
+	}
+	diag["hint"] = hint
+}
+
 func enrichIndexStatusDiagnostics(
 	diag map[string]any,
 	settings *config.Settings,
 	filesFailed int,
 	docCount int,
 	manifestChunks int,
+	zvecOpenOK bool,
 ) {
 	if runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
 		diag["non_ascii_index_dir"] = true
-	}
-	if filesFailed > 0 && runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
-		diag["unicode_index_path_suspected"] = true
-		if _, ok := diag["hint"]; !ok {
-			diag["hint"] = "INDEX_DIR contains non-ASCII characters on Windows; set INDEX_DIR to an ASCII path (or upgrade zvec-go with Unicode path fix) and run reindex with force=true"
+		diag["unicode_paths_supported"] = true
+		if !zvecOpenOK {
+			diag["unicode_index_path_suspected"] = true
+			setDiagnosticHint(diag, "zvec failed to open index on a non-ASCII INDEX_DIR; set INDEX_DIR to an ASCII path and run reindex with force=true")
 		}
 	}
+
+	if filesFailed > 0 {
+		setDiagnosticHint(diag, fmt.Sprintf("%d file(s) failed indexing; grep \"index file skipped\" in diagnostics.log_file; paths in indexing.failed_files", filesFailed))
+		if pathIsSyncedCloudDrive(settings.IndexDir) || pathIsSyncedCloudDrive(settings.WorkspaceRoot) {
+			diag["synced_cloud_drive_suspected"] = true
+			setDiagnosticHint(diag, "cloud-synced folders (Google Drive/YandexDisk) can cause transient zvec errors during indexing")
+		}
+	}
+
 	if docCount > 0 && manifestChunks > 0 && docCount > manifestChunks*2 {
 		diag["zvec_manifest_mismatch_suspected"] = true
-		if _, ok := diag["hint"]; !ok {
-			diag["hint"] = "zvec doc count exceeds manifest chunks; run reindex with force=true"
-		}
+		setDiagnosticHint(diag, "zvec doc count exceeds manifest chunks; run reindex with force=true")
 	}
 	if msg, ok := diag["hint"].(string); ok {
 		diag["hint"] = strings.TrimSpace(msg)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -37,12 +38,17 @@ func isPerFileSkippable(err error) bool {
 	if isFatalIndexingError(err) {
 		return false
 	}
+	// File-level I/O issues (vanished file, permission) affect one path only.
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "file is too small") ||
 		strings.Contains(msg, "corrupt") ||
 		strings.Contains(msg, "zvec error") {
 		return true
 	}
-	// Read, chunk, and other per-file failures should not abort the whole job.
-	return true
+	// Unknown failures (manifest/DB writes, unexpected store errors) abort the job
+	// rather than silently skipping every file and producing a half-built index.
+	return false
 }

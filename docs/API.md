@@ -214,7 +214,9 @@ All tools return **JSON text** in tool result content.
 
 No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_performance`, `diagnostics`.
 
-When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Details are written to `data/logs/server.log` (`index file skipped`).
+When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Skipped paths (up to 20) appear in `indexing.failed_files`. Details are also in `diagnostics.log_file` (`index file skipped` in server.log).
+
+`diagnostics` includes `log_dir`, `log_file`, and optional hints: `synced_cloud_drive_suspected` (Google Drive/YandexDisk paths), `unicode_index_path_suspected` only when zvec fails to open a non-ASCII `INDEX_DIR` on Windows. With v0.1.5+, Cyrillic paths are supported when `zvec_open_ok` is true.
 
 Fatal failures (embed provider down, `index_owner_mismatch`, stall) still set `indexing.state` to `error`.
 

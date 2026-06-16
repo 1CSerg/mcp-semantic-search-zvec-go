@@ -48,7 +48,7 @@ curl http://127.0.0.1:8080/health
 
 ## Статус
 
-**v0.1.3** — MCP stdio + HTTP, полная индексация, watcher, локальный ONNX, shared daemon. Сборка с нативными deps: `make build-zvec` или install-скрипт.
+**v0.1.6** — retry эмбеддингов при transient HTTP 5xx, `indexing.failed_files` и `diagnostics.log_file` в `index_status`, обновлённая диагностика Unicode/cloud paths. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
 
 ## Лицензия
 

@@ -11,6 +11,9 @@ import (
 
 const progressFileName = "progress.json"
 
+// MaxFailedFilesInStatus caps failed_files entries in index_status / progress.json.
+const MaxFailedFilesInStatus = 20
+
 // State is indexing lifecycle state.
 type State string
 
@@ -22,19 +25,20 @@ const (
 
 // Progress tracks background indexing status persisted to progress.json.
 type Progress struct {
-	State         State  `json:"state"`
-	Running       bool   `json:"running"`
-	Force         bool   `json:"force,omitempty"`
-	FilesTotal    int    `json:"files_total,omitempty"`
-	FilesDone     int    `json:"files_done,omitempty"`
-	FilesFailed   int    `json:"files_failed,omitempty"`
-	ChunksIndexed int    `json:"chunks_indexed,omitempty"`
-	CurrentFile   string      `json:"current_file,omitempty"`
-	Message       string      `json:"message,omitempty"`
-	Error         string      `json:"error,omitempty"`
-	StartedAt     string      `json:"started_at,omitempty"`
-	UpdatedAt     string      `json:"updated_at,omitempty"`
-	FinishedAt    string      `json:"finished_at,omitempty"`
+	State         State    `json:"state"`
+	Running       bool     `json:"running"`
+	Force         bool     `json:"force,omitempty"`
+	FilesTotal    int      `json:"files_total,omitempty"`
+	FilesDone     int      `json:"files_done,omitempty"`
+	FilesFailed   int      `json:"files_failed,omitempty"`
+	FailedFiles   []string `json:"failed_files,omitempty"`
+	ChunksIndexed int      `json:"chunks_indexed,omitempty"`
+	CurrentFile   string   `json:"current_file,omitempty"`
+	Message       string   `json:"message,omitempty"`
+	Error         string   `json:"error,omitempty"`
+	StartedAt     string   `json:"started_at,omitempty"`
+	UpdatedAt     string   `json:"updated_at,omitempty"`
+	FinishedAt    string   `json:"finished_at,omitempty"`
 }
 
 // ProgressStore reads/writes progress.json under index dir.
@@ -74,7 +78,7 @@ func (s *ProgressStore) Save(p Progress) error {
 	if p.UpdatedAt == "" {
 		p.UpdatedAt = now
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(p, "", "  ")
@@ -82,10 +86,14 @@ func (s *ProgressStore) Save(p Progress) error {
 		return err
 	}
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // StartRunning initializes a running progress snapshot.
@@ -101,6 +109,19 @@ func StartRunning(force bool) Progress {
 	}
 }
 
+// AppendFailedFile records a skipped path in progress (deduplicated, capped).
+func AppendFailedFile(p *Progress, rel string) {
+	for _, f := range p.FailedFiles {
+		if f == rel {
+			return
+		}
+	}
+	if len(p.FailedFiles) >= MaxFailedFilesInStatus {
+		return
+	}
+	p.FailedFiles = append(p.FailedFiles, rel)
+}
+
 // FinishIdle marks progress complete.
 func FinishIdle(p Progress, files, chunks int) Progress {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -109,6 +130,7 @@ func FinishIdle(p Progress, files, chunks int) Progress {
 	p.FilesTotal = files
 	p.FilesDone = files
 	p.FilesFailed = 0
+	p.FailedFiles = nil
 	p.ChunksIndexed = chunks
 	p.CurrentFile = ""
 	p.Message = "indexing complete"
@@ -127,7 +149,7 @@ func FinishIdleWithWarnings(p Progress, filesFailed int) Progress {
 	p.CurrentFile = ""
 	p.Error = ""
 	if filesFailed > 0 {
-		p.Message = fmt.Sprintf("indexing complete with %d file errors (see server.log)", filesFailed)
+		p.Message = fmt.Sprintf("indexing complete with %d file errors (see diagnostics.log_file; paths in indexing.failed_files)", filesFailed)
 	} else {
 		p.Message = "indexing complete"
 	}
@@ -165,6 +187,9 @@ func (p Progress) ToIndexingMap() map[string]any {
 	}
 	if p.FilesFailed > 0 {
 		m["files_failed"] = p.FilesFailed
+	}
+	if len(p.FailedFiles) > 0 {
+		m["failed_files"] = append([]string(nil), p.FailedFiles...)
 	}
 	if p.ChunksIndexed > 0 {
 		m["chunks_indexed"] = p.ChunksIndexed
