@@ -26,10 +26,16 @@ func (s Scope) String() string {
 		switch seg.Kind {
 		case "package":
 			parts = append(parts, "package "+seg.Name)
+		case "module":
+			parts = append(parts, "module "+seg.Name)
 		case "type":
 			parts = append(parts, "type "+seg.Name)
 		case "func":
 			parts = append(parts, "func "+seg.Name)
+		case "function":
+			parts = append(parts, "function "+seg.Name)
+		case "class":
+			parts = append(parts, "class "+seg.Name)
 		case "method":
 			parts = append(parts, "method "+seg.Name)
 		default:
@@ -45,6 +51,14 @@ func PackageScope(name string) Scope {
 		return Scope{}
 	}
 	return Scope{Segments: []ScopeSegment{{Kind: "package", Name: name}}}
+}
+
+// ModuleScope builds the root module segment (Python/JS/TS file stem).
+func ModuleScope(name string) Scope {
+	if name == "" {
+		return Scope{}
+	}
+	return Scope{Segments: []ScopeSegment{{Kind: "module", Name: name}}}
 }
 
 // WithSegment returns a copy with an additional segment appended.

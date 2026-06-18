@@ -92,8 +92,8 @@ Response (success):
 | Field | Description |
 |-------|-------------|
 | `symbol_name` | Name from AST boundary (`@name` capture), e.g. `AuthMiddleware`, `Server` |
-| `symbol_kind` | Boundary kind: `function`, `method`, `type`, `const`, `var`, `import`, … |
-| `parent_scope` | Scope chain, e.g. `package auth > type Server > func Foo` |
+| `symbol_kind` | Boundary kind: Go — `function`, `method`, `type`, `const`, `var`, `import`; Phase 1c — `class`, `interface`, `type_alias`, `enum`, `namespace`, `module_var`, … |
+| `parent_scope` | Scope chain, e.g. Go: `package auth > type Server > func Foo`; Python: `module sample > function handler > class Inner`; TS: `module sample > class UserService > method getUser` |
 | `chunk_strategy` | How the chunk was produced: `ast` (whole boundary), `partial` (AST node split via `line_window`), `line_window` (legacy or fallback) |
 
 `snippet` is always raw source from the file. When `context_prefix: true`, the embed model sees an extra header (`// file:` / `// scope:`), but that prefix is **not** stored in `snippet`.

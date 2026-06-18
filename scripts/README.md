@@ -50,7 +50,7 @@ make test-cover-check
 
 ## fetch-tree-sitter-grammars
 
-`scripts/fetch/fetch-tree-sitter-grammars.sh` and `.ps1` verify that the repo compiles and links with build tag **`treesitter`** (CGO + `go-tree-sitter` / `tree-sitter-go` from Go modules). They do **not** download separate grammar archives — run after `make fetch-zvec-libs` when developing hybrid chunking. Full hybrid binary: `go build -tags "zvec,onnx,treesitter"` (not used by Release/install yet).
+`scripts/fetch/fetch-tree-sitter-grammars.sh` and `.ps1` verify that the repo compiles and links with build tag **`treesitter`** (CGO + `go-tree-sitter` and grammars from Go modules: `tree-sitter-go`, `tree-sitter-python`, `tree-sitter-javascript`, `tree-sitter-typescript`). They do **not** download separate grammar archives — run after `make fetch-zvec-libs` when developing hybrid chunking. Full hybrid binary: `go build -tags "zvec,onnx,treesitter"` (not used by Release/install yet).
 
 ## Removed legacy scripts
 

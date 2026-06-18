@@ -11,6 +11,18 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
+// ExtToLang maps file extensions to AST language keys.
+var ExtToLang = map[string]string{
+	".go":  "go",
+	".py":  "python",
+	".js":  "javascript",
+	".jsx": "tsx",
+	".mjs": "javascript",
+	".cjs": "javascript",
+	".ts":  "typescript",
+	".tsx": "tsx",
+}
+
 // ChunkRouter selects AST or line_window chunking per file extension and config.
 type ChunkRouter struct{}
 
@@ -26,10 +38,11 @@ func (r *ChunkRouter) ChunkFile(relativePath string, content []byte, opts Option
 		return FileChunksEmit(relativePath, content, opts, emit)
 	}
 	ext := strings.ToLower(filepath.Ext(relativePath))
-	if ext == ".go" && opts.LanguageEnabled("go") {
+	lang, ok := ExtToLang[ext]
+	if ok && opts.astEnabledForLang(lang) {
 		cfg := astConfig(opts)
 		astEmit := func(ch *zvec.Chunk) error { return emit(ch) }
-		if err := ast.ChunkGo(relativePath, content, cfg, counter, astEmit); err == nil {
+		if err := ast.ChunkLanguage(lang, relativePath, content, cfg, counter, astEmit); err == nil {
 			return nil
 		} else if shouldFallbackToLineWindow(err) {
 			slog.Debug("chunk_fallback", "path", relativePath, "reason", err.Error())
@@ -39,6 +52,16 @@ func (r *ChunkRouter) ChunkFile(relativePath string, content []byte, opts Option
 		}
 	}
 	return FileChunksEmit(relativePath, content, opts, emit)
+}
+
+func (o Options) astEnabledForLang(lang string) bool {
+	if o.LanguageEnabled(lang) {
+		return true
+	}
+	if lang == "tsx" && o.LanguageEnabled("typescript") {
+		return true
+	}
+	return false
 }
 
 func astConfig(opts Options) ast.Config {
@@ -65,5 +88,6 @@ func hybridASTPath(relativePath string, opts Options) bool {
 		return false
 	}
 	ext := strings.ToLower(filepath.Ext(relativePath))
-	return ext == ".go" && opts.LanguageEnabled("go")
+	lang, ok := ExtToLang[ext]
+	return ok && opts.astEnabledForLang(lang)
 }

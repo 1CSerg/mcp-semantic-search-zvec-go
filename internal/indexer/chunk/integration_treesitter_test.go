@@ -116,6 +116,80 @@ func TestProcessBatchesHybridGoAboveStreamThreshold(t *testing.T) {
 	}
 }
 
+func TestRouterFallbackParseErrorPython(t *testing.T) {
+	root := t.TempDir()
+	rel := "bad.py"
+	content := []byte("def (((:\n    pass\n")
+	if err := os.WriteFile(filepath.Join(root, rel), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := chunk.Options{
+		ChunkingStrategy: "hybrid",
+		MinChunkTokens:   1,
+		MaxInputTokens:   50,
+		EmbedBudgetRatio: 1.0,
+		WindowLines:      5,
+		OverlapLines:     1,
+		Languages: map[string]config.LanguageConfig{
+			"python": {Enabled: true},
+		},
+	}
+	var chunks []zvec.Chunk
+	n, err := chunk.ProcessBatches(root, rel, opts, token.CharCounter{}, 4, func(batch []zvec.Chunk) error {
+		chunks = append(chunks, batch...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Fatal("expected line_window fallback chunks")
+	}
+	for _, ch := range chunks {
+		if ch.ChunkStrategy != "line_window" {
+			t.Fatalf("expected line_window fallback, got strategy=%q", ch.ChunkStrategy)
+		}
+	}
+}
+
+func TestProcessBatchesHybridPython(t *testing.T) {
+	root := t.TempDir()
+	rel := "sample.py"
+	content := []byte("@deco\ndef handler():\n    return 1\n")
+	if err := os.WriteFile(filepath.Join(root, rel), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := chunk.Options{
+		ChunkingStrategy: "hybrid",
+		MaxInputTokens:   256,
+		EmbedBudgetRatio: 1.0,
+		MinChunkTokens:   1,
+		Languages: map[string]config.LanguageConfig{
+			"python": {Enabled: true},
+		},
+	}
+	var chunks []zvec.Chunk
+	n, err := chunk.ProcessBatches(root, rel, opts, token.CharCounter{}, 8, func(batch []zvec.Chunk) error {
+		chunks = append(chunks, batch...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Fatal("expected chunks")
+	}
+	found := false
+	for _, ch := range chunks {
+		if ch.SymbolName == "handler" && ch.SymbolKind == "function" && ch.ChunkStrategy == "ast" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("chunks=%+v", chunks)
+	}
+}
+
 func TestRouterFallbackParseError(t *testing.T) {
 	root := t.TempDir()
 	rel := "bad.go"

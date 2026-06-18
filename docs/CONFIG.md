@@ -115,7 +115,7 @@ Install with model fetch (when `active_profile: local_multilingual` or explicit 
 FETCH_ONNX_MODEL=1 bash scripts/install/install.sh
 ```
 
-**Shipped build vs hybrid AST:** GitHub Releases and `install.ps1` / `install.sh` build with `-tags "zvec,onnx"` (no `treesitter`). With that binary, `indexing.chunking.strategy: hybrid` still applies, but **`.go` files use `line_window`** — tree-sitter AST chunking requires a binary built with `-tags "zvec,onnx,treesitter"` (see [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking)). Default unit tests use stub ONNX (`go test ./...`); smoke/release use production tags.
+**Shipped build vs hybrid AST:** GitHub Releases and `install.ps1` / `install.sh` build with `-tags "zvec,onnx"` (no `treesitter`). With that binary, `indexing.chunking.strategy: hybrid` still applies, but **all extensions use `line_window`** — tree-sitter AST chunking requires a binary built with `-tags "zvec,onnx,treesitter"` (see [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking)). Default unit tests use stub ONNX (`go test ./...`); smoke/release use production tags.
 
 ## indexing
 
@@ -129,7 +129,7 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | `stall_seconds` | 120 | 120 | No progress → recovery |
 | `heartbeat_seconds` | 15 | 15 | **Deprecated** — ignored for indexing; kept for config compatibility |
 | `max_file_bytes` | 2097152 | 2097152 | Max file size to index (bytes); `0` = no limit |
-| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming `line_window` — **except** hybrid `.go` with `languages.go.enabled: true` and a `treesitter` binary: those files are read whole (up to `max_file_bytes`) for AST chunking |
+| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming `line_window` — **except** hybrid AST paths (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx` with matching `languages.*.enabled` and a `treesitter` binary): those files are read whole (up to `max_file_bytes`) for AST chunking |
 | `max_line_bytes` | 1048576 | 1048576 | Max single line length (bytes); `0` = no limit |
 
 ### indexing.chunking
@@ -144,7 +144,7 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | `context_prefix` | `false` | When `true`, prepend `// file: …` and `// scope: …` to **embed input only**; `snippet` stored in zvec stays raw source (prefix rebuilt at embed time from path + `parent_scope`) |
 | `line_window.window_lines` | `40` | Legacy line window size |
 | `line_window.overlap_lines` | `8` | Legacy line overlap |
-| `languages` | go, python, js/ts, bsl | Per-language AST toggles. **Phase 1b:** only `go` with `enabled: true` uses AST when binary has `treesitter`; other keys are ignored until Phase 1c/1d (`bsl.include_sdbl` likewise unused until BSL grammar lands) |
+| `languages` | go, python, js/ts, bsl | Per-language AST toggles. With `treesitter` binary: `go`, `python`, `javascript`, `typescript` (`enabled: true`) route matching extensions through AST; `typescript` also covers `.jsx` and `.tsx`. **`bsl`** (and `include_sdbl`) — Phase 1d; ignored until BSL grammar lands |
 
 Env overrides: `CHUNKING_STRATEGY`, `CHUNKING_VERSION`.
 

@@ -138,7 +138,7 @@ When `indexing.chunking.strategy` is `hybrid` (default), file splitting goes thr
 ```mermaid
 flowchart LR
   File[File bytes] --> Router[ChunkRouter]
-  Router -->|".go" + go enabled + treesitter build| AST[cAST / tree-sitter]
+  Router -->|".go .py .js .jsx .mjs .cjs .ts .tsx" + lang enabled + treesitter build| AST[cAST / tree-sitter]
   Router -->|other ext or AST unavailable| LW[line_window]
   AST -->|oversized leaf / parse errors| LW
   Router --> Emit[emit callback]
@@ -151,15 +151,28 @@ flowchart LR
 1. **`Coordinator.indexFile`** loads the active embedding profile (`max_input_tokens`, `embed_budget_ratio`), builds a `TokenCounter`, and passes `chunk.Options` into **`ProcessBatches`**.
 2. **`ChunkRouter.ChunkFile`** chooses the strategy:
    - `strategy: line_window` → `line_window` for every file.
-   - `hybrid` + `.go` + `languages.go.enabled` → **`ast.ChunkGo`** when the binary includes build tag **`treesitter`**; otherwise transparent fallback to `line_window` (`ErrNotImplemented`).
-   - All other extensions → `line_window` until Phase 1c/1d grammars ship.
-3. **Streaming vs whole-file read:** files larger than `stream_chunk_threshold_bytes` normally use streaming `line_window`. **Exception:** hybrid `.go` routed to AST always reads the file whole (up to `max_file_bytes`) so tree-sitter can parse it.
+   - `hybrid` + AST extension + matching `languages.*.enabled` → **`ast.ChunkLanguage`** when the binary includes build tag **`treesitter`**; otherwise transparent fallback to `line_window` (`ErrNotImplemented`).
+   - Extensions without a registered grammar (e.g. BSL until Phase 1d) → `line_window`.
+3. **Streaming vs whole-file read:** files larger than `stream_chunk_threshold_bytes` normally use streaming `line_window`. **Exception:** any hybrid AST path (`hybridASTPath`) always reads the file whole (up to `max_file_bytes`) so tree-sitter can parse it.
+
+**ExtToLang / parser mapping** (`internal/indexer/chunk/router.go`):
+
+| Extension | Language key | Parser |
+|-----------|--------------|--------|
+| `.go` | `go` | `tree-sitter-go` |
+| `.py` | `python` | `tree-sitter-python` |
+| `.js`, `.mjs`, `.cjs` | `javascript` | `tree-sitter-javascript` |
+| `.jsx` | `tsx` | `tree-sitter-typescript` (`LanguageTSX`) |
+| `.ts` | `typescript` | `tree-sitter-typescript` (`LanguageTypescript`) |
+| `.tsx` | `tsx` | `tree-sitter-typescript` (`LanguageTSX`) |
+
+Config key `languages.typescript.enabled` also enables `.jsx` and `.tsx` (router maps `tsx` lang to the typescript toggle).
 4. **cAST emit:** chunks stream through `emit func(*zvec.Chunk) error` → `batchCollector.add` (no per-file `[]Chunk` slice in production).
 5. **Context prefix:** optional `indexing.chunking.context_prefix` prepends `// file:` / `// scope:` to **embed input only**; stored `snippet` is raw source.
 6. **Partial fallback:** oversized AST nodes split via `line_window` inside the parent scope; `chunk_strategy: partial`.
 7. **Identity:** `index_meta.json` stores `chunking_version` / `chunking_strategy`; mismatch → `identity_mismatch` → `reindex` with `force: true`.
 
-Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`, so step 2 always falls back to `line_window` for `.go` today. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
+Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`, so step 2 always falls back to `line_window` for all extensions. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
 
 ## Resilience
 

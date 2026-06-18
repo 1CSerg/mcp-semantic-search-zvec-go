@@ -1,0 +1,10 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 3,
+    "symbol_name": "Widget",
+    "symbol_kind": "function",
+    "chunk_strategy": "ast",
+    "parent_scope": "module sample"
+  }
+]

@@ -7,11 +7,22 @@ import (
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
+	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
+	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
+	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 
 var (
-	goLanguage     *sitter.Language
-	goLanguageOnce sync.Once
+	goLanguage         *sitter.Language
+	goLanguageOnce     sync.Once
+	pythonLanguage     *sitter.Language
+	pythonLanguageOnce sync.Once
+	jsLanguage         *sitter.Language
+	jsLanguageOnce     sync.Once
+	tsLanguage         *sitter.Language
+	tsLanguageOnce     sync.Once
+	tsxLanguage        *sitter.Language
+	tsxLanguageOnce    sync.Once
 )
 
 func goLang() *sitter.Language {
@@ -19,6 +30,34 @@ func goLang() *sitter.Language {
 		goLanguage = sitter.NewLanguage(tree_sitter_go.Language())
 	})
 	return goLanguage
+}
+
+func pythonLang() *sitter.Language {
+	pythonLanguageOnce.Do(func() {
+		pythonLanguage = sitter.NewLanguage(tree_sitter_python.Language())
+	})
+	return pythonLanguage
+}
+
+func javascriptLang() *sitter.Language {
+	jsLanguageOnce.Do(func() {
+		jsLanguage = sitter.NewLanguage(tree_sitter_javascript.Language())
+	})
+	return jsLanguage
+}
+
+func typescriptLang() *sitter.Language {
+	tsLanguageOnce.Do(func() {
+		tsLanguage = sitter.NewLanguage(tree_sitter_typescript.LanguageTypescript())
+	})
+	return tsLanguage
+}
+
+func tsxLang() *sitter.Language {
+	tsxLanguageOnce.Do(func() {
+		tsxLanguage = sitter.NewLanguage(tree_sitter_typescript.LanguageTSX())
+	})
+	return tsxLanguage
 }
 
 type parserPool struct {
@@ -57,3 +96,11 @@ func (p *parserPool) parseTree(src []byte) (*sitter.Parser, *sitter.Tree, error)
 }
 
 var goParserPool = newParserPool(goLang())
+
+func parserPoolForLang(lang string) *parserPool {
+	spec, ok := grammars[lang]
+	if !ok || spec.pool == nil {
+		return goParserPool
+	}
+	return spec.pool
+}

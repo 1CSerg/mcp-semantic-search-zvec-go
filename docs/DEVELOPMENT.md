@@ -10,7 +10,7 @@
 
 ## Clone and build
 
-Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"` — то же, что GitHub Release и install). Для **AST hybrid chunking** по `.go` нужна отдельная сборка `-tags "zvec,onnx,treesitter"` (см. [tree-sitter](#tree-sitter-hybrid-ast-chunking)); без `treesitter` даже при `strategy: hybrid` все файлы, включая `.go`, идут через `line_window`.
+Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"` — то же, что GitHub Release и install). Для **AST hybrid chunking** (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`) нужна отдельная сборка `-tags "zvec,onnx,treesitter"` (см. [tree-sitter](#tree-sitter-hybrid-ast-chunking)); без `treesitter` даже при `strategy: hybrid` все файлы идут через `line_window`.
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
@@ -106,8 +106,8 @@ Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go)
 | Command | Tags | Result |
 |---------|------|--------|
 | `go test ./...` | default (`!zvec`) | Stub store, no native deps |
-| `make build-zvec` | `zvec,onnx` | **Shipped** production binary (Release, install scripts): zvec + ONNX; hybrid config without AST on `.go` |
-| `go build -tags "zvec,onnx,treesitter"` | `zvec,onnx,treesitter` | Full hybrid: `.go` → AST when `languages.go.enabled` |
+| `make build-zvec` | `zvec,onnx` | **Shipped** production binary (Release, install scripts): zvec + ONNX; hybrid config without AST |
+| `go build -tags "zvec,onnx,treesitter"` | `zvec,onnx,treesitter` | Full hybrid: enabled languages → AST (go, python, javascript, typescript/tsx) |
 | `go test -tags "zvec,treesitter" ./internal/indexer/chunk/...` | `zvec,treesitter` | AST chunking tests (CGO + tree-sitter) |
 | `make test-integration` | `integration,zvec` | Spike gate tests |
 
@@ -122,13 +122,13 @@ Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.0` into `
 
 ### tree-sitter (hybrid AST chunking)
 
-AST chunking for Go uses [go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter) with build tag **`treesitter`** (requires CGO, same toolchain as zvec-go). **Release/install binaries omit `treesitter`** until the release pipeline adds it; contributors build hybrid locally with the tag below.
+AST chunking uses [go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter) with build tag **`treesitter`** (requires CGO, same toolchain as zvec-go). Registered grammars: **go**, **python**, **javascript**, **typescript**, **tsx** (`.jsx` → tsx parser). **Release/install binaries omit `treesitter`** until the release pipeline adds it; contributors build hybrid locally with the tag below.
 
 | Build | Tags | Behavior |
 |-------|------|----------|
-| Stub | (none) | No zvec, no AST; `ast.ChunkGo` returns `ErrNotImplemented` |
+| Stub | (none) | No zvec, no AST; `ast.ChunkLanguage` returns `ErrNotImplemented` |
 | Shipped / Release / install | `zvec,onnx` or `zvec,!treesitter` | All files use `line_window` (router falls back when AST unavailable) |
-| Full hybrid (local/CI) | `zvec,onnx,treesitter` | Hybrid: enabled `.go` → AST cAST; others → `line_window` |
+| Full hybrid (local/CI) | `zvec,onnx,treesitter` | Hybrid: enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`) → AST cAST; others → `line_window` |
 
 Verify CGO + grammar linkage (spike gate):
 
@@ -149,7 +149,7 @@ Windows (PowerShell):
 go test -tags "zvec,treesitter" ./internal/indexer/chunk/...
 ```
 
-Grammars are vendored via Go modules (`tree-sitter-go`); fetch scripts only verify compile/link. CI runs `treesitter-chunk` on Linux and AST chunk tests on Windows (`test-windows` job).
+Grammars are vendored via Go modules (`tree-sitter-go`, `tree-sitter-python`, `tree-sitter-javascript`, `tree-sitter-typescript`); fetch scripts only verify compile/link. CI runs `treesitter-chunk` on Linux and AST chunk tests on Windows (`test-windows` job).
 
 ### ONNX (local offline)
 

@@ -43,7 +43,7 @@ Search results may include **`symbol_name`**, **`symbol_kind`**, **`parent_scope
 
 - Empty search while indexing is idle
 - Embedding profile changed in `config.yaml`
-- Chunking settings changed (`chunking.strategy`, `chunking.version`, `languages.*`, `context_prefix`, embed budget) or upgrade to a `treesitter` binary for AST on `.go`
+- Chunking settings changed (`chunking.strategy`, `chunking.version`, `languages.*`, `context_prefix`, embed budget) or upgrade to a `treesitter` binary for AST on enabled extensions (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`)
 - `index_owner_mismatch` or `identity_mismatch` → `reindex` with `force: true`
 
 Native install (`AUTO_INDEX_ON_START=true`) reindexes on MCP start; shared daemon + `--stdio-proxy` does not — call `reindex` manually.

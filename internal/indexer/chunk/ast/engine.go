@@ -22,6 +22,7 @@ var (
 const parseErrorRateThreshold = 0.30
 
 type engine struct {
+	lang           string
 	rel            string
 	src            []byte
 	cfg            Config
@@ -34,17 +35,21 @@ type engine struct {
 	minTokens      int
 }
 
-// ChunkGo parses Go source and emits AST chunks via callback (no slice accumulation).
-func ChunkGo(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+// ChunkLanguage parses source for the given language and emits AST chunks.
+func ChunkLanguage(lang, relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
 	if counter == nil {
 		counter = &token.HeuristicCounter{}
 	}
-	parser, tree, err := goParserPool.parseTree(content)
+	if _, ok := grammars[lang]; !ok {
+		return ErrNotImplemented
+	}
+	pool := parserPoolForLang(lang)
+	parser, tree, err := pool.parseTree(content)
 	if err != nil {
 		return err
 	}
 	defer tree.Close()
-	defer goParserPool.release(parser)
+	defer pool.release(parser)
 
 	root := tree.RootNode()
 	if root == nil || root.NamedChildCount() == 0 {
@@ -54,7 +59,7 @@ func ChunkGo(relativePath string, content []byte, cfg Config, counter token.Toke
 		return ErrHighParseErrorRate
 	}
 
-	boundaries, pkgScope, err := indexBoundaries(root, content)
+	boundaries, baseScope, err := indexBoundaries(root, content, lang, relativePath)
 	if err != nil {
 		return err
 	}
@@ -65,16 +70,42 @@ func ChunkGo(relativePath string, content []byte, cfg Config, counter token.Toke
 	}
 
 	eng := &engine{
+		lang:       lang,
 		rel:        filepath.ToSlash(relativePath),
 		src:        content,
 		cfg:        cfg,
 		counter:    counter,
 		emit:       emit,
 		boundaries: boundaries,
-		baseScope:  pkgScope,
+		baseScope:  baseScope,
 		minTokens:  minTokens,
 	}
-	return eng.walkChunk(root, nil, eng.baseScope, nil, eng.baseScope, true)
+	return eng.walkChunk(root, nil, eng.baseScope, nil, eng.baseScope, true, false)
+}
+
+// ChunkGo parses Go source and emits AST chunks via callback (no slice accumulation).
+func ChunkGo(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+	return ChunkLanguage("go", relativePath, content, cfg, counter, emit)
+}
+
+// ChunkPython parses Python source and emits AST chunks.
+func ChunkPython(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+	return ChunkLanguage("python", relativePath, content, cfg, counter, emit)
+}
+
+// ChunkJavaScript parses JavaScript source and emits AST chunks.
+func ChunkJavaScript(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+	return ChunkLanguage("javascript", relativePath, content, cfg, counter, emit)
+}
+
+// ChunkTypeScript parses TypeScript source and emits AST chunks.
+func ChunkTypeScript(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+	return ChunkLanguage("typescript", relativePath, content, cfg, counter, emit)
+}
+
+// ChunkTSX parses TSX source and emits AST chunks.
+func ChunkTSX(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+	return ChunkLanguage("tsx", relativePath, content, cfg, counter, emit)
 }
 
 func parseErrorRate(root *sitter.Node) float64 {
@@ -101,7 +132,7 @@ func parseErrorRate(root *sitter.Node) float64 {
 	return float64(errs) / float64(total)
 }
 
-func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope, parent *BoundaryMeta, enclosingScope Scope, emitGroupPreamble bool) error {
+func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope, parent *BoundaryMeta, enclosingScope Scope, emitGroupPreamble, extractOnly bool) error {
 	e.parentMeta = parent
 	e.enclosingScope = enclosingScope
 	for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -113,15 +144,39 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
 				return err
 			}
-			ps := parentScopeForBoundary(scope, meta)
+			ps := parentScopeForBoundary(scope, meta, e.lang)
 			budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
 			if e.tokenSize(child) <= budget {
-				if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
-					return err
+				if extractOnly {
+					if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
+						return err
+					}
+					if hasBoundaryDescendant(child, e.boundaries) {
+						newScope := extendScope(scope, meta, e.lang)
+						if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
+							return err
+						}
+					}
+				} else {
+					if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
+						return err
+					}
+					if shouldDescendAfterEmit(child) && hasBoundaryDescendant(child, e.boundaries) {
+						newScope := extendScope(scope, meta, e.lang)
+						if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
+							return err
+						}
+					}
+				}
+			} else if isWrapperBoundaryNode(child) {
+				if !extractOnly {
+					if err := e.emitPartial(child, scope, &meta); err != nil {
+						return err
+					}
 				}
 			} else {
-				newScope := extendScope(scope, meta)
-				if err := e.walkChunk(child, nil, newScope, &meta, scope, true); err != nil {
+				newScope := extendScope(scope, meta, e.lang)
+				if err := e.walkChunk(child, nil, newScope, &meta, scope, true, extractOnly); err != nil {
 					return err
 				}
 			}
@@ -132,14 +187,18 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
 				return err
 			}
-			if emitGroupPreamble {
+			if emitGroupPreamble && !extractOnly {
 				if err := e.emitPreambleBeforeFirstBoundary(child, scope); err != nil {
 					return err
 				}
 			}
-			if err := e.walkChunk(child, nil, scope, parent, enclosingScope, false); err != nil {
+			if err := e.walkChunk(child, nil, scope, parent, enclosingScope, false, extractOnly); err != nil {
 				return err
 			}
+			continue
+		}
+
+		if extractOnly {
 			continue
 		}
 
@@ -154,7 +213,7 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 				if err := e.emitPartial(child, scope, parent); err != nil {
 					return err
 				}
-			} else if err := e.walkChunk(child, nil, scope, parent, enclosingScope, true); err != nil {
+			} else if err := e.walkChunk(child, nil, scope, parent, enclosingScope, true, false); err != nil {
 				return err
 			}
 			continue
@@ -172,6 +231,9 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 	}
 	if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
 		return err
+	}
+	if extractOnly {
+		return nil
 	}
 	return e.emitTailAfterChildren(node, scope, parent)
 }
@@ -207,7 +269,7 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 	if parent != nil {
 		symbolName = parent.Name
 		symbolKind = parent.Kind
-		parentScope = parentScopeForBoundary(e.enclosingScope, *parent)
+		parentScope = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
 		if parent.Kind == "function" || parent.Kind == "method" {
 			strategy = "partial"
 		}
@@ -338,7 +400,7 @@ func (e *engine) emitBoundary(node *sitter.Node, meta BoundaryMeta, scope Scope,
 	if ch == nil {
 		return nil
 	}
-	ch.ParentScope = parentScopeForBoundary(scope, meta)
+	ch.ParentScope = parentScopeForBoundary(scope, meta, e.lang)
 	return e.emit(ch)
 }
 
@@ -354,7 +416,7 @@ func (e *engine) emitPartial(node *sitter.Node, scope Scope, parent *BoundaryMet
 	}
 	ps := scope.String()
 	if parent != nil {
-		ps = parentScopeForBoundary(e.enclosingScope, *parent)
+		ps = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
 	}
 	return emitPartialWindows(e.rel, lines, int64(node.StartPosition().Row)+1, e.cfg, e.counter, partialMeta{
 		chunkStrategy: "partial",
@@ -380,7 +442,7 @@ func (e *engine) chunkFromNodes(nodes []sitter.Node, scope Scope, symbolKind, sy
 			Kind:     symbolKind,
 			Name:     symbolName,
 			Captures: e.boundaries[nodes[0].Id()].Captures,
-		})
+		}, e.lang)
 	}
 	return &zvec.Chunk{
 		DocID:         docID(e.rel, int64(start), int64(end), symbolName),
@@ -430,11 +492,37 @@ func symbolKindForBufferNodes(nodes []sitter.Node) string {
 	return ""
 }
 
+func isWrapperBoundaryNode(node *sitter.Node) bool {
+	if node == nil {
+		return false
+	}
+	switch node.Kind() {
+	case "decorated_definition", "export_statement":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldDescendAfterEmit(node *sitter.Node) bool {
+	if node == nil {
+		return false
+	}
+	switch node.Kind() {
+	case "decorated_definition", "class_definition", "class_declaration", "export_statement":
+		return true
+	default:
+		return false
+	}
+}
+
 func isIndivisibleStatement(node *sitter.Node) bool {
 	switch node.Kind() {
 	case "if_statement", "for_statement", "switch_statement", "select_statement",
 		"expression_statement", "return_statement", "assign_statement", "short_var_declaration",
-		"inc_statement", "dec_statement", "go_statement", "defer_statement":
+		"inc_statement", "dec_statement", "go_statement", "defer_statement",
+		"while_statement", "try_statement", "with_statement", "for_in_statement",
+		"break_statement", "continue_statement", "import_statement", "import_from_statement":
 		return true
 	default:
 		return false
@@ -461,7 +549,7 @@ func ParseGoTree(src []byte) (*sitter.Tree, func(), error) {
 
 // IndexGoBoundaries exposes boundary indexing for unit tests.
 func IndexGoBoundaries(root *sitter.Node, src []byte) (map[uintptr]BoundaryMeta, Scope, error) {
-	return indexBoundaries(root, src)
+	return indexBoundaries(root, src, "go", "")
 }
 
 // FormatTestError helps tests report walk failures.

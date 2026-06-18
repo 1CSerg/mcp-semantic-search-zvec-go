@@ -14,6 +14,8 @@ import (
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+
+	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 type goldenChunk struct {
@@ -218,11 +220,11 @@ func TestReceiverScopeNormalization(t *testing.T) {
 func TestExtendScopeGo(t *testing.T) {
 	base := PackageScope("main")
 	meta := BoundaryMeta{Kind: "method", Name: "Foo", Captures: map[string]string{"scope.receiver": "*Server"}}
-	scope := extendScope(base, meta)
+	scope := extendScope(base, meta, "go")
 	if scope.String() != "package main > type Server > method Foo" {
 		t.Fatalf("scope=%q", scope.String())
 	}
-	ps := parentScopeForBoundary(base, meta)
+	ps := parentScopeForBoundary(base, meta, "go")
 	if ps != "package main > type Server" {
 		t.Fatalf("parent scope=%q", ps)
 	}
@@ -343,9 +345,105 @@ func TestBoundaryKindDefault(t *testing.T) {
 	if got := boundaryKindFromCapture("boundary.custom"); got != "custom" {
 		t.Fatalf("got %q", got)
 	}
+	if got := boundaryKindFromCapture("boundary.namespace"); got != "namespace" {
+		t.Fatalf("got %q", got)
+	}
 	if got := boundaryKindFromCapture("other"); got != "" {
 		t.Fatalf("got %q", got)
 	}
+}
+
+func TestWrapperBoundaryHelpers(t *testing.T) {
+	if isWrapperBoundaryNode(nil) || shouldDescendAfterEmit(nil) {
+		t.Fatal("nil node must be false")
+	}
+	src := []byte("export class A { m() {} }\n")
+	pool := parserPoolForLang("typescript")
+	parser, tree, err := pool.parseTree(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Close()
+	defer pool.release(parser)
+	var exportNode, classNode *sitter.Node
+	var walk func(*sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n == nil {
+			return
+		}
+		switch n.Kind() {
+		case "export_statement":
+			exportNode = n
+		case "class_declaration":
+			classNode = n
+		}
+		for i := uint(0); i < n.NamedChildCount(); i++ {
+			walk(n.NamedChild(i))
+		}
+	}
+	walk(tree.RootNode())
+	if exportNode == nil || classNode == nil {
+		t.Fatal("expected export and class nodes")
+	}
+	if !isWrapperBoundaryNode(exportNode) {
+		t.Fatal("export_statement must be wrapper boundary")
+	}
+	if !shouldDescendAfterEmit(exportNode) || !shouldDescendAfterEmit(classNode) {
+		t.Fatal("export/class must descend after emit")
+	}
+	if isWrapperBoundaryNode(classNode) {
+		t.Fatal("class_declaration must not be wrapper boundary")
+	}
+}
+
+func TestWrapperBoundaryOversizePartial(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "testdata", "python", "sample.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := collectLangChunks(t, "python", "testdata/python/sample.py", src, 40)
+	found := false
+	for _, ch := range chunks {
+		if ch.SymbolName == "handler" && ch.ChunkStrategy == "partial" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected partial handler chunks, got %+v", toGolden(chunks))
+	}
+}
+
+func TestModuleLevelAssignmentFilter(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "testdata", "python", "sample.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := parserPoolForLang("python")
+	parser, tree, err := pool.parseTree(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Close()
+	defer pool.release(parser)
+	bounds, _, err := indexBoundaries(tree.RootNode(), src, "python", "sample.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var walk func(*sitter.Node)
+	walk = func(n *sitter.Node) {
+		if n == nil {
+			return
+		}
+		if meta, ok := bounds[n.Id()]; ok && meta.Kind == "module_var" {
+			if !isModuleLevelNode(n) {
+				t.Fatalf("nested module_var boundary at line %d", n.StartPosition().Row+1)
+			}
+		}
+		for i := uint(0); i < n.NamedChildCount(); i++ {
+			walk(n.NamedChild(i))
+		}
+	}
+	walk(tree.RootNode())
 }
 
 func TestPackageScopeEmpty(t *testing.T) {
@@ -364,7 +462,7 @@ func TestExtendScopeTypeConstVar(t *testing.T) {
 		{"var", "V", "package p > var V"},
 	}
 	for _, tc := range cases {
-		got := extendScope(base, BoundaryMeta{Kind: tc.kind, Name: tc.name}).String()
+		got := extendScope(base, BoundaryMeta{Kind: tc.kind, Name: tc.name}, "go").String()
 		if got != tc.want {
 			t.Fatalf("%s: got %q want %q", tc.kind, got, tc.want)
 		}

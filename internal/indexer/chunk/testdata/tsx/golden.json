@@ -1,0 +1,26 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 1,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "module sample"
+  },
+  {
+    "start_line": 3,
+    "end_line": 5,
+    "symbol_name": "Greeting",
+    "symbol_kind": "function",
+    "chunk_strategy": "ast",
+    "parent_scope": "module sample"
+  },
+  {
+    "start_line": 7,
+    "end_line": 9,
+    "symbol_name": "App",
+    "symbol_kind": "function",
+    "chunk_strategy": "ast",
+    "parent_scope": "module sample"
+  }
+]
