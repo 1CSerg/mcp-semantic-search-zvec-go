@@ -98,7 +98,7 @@ If merge dependencies are missing and `config.yaml` already exists, install **pr
 
 After moving the project to a new path, call MCP `reindex` with `force: true`, use the Windows GUI force rebuild action, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
 
-**Hybrid chunking upgrade:** after updating to a server with hybrid chunking config (or switching to a `treesitter` build), run MCP `reindex` with `force: true` so `symbol_name`, `parent_scope`, `chunk_strategy`, and `chunking_version` in `index_meta.json` match the new pipeline. Shipped install binary (`-tags "zvec,onnx"`) indexes `.md`, `.markdown`, `.mdc`, `.txt` via the prose chunker; code extensions via `line_window`; AST fields on code appear only after reindex with a `treesitter` binary.
+**Hybrid chunking upgrade:** after updating to a server with hybrid chunking config (or upgrading from a legacy binary without `treesitter`), run MCP `reindex` with `force: true` so `symbol_name`, `parent_scope`, `chunk_strategy`, and `chunking_version` in `index_meta.json` match the new pipeline. Shipped install binary (`-tags "zvec,onnx,treesitter"`) indexes `.md`, `.markdown`, `.mdc`, `.txt` via the prose chunker and enabled code extensions via AST cAST; legacy `-tags "zvec,onnx"` builds fall back to `line_window` for code.
 
 ## Configure secrets
 
@@ -260,10 +260,10 @@ Plain `go build` without tags produces a **stub** binary (no zvec/ONNX — seman
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
 make fetch-zvec-libs
-make build-zvec    # -tags "zvec,onnx" — prose for .md/.txt; line_window for code without treesitter
+make build-zvec    # -tags "zvec,onnx,treesitter" — same as GitHub Release and install scripts
 ```
 
-For **AST hybrid chunking** on enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, **1C** `.bsl`/`.os` via tree-sitter-bsl; `.dcs` SDBL query blocks when `languages.bsl.include_sdbl: true` — heuristic, not tree-sitter), build locally with `-tags "zvec,onnx,treesitter"` — not included in current Release/install builds.
+Shipped Release/install builds include full hybrid AST for enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, **1C** `.bsl`/`.os` via tree-sitter-bsl; `.dcs` SDBL query blocks when `languages.bsl.include_sdbl: true` — heuristic, not tree-sitter). Legacy fallback without AST: `-tags "zvec,onnx"` or `zvec,!treesitter` (prose for `.md`/`.txt`; `line_window` for code).
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows CGO, ONNX runtime, tree-sitter, and cross-compile notes.
 
@@ -282,7 +282,7 @@ Edit `.mcp-semantic-search-zvec-go/config.yaml` and `.env`:
 
 1. Set `active_profile: local_multilingual` in `config.yaml`.
 2. Download model bundle into `.mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2/` (see [docs/CONFIG.md](docs/CONFIG.md)).
-3. Re-run install or ensure production binary includes `-tags "zvec,onnx"` and ships `onnxruntime` + `zvec` runtime libraries next to the executable.
+3. Re-run install or ensure production binary includes `-tags "zvec,onnx,treesitter"` and ships `onnxruntime` + `zvec` runtime libraries next to the executable.
 4. Run `reindex` with `force: true`.
 
 See [docs/CONFIG.md](docs/CONFIG.md).

@@ -22,6 +22,19 @@ const (
 	fieldEmbedding     = "embedding"
 )
 
+var searchOutputFields = []string{
+	fieldPath,
+	fieldStartLine,
+	fieldEndLine,
+	fieldChunkType,
+	fieldName,
+	fieldSnippet,
+	fieldSymbolName,
+	fieldSymbolKind,
+	fieldParentScope,
+	fieldChunkStrategy,
+}
+
 func buildSchema(collectionName string, dimensions int) (*zvec.CollectionSchema, error) {
 	if dimensions <= 0 {
 		return nil, fmt.Errorf("embedding dimensions must be positive")

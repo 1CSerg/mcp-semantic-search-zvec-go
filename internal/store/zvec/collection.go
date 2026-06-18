@@ -188,7 +188,7 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 	if err := q.SetTopK(queryTopK); err != nil {
 		return nil, err
 	}
-	if err := q.SetOutputFields([]string{fieldPath, fieldStartLine, fieldEndLine, fieldChunkType, fieldName, fieldSnippet}); err != nil {
+	if err := q.SetOutputFields(searchOutputFields); err != nil {
 		return nil, err
 	}
 	if err := q.SetQueryVector(vector); err != nil {

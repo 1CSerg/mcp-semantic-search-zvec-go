@@ -189,7 +189,7 @@ Config key `languages.typescript.enabled` also enables `.jsx` and `.tsx` (router
 6. **Partial fallback:** oversized AST nodes split via `line_window` inside the parent scope; `chunk_strategy: partial`.
 7. **Identity:** `index_meta.json` stores `chunking_version` / `chunking_strategy`; mismatch → `identity_mismatch` → `reindex` with `force: true`.
 
-Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`: prose extensions still use the prose chunker; code extensions fall back to `line_window`. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
+Shipped Release/install binary uses `-tags "zvec,onnx,treesitter"`: prose extensions → prose chunker; enabled code langs → AST cAST; legacy `-tags "zvec,onnx"` fallback → `line_window` for code. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
 
 ## Resilience
 
@@ -209,6 +209,13 @@ Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`: pr
 | Panic recovery | Search, background indexing, and workspace init catch panics to prevent process crash |
 | Crash-safe deletion rows | Reindex/purge deletes zvec chunks before SQLite manifest rows so a crash cannot orphan vectors with no manifest trail |
 | Indexing lifecycle | Background `Coordinator.run` uses process/workspace ctx; stops on shutdown/eviction, not on reindex client disconnect |
+
+### Windows Cyrillic INDEX_DIR
+
+- zvec collections remain on disk under `INDEX_DIR/zvec/ws_<hash>/`; do **not** relocate them to user cache for non-ASCII paths.
+- `collectionMmapEnabled` disables mmap when the collection path contains non-ASCII characters (avoids corrupt `scalar.*.ipc` segments); search and indexing still work in-place.
+- Integration test: `TestIntegrationCyrillicIndexDir` (`integration,zvec,windows`).
+- `Can't open lock file` on a Cyrillic path in `--stdio` mode is handled by the lock recovery row above (duplicate stdio + stale LOCK reclaim), not by changing `INDEX_DIR`.
 
 ## Security
 

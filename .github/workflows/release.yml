@@ -72,6 +72,20 @@ jobs:
             if ($_ -match '^(.*?)=(.*)$') { Add-Content -Path $env:GITHUB_ENV -Value "$($matches[1])=$($matches[2])" }
           }
 
+      - name: Install MSYS2 GCC (Windows tree-sitter)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Fetch tree-sitter grammars (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+
       - name: Build binary (Linux/macOS)
         if: runner.os != 'Windows'
         shell: bash
@@ -85,7 +99,7 @@ jobs:
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           out="dist/mcp-semantic-search-zvec-go_${{ steps.ver.outputs.version }}_${GOOS}_${GOARCH}${ext}"
           mkdir -p dist/release-libs
-          go build -tags "zvec,onnx" -ldflags="-s -w" -o "$out" ./cmd/mcp-semantic-search-zvec-go
+          go build -tags "zvec,onnx,treesitter" -ldflags="-s -w" -o "$out" ./cmd/mcp-semantic-search-zvec-go
           pkg="dist/pkg-${GOOS}-${GOARCH}"
           mkdir -p "$pkg"
           cp -f "$out" "$pkg/"
@@ -106,7 +120,7 @@ jobs:
         run: |
           $out = "dist/mcp-semantic-search-zvec-go_${{ steps.ver.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
           New-Item -ItemType Directory -Force -Path dist/release-libs | Out-Null
-          go build -tags "zvec,onnx" -ldflags="-s -w" -o $out ./cmd/mcp-semantic-search-zvec-go
+          go build -tags "zvec,onnx,treesitter" -ldflags="-s -w" -o $out ./cmd/mcp-semantic-search-zvec-go
           Copy-Item -Force "$env:ZVEC_LIB_DIR/zvec_c_api.dll" dist/release-libs/
           Copy-Item -Force "$env:ONNXRUNTIME_SHARED_LIBRARY_PATH" dist/release-libs/
           Compress-Archive -Path $out, dist/release-libs/* -DestinationPath "dist/mcp-semantic-search-zvec-go_${{ steps.ver.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip" -Force

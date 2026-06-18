@@ -276,7 +276,9 @@ Identity fields (when `index_meta.json` exists): `active_profile`, `index_embedd
 
 When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Skipped paths (up to 20) appear in `indexing.failed_files`. Details are also in `diagnostics.log_file` (`index file skipped` in server.log). Via shared daemon proxy without `API_TOKEN`, `failed_files`, `current_file`, and path fields are redacted — see [Open daemon redaction](#open-daemon-redaction).
 
-`diagnostics` includes `log_dir`, `log_file`, and optional hints: `synced_cloud_drive_suspected` (Google Drive/YandexDisk paths), `unicode_index_path_suspected` only when zvec fails to open a non-ASCII `INDEX_DIR` on Windows. With v0.1.5+, Cyrillic paths are supported when `zvec_open_ok` is true.
+`diagnostics` includes `log_dir`, `log_file`, and optional hints: `synced_cloud_drive_suspected` (Google Drive/YandexDisk paths), `non_ascii_index_dir` / `unicode_paths_supported` on Windows non-ASCII `INDEX_DIR`. With v0.1.5+, Cyrillic paths are supported when `zvec_open_ok` is true: zvec collections stay under `INDEX_DIR/zvec/ws_<hash>/` (mmap disabled for non-ASCII paths on Windows; see `internal/store/zvec/mmap_windows.go`).
+
+On Windows, `Can't open lock file` under a Cyrillic `INDEX_DIR` is **usually duplicate MCP `--stdio` processes or a stale zvec LOCK**, not path encoding. Check `diagnostics.duplicate_stdio_suspected` and [INSTALL.md](../INSTALL.md) § «zvec LOCK / duplicate MCP». Moving `INDEX_DIR` to an ASCII path is a last-resort fallback, not the primary fix.
 
 Fatal failures (embed provider down, `index_owner_mismatch`, stall) still set `indexing.state` to `error`.
 

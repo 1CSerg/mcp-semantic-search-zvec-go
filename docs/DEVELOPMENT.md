@@ -10,7 +10,7 @@
 
 ## Clone and build
 
-Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"` — то же, что GitHub Release и install). Для **AST hybrid chunking** (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) нужна отдельная сборка `-tags "zvec,onnx,treesitter"` (см. [tree-sitter](#tree-sitter-hybrid-ast-chunking)); без `treesitter` при `strategy: hybrid` кодовые расширения идут через `line_window`, а `.md`/`.markdown`/`.mdc`/`.txt` — через **prose** chunker.
+Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx,treesitter"` — то же, что GitHub Release и install). При `strategy: hybrid` shipped-бинарник индексирует `.md`/`.markdown`/`.mdc`/`.txt` через **prose** chunker; enabled code langs (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) — через AST cAST; остальные расширения — `line_window`.
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
@@ -107,8 +107,8 @@ Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go)
 | Command | Tags | Result |
 |---------|------|--------|
 | `go test ./...` | default (`!zvec`) | Stub store, no native deps |
-| `make build-zvec` | `zvec,onnx` | **Shipped** production binary (Release, install scripts): zvec + ONNX; hybrid prose + `line_window` fallback for code without AST |
-| `go build -tags "zvec,onnx,treesitter"` | `zvec,onnx,treesitter` | Full hybrid: enabled languages → AST (go, python, javascript, typescript/tsx, bsl) |
+| `make build-zvec` | `zvec,onnx,treesitter` | **Shipped** production binary (Release, install scripts): zvec + ONNX + tree-sitter; full hybrid (prose + AST for enabled langs) |
+| `go build -tags "zvec,onnx"` or `zvec,!treesitter` | without `treesitter` | Legacy/fallback: prose + `line_window` for code when AST unavailable |
 | `go test -tags "zvec,treesitter" ./internal/indexer/chunk/...` | `zvec,treesitter` | AST chunking tests (CGO + tree-sitter) |
 | `make test-integration` | `integration,zvec` | Spike gate tests |
 
@@ -123,13 +123,13 @@ Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.0` into `
 
 ### tree-sitter (hybrid AST chunking)
 
-AST chunking uses [go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter) **v0.25+** (ABI 15 for `tree-sitter-bsl`) with build tag **`treesitter`** (requires CGO, same toolchain as zvec-go). Registered grammars: **go**, **python**, **javascript**, **typescript**, **tsx** (`.jsx` → tsx parser), **bsl** (`.bsl`, `.os`; SDBL via heuristic chunker when `include_sdbl: true`). **Release/install binaries omit `treesitter`** until the release pipeline adds it; contributors build hybrid locally with the tag below.
+AST chunking uses [go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter) **v0.25+** (ABI 15 for `tree-sitter-bsl`) with build tag **`treesitter`** (requires CGO, same toolchain as zvec-go). Registered grammars: **go**, **python**, **javascript**, **typescript**, **tsx** (`.jsx` → tsx parser), **bsl** (`.bsl`, `.os`; SDBL via heuristic chunker when `include_sdbl: true`). **Release/install binaries include `treesitter`** in production tags.
 
 | Build | Tags | Behavior |
 |-------|------|----------|
 | Stub | (none) | No zvec, no AST; `ast.ChunkLanguage` returns `ErrNotImplemented` |
-| Shipped / Release / install | `zvec,onnx` or `zvec,!treesitter` | Prose extensions (`.md`, `.markdown`, `.mdc`, `.txt`) → prose chunker; code extensions → `line_window` when AST unavailable |
-| Full hybrid (local/CI) | `zvec,onnx,treesitter` | Prose extensions → prose; enabled code langs (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) → AST cAST; `.dcs` query blocks when `bsl.include_sdbl`; others → `line_window` |
+| Shipped / Release / install | `zvec,onnx,treesitter` | Prose extensions → prose; enabled code langs → AST cAST; `.dcs` query blocks when `bsl.include_sdbl`; others → `line_window` |
+| Legacy fallback (CI) | `zvec,onnx` or `zvec,!treesitter` | Prose extensions → prose chunker; code extensions → `line_window` when AST unavailable |
 
 Verify CGO + grammar linkage (spike gate):
 
@@ -169,7 +169,7 @@ Local embeddings use [onnxruntime_go](https://github.com/yalue/onnxruntime_go) w
 ```bash
 make fetch-onnx-runtime   # .deps/onnxruntime.env
 make fetch-onnx-model     # default bundle under .mcp-semantic-search-zvec-go/models/...
-make build-zvec           # -tags "zvec,onnx"
+make build-zvec           # -tags "zvec,onnx,treesitter"
 ```
 
 Env:
@@ -286,7 +286,9 @@ make test-integration
 | 7 | Kill -9 then stale lock handling | Next process reclaims (app-level) |
 | 8 | Windows MSVC/MinGW build | Binary runs on target host |
 
-Code: `internal/store/zvec/store.go`, tests in `store_integration_test.go` (`TestIntegrationSpikeChecklist`, tags `integration,zvec`).
+Code: `internal/store/zvec/store.go`, tests in `store_integration_test.go` (`TestIntegrationSpikeChecklist`, tags `integration,zvec`). Windows Cyrillic path smoke: `store_cyrillic_integration_test.go` (`TestIntegrationCyrillicIndexDir`).
+
+**Contributor note (Windows LOCK):** if zvec reports `Can't open lock file` on a non-ASCII `INDEX_DIR`, investigate duplicate `--stdio` MCP processes and stale LOCK reclaim (`PrepareStdio`, `openZvecWithRecovery`) before assuming path encoding failure. **Do not** relocate zvec collections to `%LOCALAPPDATA%` or another ASCII-only root solely because `INDEX_DIR` contains Cyrillic characters.
 
 | Outcome | Action |
 |---------|--------|

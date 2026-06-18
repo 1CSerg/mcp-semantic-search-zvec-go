@@ -45,14 +45,14 @@ try {
     $out = Join-Path $RepoRoot "bin\mcp-semantic-search-zvec-go.exe"
     $buildArgs = @(
         "build",
-        "-tags", "zvec,onnx",
+        "-tags", "zvec,onnx,treesitter",
         "-o", $out,
         ".\cmd\mcp-semantic-search-zvec-go"
     )
     if ($Release) {
         $buildArgs = @(
             "build",
-            "-tags", "zvec,onnx",
+            "-tags", "zvec,onnx,treesitter",
             "-ldflags", "-s -w",
             "-o", $out,
             ".\cmd\mcp-semantic-search-zvec-go"
@@ -68,7 +68,7 @@ try {
     if (Test-Path $ortDll) {
         Copy-Item -Force $ortDll bin\ -ErrorAction SilentlyContinue
     }
-    $mode = if ($Release) { "release (tags: zvec,onnx; -ldflags -s -w)" } else { "tags: zvec,onnx" }
+    $mode = if ($Release) { "release (tags: zvec,onnx,treesitter; -ldflags -s -w)" } else { "tags: zvec,onnx,treesitter" }
     Write-Host "Built bin\mcp-semantic-search-zvec-go.exe ($mode)"
     if ($Release) {
         & $out --version

@@ -29,8 +29,8 @@ esac
 
 out="bin/mcp-semantic-search-zvec-go${ext}"
 CGO_ENABLED=1 LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
-  go build -tags "zvec,onnx" -ldflags="-s -w" -o "$out" ./cmd/mcp-semantic-search-zvec-go
+  go build -tags "zvec,onnx,treesitter" -ldflags="-s -w" -o "$out" ./cmd/mcp-semantic-search-zvec-go
 cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" bin/ 2>/dev/null || true
 
 "$out" --version
-echo "Built $out (release: zvec,onnx; -ldflags -s -w)"
+echo "Built $out (release: zvec,onnx,treesitter; -ldflags -s -w)"

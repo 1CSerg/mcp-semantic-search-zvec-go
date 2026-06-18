@@ -11,6 +11,11 @@
 *.out
 coverage.out
 coverage-internal.out
+coverage-ast
+coverage-chunk
+prose_cov
+.search-verify-results.json
+.snippet-verify.json
 /coverage
 /prof
 /covlifecycle

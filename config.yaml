@@ -200,7 +200,7 @@ indexing:
   # Максимальная длина одной строки (байты); 0 — без лимита.
   max_line_bytes: 1048576
   # Гибридный AST-чанкинг (Phase 1b: Go; Phase 1c: python/javascript/typescript; Phase 1d: bsl; Phase 1e: prose .md/.txt).
-  # Shipped install binary (-tags zvec,onnx): .md/.markdown/.mdc/.txt → prose; код без treesitter → line_window.
+  # Shipped install binary (-tags zvec,onnx,treesitter): prose для .md/.txt; AST для enabled languages.
   chunking:
     # hybrid | line_window (line_window — legacy slideWindow)
     strategy: hybrid

@@ -36,3 +36,18 @@ func TestChunkToDocDocToSearchHitSymbolFields(t *testing.T) {
 		t.Fatalf("hit=%+v chunk=%+v", hit, chunk)
 	}
 }
+
+func TestSearchOutputFieldsIncludesSymbolFields(t *testing.T) {
+	want := map[string]bool{
+		fieldSymbolName:    true,
+		fieldSymbolKind:    true,
+		fieldParentScope:   true,
+		fieldChunkStrategy: true,
+	}
+	for _, f := range searchOutputFields {
+		delete(want, f)
+	}
+	if len(want) != 0 {
+		t.Fatalf("searchOutputFields missing: %v", want)
+	}
+}

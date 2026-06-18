@@ -109,6 +109,9 @@ func TestEnrichIndexStatusDiagnosticsUnicodeHint(t *testing.T) {
 	if d["unicode_paths_supported"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
+	if _, ok := d["zvec_storage_relocated"]; ok {
+		t.Fatalf("unexpected zvec_storage_relocated: %v", d)
+	}
 	if _, ok := d["unicode_index_path_suspected"]; ok {
 		t.Fatalf("unexpected unicode_index_path_suspected when zvec open ok: %v", d)
 	}
@@ -128,8 +131,12 @@ func TestEnrichIndexStatusDiagnosticsUnicodeZvecFailure(t *testing.T) {
 	}
 	d := indexStatusDiagnostics(settings)
 	enrichIndexStatusDiagnostics(d, settings, 0, 0, 0, false, 0, false)
-	if d["unicode_index_path_suspected"] != true {
-		t.Fatalf("diagnostics=%v", d)
+	if _, ok := d["unicode_index_path_suspected"]; ok {
+		t.Fatalf("unexpected unicode_index_path_suspected: %v", d)
+	}
+	hint, _ := d["hint"].(string)
+	if !strings.Contains(hint, "duplicate MCP stdio") {
+		t.Fatalf("hint=%q", hint)
 	}
 }
 

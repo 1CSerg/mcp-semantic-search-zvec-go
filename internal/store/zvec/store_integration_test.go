@@ -142,3 +142,43 @@ func TestIntegrationSpikeChecklist(t *testing.T) {
 		t.Fatalf("Close store3: %v", err)
 	}
 }
+
+func TestIntegrationSearchReturnsSymbolFields(t *testing.T) {
+	indexDir := t.TempDir()
+	cfg := testConfig(t, indexDir)
+	store := New(cfg).(*CollectionStore)
+
+	chunks := []Chunk{{
+		DocID:         "sym-doc",
+		RelativePath:  "pkg/auth.go",
+		StartLine:     1,
+		EndLine:       5,
+		ChunkType:     "code",
+		Name:          "Auth",
+		Snippet:       "func Auth() {}",
+		SymbolName:    "Auth",
+		SymbolKind:    "function",
+		ParentScope:   "package pkg",
+		ChunkStrategy: "hybrid",
+	}}
+	vectors := [][]float32{unitVector(0, testDims)}
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks: %v", err)
+	}
+
+	hits, err := store.Search(unitVector(0, testDims), 1, "")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits=%d want 1", len(hits))
+	}
+	h := hits[0]
+	if h.SymbolName != "Auth" || h.SymbolKind != "function" || h.ParentScope != "package pkg" || h.ChunkStrategy != "hybrid" {
+		t.Fatalf("symbol fields missing in search hit: %+v", h)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}

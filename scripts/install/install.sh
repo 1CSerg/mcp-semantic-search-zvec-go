@@ -116,7 +116,7 @@ else
   (
     cd "$REPO_ROOT"
     CGO_ENABLED=1 LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${ORT_LIB_DIR}:${LD_LIBRARY_PATH:-}" \
-      go build -tags "zvec,onnx" -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
+      go build -tags "zvec,onnx,treesitter" -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
   )
 fi
 copy_runtime_libs "$BIN_DIR"

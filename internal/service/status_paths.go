@@ -84,10 +84,10 @@ func enrichIndexStatusDiagnostics(
 
 	if runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
 		diag["non_ascii_index_dir"] = true
-		diag["unicode_paths_supported"] = true
-		if !zvecOpenOK {
-			diag["unicode_index_path_suspected"] = true
-			setDiagnosticHint(diag, "zvec failed to open index on a non-ASCII INDEX_DIR; set INDEX_DIR to an ASCII path and run reindex with force=true")
+		if zvecOpenOK {
+			diag["unicode_paths_supported"] = true
+		} else {
+			setDiagnosticHint(diag, "Can't open lock file on a non-ASCII INDEX_DIR is usually duplicate MCP stdio processes or a stale zvec LOCK, not path encoding; restart Cursor and check diagnostics.duplicate_stdio_suspected; zvec stays under INDEX_DIR/zvec/; ASCII INDEX_DIR is a last-resort fallback")
 		}
 	}
 

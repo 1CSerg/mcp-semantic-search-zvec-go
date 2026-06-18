@@ -31,7 +31,7 @@ RUN . .deps/zvec-lib.env \
     && . .deps/onnxruntime.env \
     && CGO_ENABLED=1 \
        LD_LIBRARY_PATH="${ZVEC_LIB_DIR}:${ORT_LIB_DIR}:${LD_LIBRARY_PATH}" \
-       go build -tags "zvec,onnx" \
+       go build -tags "zvec,onnx,treesitter" \
        -ldflags="-s -w -X github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version.Version=${VERSION}" \
        -o /out/mcp-semantic-search-zvec-go ./cmd/mcp-semantic-search-zvec-go
 
