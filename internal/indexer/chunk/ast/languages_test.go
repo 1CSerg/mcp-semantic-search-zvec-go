@@ -61,12 +61,22 @@ var languageFixtures = []langFixture{
 			{SymbolName: "Widget", SymbolKind: "function", ParentScope: "module sample"},
 		},
 	},
+	{
+		lang: "bsl", relPath: "testdata/bsl/sample.bsl", subdir: "bsl", budget: 200,
+		expected: []goldenChunk{
+			{SymbolName: "РассчитатьСумму", SymbolKind: "procedure", ParentScope: "module sample > region СлужебныеПроцедурыИФункции"},
+		},
+	},
 }
 
 func collectLangChunks(t *testing.T, lang, relPath string, src []byte, budget int) []zvec.Chunk {
 	t.Helper()
 	var out []zvec.Chunk
-	err := ChunkLanguage(lang, relPath, src, testCfg(budget), token.CharCounter{}, func(ch *zvec.Chunk) error {
+	cfg := testCfg(budget)
+	if lang == "bsl" {
+		cfg.IncludeSDBL = true
+	}
+	err := ChunkLanguage(lang, relPath, src, cfg, token.CharCounter{}, func(ch *zvec.Chunk) error {
 		if ch != nil {
 			out = append(out, *ch)
 		}
@@ -92,6 +102,8 @@ func loadLangSample(t *testing.T, subdir string) []byte {
 		path = filepath.Join("..", "testdata", subdir, "sample.tsx")
 	case "jsx":
 		path = filepath.Join("..", "testdata", subdir, "sample.jsx")
+	case "bsl":
+		path = filepath.Join("..", "testdata", subdir, "sample.bsl")
 	default:
 		t.Fatalf("unknown subdir %q", subdir)
 	}
@@ -113,6 +125,9 @@ func TestASTChunker_Languages(t *testing.T) {
 			for _, ch := range chunks {
 				if ch.ChunkStrategy != "ast" && ch.ChunkStrategy != "partial" {
 					t.Fatalf("unexpected strategy %q for %s", ch.ChunkStrategy, fx.lang)
+				}
+				if ch.ChunkType != "code" && ch.ChunkType != "query" {
+					t.Fatalf("unexpected chunk_type %q for %s", ch.ChunkType, fx.lang)
 				}
 			}
 			if len(fx.expected) > 0 {
@@ -198,6 +213,7 @@ func TestChunkLanguageHighParseErrorRate(t *testing.T) {
 		{lang: "python", ext: "py", src: []byte("def (((:\n    pass\n")},
 		{lang: "javascript", ext: "js", src: []byte("const x = {{{\n")},
 		{lang: "typescript", ext: "ts", src: []byte("interface {{{\n")},
+		{lang: "bsl", ext: "bsl", src: []byte("@@@ @@@ @@@ @@@ @@@\n")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.lang, func(t *testing.T) {
@@ -247,6 +263,11 @@ func TestChunkLanguageWrappers(t *testing.T) {
 	}
 	if err := ChunkTSX("a.tsx", srcTSX, cfg, token.CharCounter{}, emit); err != nil {
 		t.Fatalf("ChunkTSX: %v", err)
+	}
+	srcBSL := []byte("Процедура Тест()\nКонецПроцедуры\n")
+	cfg.IncludeSDBL = true
+	if err := ChunkBSL("a.bsl", srcBSL, cfg, token.CharCounter{}, emit); err != nil {
+		t.Fatalf("ChunkBSL: %v", err)
 	}
 }
 

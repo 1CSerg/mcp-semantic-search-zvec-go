@@ -9,6 +9,7 @@ import (
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
+	tree_sitter_bsl "github.com/tree-sitter/tree-sitter-bsl/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 
@@ -23,6 +24,8 @@ var (
 	tsLanguageOnce     sync.Once
 	tsxLanguage        *sitter.Language
 	tsxLanguageOnce    sync.Once
+	bslLanguage        *sitter.Language
+	bslLanguageOnce    sync.Once
 )
 
 func goLang() *sitter.Language {
@@ -58,6 +61,13 @@ func tsxLang() *sitter.Language {
 		tsxLanguage = sitter.NewLanguage(tree_sitter_typescript.LanguageTSX())
 	})
 	return tsxLanguage
+}
+
+func bslLang() *sitter.Language {
+	bslLanguageOnce.Do(func() {
+		bslLanguage = sitter.NewLanguage(tree_sitter_bsl.Language())
+	})
+	return bslLanguage
 }
 
 type parserPool struct {

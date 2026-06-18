@@ -92,9 +92,12 @@ Response (success):
 | Field | Description |
 |-------|-------------|
 | `symbol_name` | Name from AST boundary (`@name` capture), e.g. `AuthMiddleware`, `Server` |
-| `symbol_kind` | Boundary kind: Go — `function`, `method`, `type`, `const`, `var`, `import`; Phase 1c — `class`, `interface`, `type_alias`, `enum`, `namespace`, `module_var`, … |
-| `parent_scope` | Scope chain, e.g. Go: `package auth > type Server > func Foo`; Python: `module sample > function handler > class Inner`; TS: `module sample > class UserService > method getUser` |
+| `symbol_kind` | Boundary kind: Go — `function`, `method`, `type`, `const`, `var`, `import`; Phase 1c — `class`, `interface`, `type_alias`, `enum`, `namespace`, `module_var`, …; **1C BSL** — `procedure`, `function`, `var`, `region`; **SDBL** (heuristic, not tree-sitter) — `query`, `query_package` |
+| `parent_scope` | Scope chain, e.g. Go: `package auth > type Server > func Foo`; Python: `module sample > function handler > class Inner`; TS: `module sample > class UserService > method getUser`; **BSL:** `module Документ.РасходнаяНакладная.МодульОбъекта > region Проведение` (Cyrillic names preserved) |
+| `chunk_type` | Chunk category in zvec: `code` (default AST/line_window) or **`query`** for SDBL query text (from `.dcs` `<query>` blocks, embedded BSL strings, or heuristic SDBL split). Not returned in HTTP/MCP search JSON today; stored in the index for future filtering. |
 | `chunk_strategy` | How the chunk was produced: `ast` (whole boundary), `partial` (AST node split via `line_window`), `line_window` (legacy or fallback) |
+
+**1C / SDBL:** BSL (`.bsl`, `.os`) uses **tree-sitter-bsl**. SDBL query chunks use **heuristic** boundary detection (`ВЫБРАТЬ`/`SELECT`, `;` splits) — not tree-sitter — even when emitted from BSL embedded strings or `.dcs` XML extraction (`languages.bsl.include_sdbl: true`).
 
 `snippet` is always raw source from the file. When `context_prefix: true`, the embed model sees an extra header (`// file:` / `// scope:`), but that prefix is **not** stored in `snippet`.
 

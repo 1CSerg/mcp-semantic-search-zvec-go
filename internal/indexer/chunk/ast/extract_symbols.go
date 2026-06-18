@@ -24,6 +24,15 @@ func extractSymbolKind(node *sitter.Node, boundaryCapture string, captures map[s
 		if lang == "python" && hasAncestorKind(node, "class_definition") {
 			kind = "method"
 		}
+	case "procedure_definition":
+		kind = "procedure"
+	case "preprocessor":
+		if hasChildKind(node, "PREPROC_REGION_KEYWORD") {
+			kind = "region"
+			if name == "" {
+				name = bslPreprocessorRegionName(node, src)
+			}
+		}
 	case "method_definition":
 		kind = "method"
 	case "namespace_export_declaration", "internal_module":

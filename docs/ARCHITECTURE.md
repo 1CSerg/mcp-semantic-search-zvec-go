@@ -138,11 +138,16 @@ When `indexing.chunking.strategy` is `hybrid` (default), file splitting goes thr
 ```mermaid
 flowchart LR
   File[File bytes] --> Router[ChunkRouter]
-  Router -->|".go .py .js .jsx .mjs .cjs .ts .tsx" + lang enabled + treesitter build| AST[cAST / tree-sitter]
+  Router -->|".go .py .js .jsx .mjs .cjs .ts .tsx .bsl .os" + lang enabled + treesitter build| AST[cAST / tree-sitter]
+  Router -->|".dcs" + bsl.include_sdbl| DCS[DCS query regex extract]
+  DCS --> SDBL[heuristic SDBL chunker]
   Router -->|other ext or AST unavailable| LW[line_window]
+  AST -->|embedded BSL query strings + include_sdbl| SDBL
   AST -->|oversized leaf / parse errors| LW
+  SDBL -->|oversized query| LW
   Router --> Emit[emit callback]
   LW --> Emit
+  SDBL --> Emit
   Emit --> Batch[batchCollector.add]
   Batch --> Emb[Embeddings]
   Emb --> Zvec[zvec UpsertChunks]
@@ -152,8 +157,10 @@ flowchart LR
 2. **`ChunkRouter.ChunkFile`** chooses the strategy:
    - `strategy: line_window` → `line_window` for every file.
    - `hybrid` + AST extension + matching `languages.*.enabled` → **`ast.ChunkLanguage`** when the binary includes build tag **`treesitter`**; otherwise transparent fallback to `line_window` (`ErrNotImplemented`).
-   - Extensions without a registered grammar (e.g. BSL until Phase 1d) → `line_window`.
-3. **Streaming vs whole-file read:** files larger than `stream_chunk_threshold_bytes` normally use streaming `line_window`. **Exception:** any hybrid AST path (`hybridASTPath`) always reads the file whole (up to `max_file_bytes`) so tree-sitter can parse it.
+   - **1C BSL** (`.bsl`, `.os`) with `languages.bsl.enabled` → **`tree-sitter-bsl`** AST (procedures, functions, regions, module vars). With `languages.bsl.include_sdbl`, embedded query strings in BSL are stripped (`|` prefixes, quotes) and passed to the **heuristic SDBL chunker** (not tree-sitter).
+   - **`.dcs`** (Data Composition Schema): when `include_sdbl: true`, the router regex-extracts `<query>...</query>` blocks → heuristic SDBL chunker (`chunk_type: query`); remaining XML → `line_window`. Without `include_sdbl`, `.dcs` is `line_window` only.
+   - Extensions without a registered grammar (e.g. `.mdo`) → `line_window`.
+3. **Streaming vs whole-file read:** files larger than `stream_chunk_threshold_bytes` normally use streaming `line_window`. **Exception:** any hybrid AST path (`hybridASTPath`) — including `.bsl`, `.os`, and `.dcs` when `languages.bsl.include_sdbl` — always reads the file whole (up to `max_file_bytes`) so tree-sitter (BSL) or DCS query extraction can run in memory.
 
 **ExtToLang / parser mapping** (`internal/indexer/chunk/router.go`):
 
@@ -165,8 +172,12 @@ flowchart LR
 | `.jsx` | `tsx` | `tree-sitter-typescript` (`LanguageTSX`) |
 | `.ts` | `typescript` | `tree-sitter-typescript` (`LanguageTypescript`) |
 | `.tsx` | `tsx` | `tree-sitter-typescript` (`LanguageTSX`) |
+| `.bsl`, `.os` | `bsl` | `tree-sitter-bsl` |
+| `.dcs` | — | Not in `ExtToLang`. When `languages.bsl.enabled` and `include_sdbl: true`, `ChunkRouter.chunkDCS` regex-extracts `<query>…</query>` → **heuristic SDBL** (`ChunkSDBLText`); stripped XML → `line_window`. Requires `treesitter` build for query chunks; without it, whole file falls back to `line_window`. |
 
 Config key `languages.typescript.enabled` also enables `.jsx` and `.tsx` (router maps `tsx` lang to the typescript toggle).
+
+**SDBL note:** query text from `.dcs`, embedded BSL strings, or standalone SDBL is chunked by **heuristic** split on `;` and `ВЫБРАТЬ`/`SELECT` boundaries — not by tree-sitter (the BSL grammar bundle does not expose SDBL query nodes in v0.1.6).
 4. **cAST emit:** chunks stream through `emit func(*zvec.Chunk) error` → `batchCollector.add` (no per-file `[]Chunk` slice in production).
 5. **Context prefix:** optional `indexing.chunking.context_prefix` prepends `// file:` / `// scope:` to **embed input only**; stored `snippet` is raw source.
 6. **Partial fallback:** oversized AST nodes split via `line_window` inside the parent scope; `chunk_strategy: partial`.

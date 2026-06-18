@@ -8,10 +8,11 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/sugarme/tokenizer v0.3.0
-	github.com/tree-sitter/go-tree-sitter v0.24.0
+	github.com/tree-sitter/go-tree-sitter v0.25.0
+	github.com/tree-sitter/tree-sitter-bsl v0.0.0-00010101000000-000000000000
 	github.com/tree-sitter/tree-sitter-go v0.23.4
-	github.com/tree-sitter/tree-sitter-javascript v0.23.0
-	github.com/tree-sitter/tree-sitter-python v0.23.4
+	github.com/tree-sitter/tree-sitter-javascript v0.23.1
+	github.com/tree-sitter/tree-sitter-python v0.23.6
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zvec-ai/zvec-go v0.5.0
@@ -74,3 +75,5 @@ require (
 )
 
 replace github.com/zvec-ai/zvec-go => ./.deps/zvec-go
+
+replace github.com/tree-sitter/tree-sitter-bsl => github.com/alkoleft/tree-sitter-bsl v0.1.6

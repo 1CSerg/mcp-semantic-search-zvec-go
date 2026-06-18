@@ -118,6 +118,14 @@ jobs:
         shell: bash
         run: bash scripts/fetch/fetch-zvec-libs.sh >> $GITHUB_ENV
 
+      - name: Install MSYS2 GCC (tree-sitter CGO)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
       - name: Tree-sitter CGO spike
         shell: pwsh
         run: .\scripts\fetch\fetch-tree-sitter-grammars.ps1

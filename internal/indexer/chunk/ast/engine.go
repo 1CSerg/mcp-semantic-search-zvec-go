@@ -33,6 +33,7 @@ type engine struct {
 	parentMeta     *BoundaryMeta
 	enclosingScope Scope
 	minTokens      int
+	regionTracker  *bslRegionTracker
 }
 
 // ChunkLanguage parses source for the given language and emits AST chunks.
@@ -80,7 +81,16 @@ func ChunkLanguage(lang, relativePath string, content []byte, cfg Config, counte
 		baseScope:  baseScope,
 		minTokens:  minTokens,
 	}
-	return eng.walkChunk(root, nil, eng.baseScope, nil, eng.baseScope, true, false)
+	if lang == "bsl" {
+		eng.regionTracker = buildBSLRegionTracker(root, content)
+	}
+	if err := eng.walkChunk(root, nil, eng.baseScope, nil, eng.baseScope, true, false); err != nil {
+		return err
+	}
+	if lang == "bsl" && cfg.IncludeSDBL {
+		return emitBSLQueryInjections(root, content, eng.rel, cfg, counter, eng.baseScope, eng.regionTracker, emit)
+	}
+	return nil
 }
 
 // ChunkGo parses Go source and emits AST chunks via callback (no slice accumulation).
@@ -106,6 +116,11 @@ func ChunkTypeScript(relativePath string, content []byte, cfg Config, counter to
 // ChunkTSX parses TSX source and emits AST chunks.
 func ChunkTSX(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
 	return ChunkLanguage("tsx", relativePath, content, cfg, counter, emit)
+}
+
+// ChunkBSL parses BSL source and emits AST chunks.
+func ChunkBSL(relativePath string, content []byte, cfg Config, counter token.TokenCounter, emit EmitFunc) error {
+	return ChunkLanguage("bsl", relativePath, content, cfg, counter, emit)
 }
 
 func parseErrorRate(root *sitter.Node) float64 {
@@ -138,6 +153,9 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child == nil {
+			continue
+		}
+		if e.lang == "bsl" && (isBSLRegionEndPreprocessor(child) || isBSLRegionStartPreprocessor(child)) {
 			continue
 		}
 		if meta, ok := e.boundaries[child.Id()]; ok {
@@ -395,7 +413,15 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 	return nil
 }
 
+func (e *engine) effectiveScope(scope Scope, node *sitter.Node) Scope {
+	if e.lang == "bsl" {
+		return bslScopeForNode(scope, e.regionTracker, node)
+	}
+	return scope
+}
+
 func (e *engine) emitBoundary(node *sitter.Node, meta BoundaryMeta, scope Scope, strategy string) error {
+	scope = e.effectiveScope(scope, node)
 	ch := e.chunkFromNodes([]sitter.Node{*node}, scope, meta.Kind, meta.Name, strategy)
 	if ch == nil {
 		return nil
@@ -430,6 +456,7 @@ func (e *engine) chunkFromNodes(nodes []sitter.Node, scope Scope, symbolKind, sy
 	if len(nodes) == 0 {
 		return nil
 	}
+	scope = e.effectiveScope(scope, &nodes[0])
 	text := verbatimConcat(e.src, nodes)
 	if strings.TrimSpace(text) == "" {
 		return nil

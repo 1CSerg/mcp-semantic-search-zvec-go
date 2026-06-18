@@ -22,6 +22,8 @@ func extendScope(current Scope, meta BoundaryMeta, lang string) Scope {
 			return current.WithSegment("func", meta.Name)
 		}
 		return current.WithSegment("function", meta.Name)
+	case "procedure":
+		return current.WithSegment("procedure", meta.Name)
 	case "method":
 		out := current
 		if recv := normalizeReceiverType(meta.Captures["scope.receiver"]); recv != "" {
@@ -102,6 +104,14 @@ func boundaryKindFromCapture(captureName string) string {
 		return "const"
 	case "boundary.var":
 		return "var"
+	case "boundary.procedure":
+		return "procedure"
+	case "boundary.region":
+		return "region"
+	case "boundary.query":
+		return "query"
+	case "boundary.query_package":
+		return "query_package"
 	case "boundary.assignment", "boundary.expression":
 		return "module_var"
 	default:

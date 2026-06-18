@@ -30,6 +30,7 @@ type Config struct {
 	ContextPrefix    bool
 	WindowLines      int
 	OverlapLines     int
+	IncludeSDBL      bool
 }
 
 // EmitFunc streams each produced chunk (production: batchCollector.add).

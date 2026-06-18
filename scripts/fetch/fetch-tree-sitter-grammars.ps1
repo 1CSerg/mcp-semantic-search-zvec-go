@@ -16,7 +16,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "go build ast package failed" }
     go test -tags "zvec,treesitter" -run "TestParseGoTree|TestExtractSymbol|TestASTChunker" -count=1 github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/ast
     if ($LASTEXITCODE -ne 0) { throw "go test ast package failed (check gcc on PATH for 0xc0000135)" }
-    Write-Host "tree-sitter CGO spike: OK (go, python, javascript, typescript, tsx)"
+    Write-Host "tree-sitter CGO spike: OK (go, python, javascript, typescript, tsx, bsl)"
 } finally {
     Pop-Location
 }

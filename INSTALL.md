@@ -262,7 +262,7 @@ make fetch-zvec-libs
 make build-zvec    # -tags "zvec,onnx" — line_window for all files
 ```
 
-For **AST hybrid chunking** on enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx` when matching `languages.*.enabled: true`), build locally with `-tags "zvec,onnx,treesitter"` — not included in current Release/install builds.
+For **AST hybrid chunking** on enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, **1C** `.bsl`/`.os` via tree-sitter-bsl; `.dcs` SDBL query blocks when `languages.bsl.include_sdbl: true` — heuristic, not tree-sitter), build locally with `-tags "zvec,onnx,treesitter"` — not included in current Release/install builds.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows CGO, ONNX runtime, tree-sitter, and cross-compile notes.
 

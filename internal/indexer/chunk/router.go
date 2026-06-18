@@ -21,6 +21,8 @@ var ExtToLang = map[string]string{
 	".cjs": "javascript",
 	".ts":  "typescript",
 	".tsx": "tsx",
+	".bsl": "bsl",
+	".os":  "bsl",
 }
 
 // ChunkRouter selects AST or line_window chunking per file extension and config.
@@ -38,6 +40,9 @@ func (r *ChunkRouter) ChunkFile(relativePath string, content []byte, opts Option
 		return FileChunksEmit(relativePath, content, opts, emit)
 	}
 	ext := strings.ToLower(filepath.Ext(relativePath))
+	if ext == ".dcs" && opts.bslIncludeSDBL() {
+		return r.chunkDCS(relativePath, content, opts, counter, emit)
+	}
 	lang, ok := ExtToLang[ext]
 	if ok && opts.astEnabledForLang(lang) {
 		cfg := astConfig(opts)
@@ -64,6 +69,11 @@ func (o Options) astEnabledForLang(lang string) bool {
 	return false
 }
 
+func (o Options) bslIncludeSDBL() bool {
+	cfg, ok := o.Languages["bsl"]
+	return ok && cfg.Enabled && cfg.IncludeSDBL
+}
+
 func astConfig(opts Options) ast.Config {
 	return ast.Config{
 		MinChunkTokens:   opts.MinChunkTokens,
@@ -72,7 +82,45 @@ func astConfig(opts Options) ast.Config {
 		ContextPrefix:    opts.ContextPrefix,
 		WindowLines:      opts.WindowLines,
 		OverlapLines:     opts.OverlapLines,
+		IncludeSDBL:      opts.bslIncludeSDBL(),
 	}
+}
+
+func (r *ChunkRouter) chunkDCS(relativePath string, content []byte, opts Options, counter token.TokenCounter, emit EmitFunc) error {
+	cfg := astConfig(opts)
+	queries := ast.ExtractDCSQueriesWithLines(content)
+	moduleName := strings.TrimSuffix(filepath.Base(relativePath), filepath.Ext(relativePath))
+	parentScope := "module " + moduleName
+	for _, q := range queries {
+		astEmit := func(ch *zvec.Chunk) error { return emit(ch) }
+		if err := ast.ChunkSDBLText(relativePath, q.Text, q.StartLine, cfg, counter, parentScope, astEmit); err != nil {
+			slog.Debug("chunk_fallback", "path", relativePath, "reason", err.Error(), "kind", "dcs_query")
+			if fbErr := emitDCSQueryLineWindowFallback(relativePath, q, parentScope, opts, counter, emit); fbErr != nil {
+				return fbErr
+			}
+		}
+	}
+	remaining := ast.StripDCSQueryBlocks(content)
+	return FileChunksEmit(relativePath, remaining, opts, emit)
+}
+
+func emitDCSQueryLineWindowFallback(relativePath string, q ast.DCSQuery, parentScope string, opts Options, counter token.TokenCounter, emit EmitFunc) error {
+	lines := strings.Split(q.Text, "\n")
+	window, overlap := normalizeWindowOpts(opts)
+	return SlideWindowEmit(relativePath, lines, q.StartLine, SlideWindowMeta{
+		Window:        window,
+		Overlap:       overlap,
+		ChunkStrategy: "line_window",
+		SymbolKind:    "query",
+		ParentScope:   parentScope,
+		Counter:       counter,
+		MinTokens:     0,
+	}, func(ch *zvec.Chunk) error {
+		if ch != nil {
+			ch.ChunkType = "query"
+		}
+		return emit(ch)
+	})
 }
 
 func shouldFallbackToLineWindow(err error) bool {
@@ -88,6 +136,9 @@ func hybridASTPath(relativePath string, opts Options) bool {
 		return false
 	}
 	ext := strings.ToLower(filepath.Ext(relativePath))
+	if ext == ".dcs" && opts.bslIncludeSDBL() {
+		return true
+	}
 	lang, ok := ExtToLang[ext]
 	return ok && opts.astEnabledForLang(lang)
 }

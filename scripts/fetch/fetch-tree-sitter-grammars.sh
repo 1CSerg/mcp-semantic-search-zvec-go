@@ -6,4 +6,4 @@ cd "$REPO_ROOT"
 export CGO_ENABLED=1
 go build -tags "zvec,treesitter" -o /dev/null ./internal/indexer/chunk/ast
 go test -tags "zvec,treesitter" -run 'TestParseGoTree|TestExtractSymbol|TestASTChunker' -count=1 ./internal/indexer/chunk/ast/...
-echo "tree-sitter CGO spike: OK (go, python, javascript, typescript, tsx)"
+echo "tree-sitter CGO spike: OK (go, python, javascript, typescript, tsx, bsl)"

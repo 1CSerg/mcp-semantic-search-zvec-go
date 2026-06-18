@@ -36,9 +36,11 @@ func (s Scope) String() string {
 			parts = append(parts, "function "+seg.Name)
 		case "class":
 			parts = append(parts, "class "+seg.Name)
-		case "method":
-			parts = append(parts, "method "+seg.Name)
-		default:
+	case "method":
+		parts = append(parts, "method "+seg.Name)
+	case "region":
+		parts = append(parts, "region "+seg.Name)
+	default:
 			parts = append(parts, seg.Kind+" "+seg.Name)
 		}
 	}

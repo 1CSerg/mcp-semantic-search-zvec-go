@@ -35,3 +35,8 @@ func ChunkTypeScript(_ string, _ []byte, _ Config, _ token.TokenCounter, _ EmitF
 func ChunkTSX(_ string, _ []byte, _ Config, _ token.TokenCounter, _ EmitFunc) error {
 	return ErrNotImplemented
 }
+
+// ChunkBSL is a stub when tree-sitter is unavailable.
+func ChunkBSL(_ string, _ []byte, _ Config, _ token.TokenCounter, _ EmitFunc) error {
+	return ErrNotImplemented
+}

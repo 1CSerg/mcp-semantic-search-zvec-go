@@ -27,6 +27,9 @@ var typescriptQuerySource string
 //go:embed queries/tsx.scm
 var tsxQuerySource string
 
+//go:embed queries/bsl.scm
+var bslQuerySource string
+
 type boundaryEntry struct {
 	node    sitter.Node
 	capture string
@@ -60,6 +63,7 @@ func init() {
 	registerGrammar("javascript", javascriptLang(), javascriptQuerySource, moduleScopeFromPath)
 	registerGrammar("typescript", typescriptLang(), typescriptQuerySource, moduleScopeFromPath)
 	registerGrammar("tsx", tsxLang(), tsxQuerySource, moduleScopeFromPath)
+	registerGrammar("bsl", bslLang(), bslQuerySource, moduleScopeFromPath)
 }
 
 func goScopeFromRoot(root *sitter.Node, src []byte, _ string) Scope {

@@ -129,7 +129,7 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | `stall_seconds` | 120 | 120 | No progress → recovery |
 | `heartbeat_seconds` | 15 | 15 | **Deprecated** — ignored for indexing; kept for config compatibility |
 | `max_file_bytes` | 2097152 | 2097152 | Max file size to index (bytes); `0` = no limit |
-| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming `line_window` — **except** hybrid AST paths (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx` with matching `languages.*.enabled` and a `treesitter` binary): those files are read whole (up to `max_file_bytes`) for AST chunking |
+| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming `line_window` — **except** hybrid AST paths (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`, and `.dcs` when `languages.bsl.include_sdbl: true`, with matching `languages.*.enabled` and a `treesitter` binary): those files are read whole (up to `max_file_bytes`) for AST / DCS query extraction |
 | `max_line_bytes` | 1048576 | 1048576 | Max single line length (bytes); `0` = no limit |
 
 ### indexing.chunking
@@ -144,7 +144,21 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | `context_prefix` | `false` | When `true`, prepend `// file: …` and `// scope: …` to **embed input only**; `snippet` stored in zvec stays raw source (prefix rebuilt at embed time from path + `parent_scope`) |
 | `line_window.window_lines` | `40` | Legacy line window size |
 | `line_window.overlap_lines` | `8` | Legacy line overlap |
-| `languages` | go, python, js/ts, bsl | Per-language AST toggles. With `treesitter` binary: `go`, `python`, `javascript`, `typescript` (`enabled: true`) route matching extensions through AST; `typescript` also covers `.jsx` and `.tsx`. **`bsl`** (and `include_sdbl`) — Phase 1d; ignored until BSL grammar lands |
+| `languages` | go, python, js/ts, bsl | Per-language AST toggles. With `treesitter` binary: `go`, `python`, `javascript`, `typescript` (`enabled: true`) route matching extensions through AST; `typescript` also covers `.jsx` and `.tsx`. **`bsl`** — see [languages.bsl](#languagesbsl-1c) below |
+
+#### languages.bsl (1C)
+
+| Sub-key | Default (template) | Description |
+|---------|-------------------|-------------|
+| `enabled` | `true` | Route `.bsl` and `.os` through **tree-sitter-bsl** AST (`procedure`, `function`, `var`, `region` boundaries; Cyrillic `symbol_name` / `parent_scope`) |
+| `include_sdbl` | `true` | When `true` (requires `enabled: true`): (1) embedded query strings in BSL (`string` / `multiline_string` with `ВЫБРАТЬ`/`SELECT`) are stripped and chunked via **heuristic SDBL** (`symbol_kind: query`, `chunk_type: query`); (2) `.dcs` files — regex extract `<query>…</query>` blocks → same heuristic SDBL chunker; remaining DCS XML → `line_window`. **SDBL is heuristic, not tree-sitter** (BSL grammar v0.1.6 has no SDBL query nodes). When `false`, `.dcs` and embedded queries use `line_window` only |
+
+Example:
+
+```yaml
+languages:
+  bsl: { enabled: true, include_sdbl: true }
+```
 
 Env overrides: `CHUNKING_STRATEGY`, `CHUNKING_VERSION`.
 

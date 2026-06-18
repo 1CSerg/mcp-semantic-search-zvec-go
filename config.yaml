@@ -166,6 +166,7 @@ indexing:
     - .cmd
     - .bat
     - .bsl
+    - .os
     - .mdo
     - .form
     - .html
