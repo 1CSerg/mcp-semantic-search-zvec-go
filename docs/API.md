@@ -85,6 +85,8 @@ Response (success):
 
 During indexing: HTTP 200 with partial `results` from already indexed chunks, plus `indexing` progress object and optional `message` warning that results may be incomplete.
 
+In shared daemon mode with **no** `API_TOKEN`, open-daemon redaction applies (see below): result `path` values stay relative to the workspace; absolute paths in `message` are sanitized.
+
 ---
 
 ### Status
@@ -94,6 +96,8 @@ During indexing: HTTP 200 with partial `results` from already indexed chunks, pl
 Same JSON as MCP `index_status`. In shared daemon mode, pass `?workspace_id=` or header `X-Workspace-ID`.
 
 The `indexing` object includes the lifecycle state plus progress details when available: `files_total`, `files_done`, `percent`, `remaining_seconds`, `chunks_indexed`, `current_file`, timestamps, warnings, and errors. `remaining_seconds` is an estimate based on file throughput and may be absent before enough progress is known.
+
+Without `API_TOKEN` on an open daemon, `current_file`, `failed_files`, and `skipped_paths` are omitted; other path fields and diagnostics log paths are redacted (see [Open daemon redaction](#open-daemon-redaction)).
 
 ---
 
@@ -130,16 +134,17 @@ In shared daemon mode, pass `?workspace_id=` or header `X-Workspace-ID`.
 
 #### `GET /v1/version`
 
-Installed version info. **Stub:** does not query GitHub Releases; `latest_version` always equals installed and `update_available` is always `false`. Compare with [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases) manually for updates.
+Installed version info (same payload as MCP `check_update`). Production builds poll [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases) (success cache 1 h, error cache 1 min). Set `CHECK_UPDATE_DISABLE=true` to skip polling. Configure repo via `GITHUB_REPO` (see [CONFIG.md](CONFIG.md#environment-variables)). Stub build (`!zvec`) returns a placeholder without calling GitHub.
 
-Example:
+Example (update available):
 
 ```json
 {
-  "installed_version": "0.1.3",
-  "latest_version": "0.1.3",
-  "update_available": false,
-  "github_repo": "1CSerg/mcp-semantic-search-zvec-go"
+  "installed_version": "0.1.7",
+  "latest_version": "0.1.8",
+  "update_available": true,
+  "github_repo": "1CSerg/mcp-semantic-search-zvec-go",
+  "release_url": "https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases/tag/v0.1.8"
 }
 ```
 
@@ -153,7 +158,7 @@ List registered workspaces in shared daemon mode (`--daemon`). Returns `501` in 
 
 By default the response includes only workspace `id` and whether the handle is currently `open` — no filesystem paths.
 
-Query parameter `include_paths=1` (or `true` / `yes`) adds absolute `root`, `index_dir`, and `config_path` from `daemon.yaml`. When `API_TOKEN` is set, `include_paths` requires a valid `Authorization: Bearer` header (same as other endpoints).
+Query parameter `include_paths=1` (or `true` / `yes`) adds absolute `root`, `index_dir`, and `config_path` from `daemon.yaml`. `include_paths` always requires a valid `Authorization: Bearer` header matching `API_TOKEN` (returns `401` when the token is unset or the header is missing/invalid).
 
 Default response:
 
@@ -168,7 +173,7 @@ Default response:
 }
 ```
 
-With `?include_paths=1`:
+With `?include_paths=1` and valid Bearer token:
 
 ```json
 {
@@ -183,6 +188,21 @@ With `?include_paths=1`:
   ]
 }
 ```
+
+---
+
+### Open daemon redaction
+
+When the shared daemon runs **without** `API_TOKEN` (open HTTP API), workspace-scoped responses from `GET /v1/status`, `POST /v1/search`, and `POST /v1/reindex` are redacted before send:
+
+| Removed / redacted | Kept |
+|--------------------|------|
+| Top-level `workspace_root`, `index_dir`, `config_path`, `zvec_collection_path`, `embedding_model_path` | Counts, versions, `indexing.state`, relative search result `path` |
+| `diagnostics.log_dir`, `diagnostics.log_file` | `diagnostics.hint` and other non-path flags |
+| `indexing` / `progress`: `current_file`, `failed_files`, `skipped_paths` | Numeric progress (`files_done`, `percent`, …) |
+| Absolute paths inside `message`, `error`, `zvec_error`, `identity_mismatch_reason`, `indexing.message`, `indexing.error`, `scan_warnings` | Text with paths replaced by `<redacted>` |
+
+Set `API_TOKEN` in the daemon environment (`.env` or process env) and pass `Authorization: Bearer <token>` on HTTP requests (and configure the proxy accordingly) for full paths and file-level indexing diagnostics.
 
 ---
 
@@ -234,7 +254,9 @@ All tools return **JSON text** in tool result content.
 
 No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_performance`, `diagnostics`.
 
-When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Skipped paths (up to 20) appear in `indexing.failed_files`. Details are also in `diagnostics.log_file` (`index file skipped` in server.log).
+Identity fields (when `index_meta.json` exists): `active_profile`, `index_embedding_profile`, `index_embedding_dimensions`, `index_collection_name`. When on-disk index metadata does not match the current profile/dimensions: `identity_mismatch: true` and `identity_mismatch_reason` (e.g. profile mismatch). `message` may summarize required action (`reindex` with `force: true`).
+
+When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Skipped paths (up to 20) appear in `indexing.failed_files`. Details are also in `diagnostics.log_file` (`index file skipped` in server.log). Via shared daemon proxy without `API_TOKEN`, `failed_files`, `current_file`, and path fields are redacted — see [Open daemon redaction](#open-daemon-redaction).
 
 `diagnostics` includes `log_dir`, `log_file`, and optional hints: `synced_cloud_drive_suspected` (Google Drive/YandexDisk paths), `unicode_index_path_suspected` only when zvec fails to open a non-ASCII `INDEX_DIR` on Windows. With v0.1.5+, Cyrillic paths are supported when `zvec_open_ok` is true.
 
@@ -248,9 +270,9 @@ Fatal failures (embed provider down, `index_owner_mismatch`, stall) still set `i
 
 ### `check_update`
 
-No arguments. Returns `installed_version`, `latest_version`, `update_available`, `github_repo`.
+No arguments. Returns `installed_version`, `latest_version`, `update_available`, `github_repo`, optional `release_url` and `message`.
 
-**Stub:** does not call GitHub Releases API. `latest_version` always equals installed; `update_available` is always `false`. For real update checks, compare `installed_version` with [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases).
+Production builds poll GitHub Releases. Successful responses are cached **1 h**; failed polls cache **1 min** before retry. `CHECK_UPDATE_DISABLE=true` skips polling and sets `message: "update check disabled"`. Stub build (`!zvec`) returns a placeholder without calling GitHub. HTTP equivalent: `GET /v1/version`.
 
 ---
 
@@ -259,9 +281,13 @@ No arguments. Returns `installed_version`, `latest_version`, `update_available`,
 | Condition | HTTP | MCP |
 |-----------|------|-----|
 | Invalid JSON | 400 | tool error |
+| Invalid search `limit` (negative) | 400 | tool error |
 | Indexing in progress (search) | 200 | JSON with partial `results` + `indexing` + warning `message` |
 | Missing `workspace_id` (daemon) | 400 | tool error (proxy) |
 | Unknown `workspace_id` (daemon) | 404 | tool error (proxy) |
+| `include_paths` without valid Bearer | 401 | — |
+| Registry shutting down (`registry is closing`) | 503 | tool error (proxy) |
+| `GET /v1/workspaces` in per-project mode | 501 | — |
 | Index owner mismatch | 200* | JSON with message + empty results |
 | Internal error | 500 | tool error |
 

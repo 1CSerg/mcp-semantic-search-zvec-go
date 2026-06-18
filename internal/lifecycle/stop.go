@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,7 +26,7 @@ func StopStdioForWorkspace(workspace, indexDir string) ([]int, error) {
 	}
 
 	stopped, err := stopStaleStdioInstances(workspace, os.Getpid())
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrStdioScanUnsupported) {
 		return nil, err
 	}
 

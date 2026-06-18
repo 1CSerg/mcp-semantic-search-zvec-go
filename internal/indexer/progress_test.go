@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -162,5 +163,53 @@ func TestRemainingSecondsUnavailable(t *testing.T) {
 		if got, ok := tt.RemainingSeconds(); ok {
 			t.Fatalf("RemainingSeconds()=%v, true for %+v", got, tt)
 		}
+	}
+}
+
+func TestFinishInterrupted(t *testing.T) {
+	p := StartRunning(false)
+	p.FilesTotal = 50
+	p.FilesDone = 12
+	p.ChunksIndexed = 200
+	got := FinishInterrupted(p)
+	if got.State != StateIdle || got.Running {
+		t.Fatalf("state=%q running=%v", got.State, got.Running)
+	}
+	if got.Error != "" {
+		t.Fatalf("error=%q", got.Error)
+	}
+	if got.Message != InterruptedMessage {
+		t.Fatalf("message=%q", got.Message)
+	}
+	if got.FilesDone != 12 || got.FilesTotal != 50 || got.ChunksIndexed != 200 {
+		t.Fatalf("stats lost: %+v", got)
+	}
+}
+
+func TestIsInterruptedProgress(t *testing.T) {
+	p := FinishInterrupted(StartRunning(false))
+	if !IsInterruptedProgress(p) {
+		t.Fatal("expected interrupted idle progress")
+	}
+	p = FinishError(StartRunning(false), context.Canceled)
+	if !IsInterruptedProgress(p) {
+		t.Fatal("expected interrupted legacy error progress")
+	}
+	p = FinishError(StartRunning(false), context.DeadlineExceeded)
+	if IsInterruptedProgress(p) {
+		t.Fatal("deadline exceeded is not GUI interrupt recovery")
+	}
+	p = Progress{State: StateError, Error: "indexing embed: context canceled"}
+	if IsInterruptedProgress(p) {
+		t.Fatal("legacy substring should not match without migration")
+	}
+}
+
+func TestIsIndexIncomplete(t *testing.T) {
+	if !IsIndexIncomplete(Progress{FilesTotal: 10, FilesDone: 3}) {
+		t.Fatal("expected incomplete")
+	}
+	if IsIndexIncomplete(Progress{FilesTotal: 10, FilesDone: 10}) {
+		t.Fatal("expected complete")
 	}
 }

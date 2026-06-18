@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,57 @@ func TestLoadAppConfigMissingFile(t *testing.T) {
 	_, err := LoadAppConfig(filepath.Join(t.TempDir(), "missing.yaml"))
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLoadAppConfigInvalidDimensions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `active_profile: test
+profiles:
+  test:
+    provider: openai_compatible
+    model: test-model
+    dimensions: 0
+    base_url: http://127.0.0.1:9/v1
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadAppConfig(path)
+	if err == nil {
+		t.Fatal("expected dimensions validation error")
+	}
+	if !strings.Contains(err.Error(), "dimensions must be positive") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestLoadAppConfigYAMLColonHint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	badYAML := `active_profile: test
+profiles:
+  test:
+    description: Foo: Bar
+    provider: openai_compatible
+    model: test-model
+    dimensions: 384
+    base_url: http://127.0.0.1:9/v1
+`
+	if err := os.WriteFile(path, []byte(badYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadAppConfig(path)
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "mapping values") {
+		t.Fatalf("err=%q", msg)
+	}
+	if !strings.Contains(msg, "hint: quote scalar") {
+		t.Fatalf("err=%q", msg)
 	}
 }
 

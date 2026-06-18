@@ -42,6 +42,37 @@ func TestEmbedEmpty(t *testing.T) {
 	}
 }
 
+func TestEmbedBatchSendsDimensions(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{
+				{"index": 0, "embedding": make([]float64, 1024)},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(config.EmbeddingProfile{
+		Model:      "test",
+		BaseURL:    srv.URL + "/v1",
+		Dimensions: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.Embed(context.Background(), []string{"hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["dimensions"] != float64(1024) {
+		t.Fatalf("dimensions not sent: %v", gotBody)
+	}
+}
+
 func TestEmbedBatch(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -284,6 +315,24 @@ func TestEmbedDimensionMismatch(t *testing.T) {
 	_, err = c.EmbedQuery(context.Background(), "hello")
 	if err == nil {
 		t.Fatal("expected dimension mismatch")
+	}
+}
+
+func TestHealthCheck401(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(config.EmbeddingProfile{
+		Model:   "test",
+		BaseURL: srv.URL + "/v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.HealthCheck(context.Background()); err == nil {
+		t.Fatal("expected auth error")
 	}
 }
 

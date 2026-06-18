@@ -84,7 +84,7 @@ func (r *recoveringZvecStore) Open() error {
 
 type lockFailZvecStore struct{ mockZvecStore }
 
-func (lockFailZvecStore) Open() error {
+func (s *lockFailZvecStore) Open() error {
 	return errors.New(`Can't open lock file: test lock`)
 }
 
@@ -133,6 +133,23 @@ func waitCoordinatorIdle(t *testing.T, p *Phase1) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("coordinator still running after timeout")
+}
+
+func releasePhase1TestResources(t *testing.T, p *Phase1) {
+	t.Helper()
+	if p == nil {
+		return
+	}
+	waitCoordinatorIdle(t, p)
+	if p.coordinator != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = p.coordinator.WaitForIdle(ctx)
+		cancel()
+		_ = p.coordinator.ReleaseLock()
+	}
+	if p.zvec != nil {
+		_ = p.zvec.Close()
+	}
 }
 
 func modelsEmbedServer(t *testing.T) *httptest.Server {
@@ -189,12 +206,9 @@ func TestNewPhase1(t *testing.T) {
 	t.Run("missing active profile", func(t *testing.T) {
 		settings := phase1Settings(t, "http://127.0.0.1:9/v1")
 		settings.App.ActiveProfile = ""
-		p, err := NewPhase1(settings)
-		if err != nil {
-			t.Fatalf("NewPhase1: %v", err)
-		}
-		if p.embed != nil {
-			t.Fatal("expected no embed client")
+		_, err := NewPhase1(settings)
+		if err == nil {
+			t.Fatal("expected error for missing active profile")
 		}
 	})
 
@@ -315,10 +329,10 @@ func TestPhase1SemanticSearchWithMockZvec(t *testing.T) {
 
 func TestPhase1SemanticSearchNoEmbed(t *testing.T) {
 	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
-	settings.App.ActiveProfile = ""
-	p, err := NewPhase1(settings)
-	if err != nil {
-		t.Fatal(err)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        zvec.New(zvec.Config{IndexDir: settings.IndexDir, WorkspaceRoot: settings.WorkspaceRoot}),
+		searchStats: NewSearchStats(settings.App.Search),
 	}
 	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"})
 	if err != nil {
@@ -481,10 +495,10 @@ func TestSemanticSearchWhileIndexing(t *testing.T) {
 
 func TestReindexNoCoordinator(t *testing.T) {
 	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
-	settings.App.ActiveProfile = ""
-	p, err := NewPhase1(settings)
-	if err != nil {
-		t.Fatal(err)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        zvec.New(zvec.Config{IndexDir: settings.IndexDir, WorkspaceRoot: settings.WorkspaceRoot}),
+		searchStats: NewSearchStats(settings.App.Search),
 	}
 	raw, err := p.Reindex(context.Background(), ReindexRequest{Force: true})
 	if err != nil {
@@ -625,16 +639,16 @@ func TestSemanticSearchZvecGenericError(t *testing.T) {
 
 func TestSemanticSearchIndexingWithoutCoordinator(t *testing.T) {
 	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
-	settings.App.ActiveProfile = ""
 	if err := os.MkdirAll(settings.IndexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := indexer.NewProgressStore(settings.IndexDir).Save(indexer.StartRunning(false)); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPhase1(settings)
-	if err != nil {
-		t.Fatal(err)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        zvec.New(zvec.Config{IndexDir: settings.IndexDir, WorkspaceRoot: settings.WorkspaceRoot}),
+		searchStats: NewSearchStats(settings.App.Search),
 	}
 	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
 	if err != nil {
@@ -692,7 +706,6 @@ func TestStartAutoIndexDisabled(t *testing.T) {
 
 func TestGetIndexStatusProgressWithoutCoordinator(t *testing.T) {
 	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
-	settings.App.ActiveProfile = ""
 	if err := os.MkdirAll(settings.IndexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -700,9 +713,10 @@ func TestGetIndexStatusProgressWithoutCoordinator(t *testing.T) {
 	if err := store.Save(indexer.StartRunning(false)); err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewPhase1(settings)
-	if err != nil {
-		t.Fatal(err)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        zvec.New(zvec.Config{IndexDir: settings.IndexDir, WorkspaceRoot: settings.WorkspaceRoot}),
+		searchStats: NewSearchStats(settings.App.Search),
 	}
 	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
@@ -798,9 +812,19 @@ func TestReadyMissingCollection(t *testing.T) {
 }
 
 func TestPhase1Close(t *testing.T) {
-	p := &Phase1{zvec: &mockZvecStore{}}
+	store := &mockZvecStore{}
+	p := &Phase1{zvec: store, zvecCfg: zvec.Config{}}
 	if err := p.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+	if store.closeCalls != 1 {
+		t.Fatalf("closeCalls=%d want 1", store.closeCalls)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if store.closeCalls != 1 {
+		t.Fatalf("closeCalls=%d want 1 after second Close", store.closeCalls)
 	}
 	if err := (&Phase1{}).Close(); err != nil {
 		t.Fatal(err)
@@ -1082,6 +1106,8 @@ func TestPrepareStartupOwnerMismatchAutoIndex(t *testing.T) {
 	}
 	p.PrepareStartup()
 
+	t.Cleanup(func() { releasePhase1TestResources(t, p) })
+
 	waitCoordinatorIdle(t, p)
 	if !store.wasWipeCalled() {
 		t.Fatal("expected wipe during identity migration")
@@ -1134,6 +1160,67 @@ func TestPrepareStartupOwnerMismatchNoAutoIndex(t *testing.T) {
 	}
 	if p.startupMsg == "" {
 		t.Fatal("expected startup message")
+	}
+}
+
+func TestPrepareStartupProfileMismatchNoAutoIndex(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	settings.App.ActiveProfile = "profile_b"
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"profile_a": {Provider: "openai_compatible", Model: "m", Dimensions: 1024},
+		"profile_b": {Provider: "openai_compatible", Model: "m", Dimensions: 1024},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         settings.WorkspaceID,
+		EmbeddingProfile:    "profile_a",
+		EmbeddingDimensions: 1024,
+		ZvecGoVersion:       version.ZvecGoVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := settings.App.Profiles["profile_b"]
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 1024}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+		searchStats: NewSearchStats(settings.App.Search),
+	}
+	p.PrepareStartup()
+
+	if strings.Contains(p.startupMsg, "workspace path changed") {
+		t.Fatalf("misleading message: %q", p.startupMsg)
+	}
+	if !strings.Contains(p.startupMsg, "profile mismatch") {
+		t.Fatalf("message=%q", p.startupMsg)
+	}
+
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["identity_mismatch"] != true {
+		t.Fatalf("identity_mismatch=%v", payload["identity_mismatch"])
+	}
+	reason, _ := payload["identity_mismatch_reason"].(string)
+	if !strings.Contains(reason, "profile mismatch") {
+		t.Fatalf("identity_mismatch_reason=%q", reason)
 	}
 }
 
@@ -1347,7 +1434,7 @@ func TestPhase1SemanticSearchLockRecovery(t *testing.T) {
 
 type docCountErrZvecStore struct{ mockZvecStore }
 
-func (docCountErrZvecStore) DocCount() (int, error) {
+func (s *docCountErrZvecStore) DocCount() (int, error) {
 	return 0, errors.New("doc count failed")
 }
 
@@ -1390,11 +1477,12 @@ func TestPhase1GetIndexStatusProfileError(t *testing.T) {
 	srv := modelsEmbedServer(t)
 	defer srv.Close()
 	settings := phase1Settings(t, srv.URL+"/v1")
-	settings.App.ActiveProfile = "missing"
 	p, err := NewPhase1(settings)
 	if err != nil {
 		t.Fatal(err)
 	}
+	settings.App.ActiveProfile = "missing"
+	p.Settings = settings
 	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -1480,12 +1568,9 @@ func TestPhase1ReadyActiveProfileError(t *testing.T) {
 	defer srv.Close()
 	settings := phase1Settings(t, srv.URL+"/v1")
 	settings.App.ActiveProfile = "missing"
-	p, err := NewPhase1(settings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Ready(context.Background()); err == nil {
-		t.Fatal("expected profile error")
+	_, err := NewPhase1(settings)
+	if err == nil {
+		t.Fatal("expected profile error from NewPhase1")
 	}
 }
 
@@ -1559,5 +1644,249 @@ func TestOpenZvecWithRecoveryNoCloseWhileIndexing(t *testing.T) {
 	}
 	if !store.open {
 		t.Fatal("expected zvec open after recovery")
+	}
+}
+
+type blockingSearchZvecStore struct {
+	mockZvecStore
+	searchEntered chan struct{}
+	allowSearch   chan struct{}
+	enterOnce     sync.Once
+}
+
+func (s *blockingSearchZvecStore) Search(vector []float32, topK int, pathGlob string) ([]zvec.SearchHit, error) {
+	s.enterOnce.Do(func() { close(s.searchEntered) })
+	<-s.allowSearch
+	return s.mockZvecStore.Search(vector, topK, pathGlob)
+}
+
+func TestPhase1ShutdownWaitsForSearch(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingSearchZvecStore{
+		mockZvecStore: mockZvecStore{hits: []zvec.SearchHit{{Path: "a.go", Score: 1, Snippet: "x"}}},
+		searchEntered: make(chan struct{}),
+		allowSearch:   make(chan struct{}),
+	}
+	p.zvec = store
+
+	searchDone := make(chan struct{})
+	go func() {
+		_, _ = p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"})
+		close(searchDone)
+	}()
+
+	select {
+	case <-store.searchEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not reach zvec")
+	}
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		if err := p.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown finished before search")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(store.allowSearch)
+
+	select {
+	case <-searchDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not finish")
+	}
+	select {
+	case <-shutdownDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not finish after search")
+	}
+	if store.closeCalls != 1 {
+		t.Fatalf("closeCalls=%d, want 1", store.closeCalls)
+	}
+}
+
+func TestSemanticSearchContextCancelDuringZvec(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingSearchZvecStore{
+		mockZvecStore: mockZvecStore{hits: []zvec.SearchHit{{Path: "a.go", Score: 1, Snippet: "x"}}},
+		searchEntered: make(chan struct{}),
+		allowSearch:   make(chan struct{}),
+	}
+	p.zvec = store
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := p.SemanticSearch(ctx, SearchRequest{Query: "auth"})
+		done <- err
+	}()
+
+	select {
+	case <-store.searchEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not reach zvec")
+	}
+	cancel()
+
+	select {
+	case err := <-done:
+		t.Fatal("search returned before zvec finished:", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(store.allowSearch)
+
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not return after zvec finished")
+	}
+}
+
+func TestPhase1ShutdownWaitsAfterSearchCancelDuringZvec(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingSearchZvecStore{
+		mockZvecStore: mockZvecStore{hits: []zvec.SearchHit{{Path: "a.go", Score: 1, Snippet: "x"}}},
+		searchEntered: make(chan struct{}),
+		allowSearch:   make(chan struct{}),
+	}
+	p.zvec = store
+
+	ctx, cancel := context.WithCancel(context.Background())
+	searchDone := make(chan struct{})
+	go func() {
+		_, _ = p.SemanticSearch(ctx, SearchRequest{Query: "auth"})
+		close(searchDone)
+	}()
+
+	select {
+	case <-store.searchEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not reach zvec")
+	}
+	cancel()
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		if err := p.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+		close(shutdownDone)
+	}()
+
+	select {
+	case <-shutdownDone:
+		t.Fatal("shutdown finished before zvec search completed")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(store.allowSearch)
+
+	select {
+	case <-searchDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("search did not finish")
+	}
+	select {
+	case <-shutdownDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown did not finish after search")
+	}
+	if store.closeCalls != 1 {
+		t.Fatalf("closeCalls=%d, want 1", store.closeCalls)
+	}
+}
+
+func TestSemanticSearchNegativeLimit(t *testing.T) {
+	p, err := NewPhase1(phase1Settings(t, "http://127.0.0.1:9/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.SemanticSearch(context.Background(), SearchRequest{Query: "hello", Limit: -1})
+	if err == nil || !strings.Contains(err.Error(), "non-negative") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNormalizeSearchLimit(t *testing.T) {
+	topK := 7
+	got, err := normalizeSearchLimit(0, &topK)
+	if err != nil || got != 7 {
+		t.Fatalf("got=%d err=%v", got, err)
+	}
+	if _, err := normalizeSearchLimit(-5, nil); err == nil {
+		t.Fatal("expected negative limit error")
+	}
+}
+
+func TestSemanticSearchSkipsLockRecoveryWhileIndexing(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
+	store := &searchLockZvecStore{}
+	p.zvec = store
+	if _, err := p.Reindex(context.Background(), ReindexRequest{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: "auth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if store.attempts != 1 {
+		t.Fatalf("attempts=%d, want no retry while indexing holds zvec lock", store.attempts)
+	}
+	msg, _ := payload["message"].(string)
+	if !strings.Contains(msg, "vector search failed") {
+		t.Fatalf("payload=%v", payload)
+	}
+}
+
+func TestStartAutoIndexWhenAlreadyRunning(t *testing.T) {
+	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
+	settings.AutoIndexOnStart = true
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
+	if _, err := p.coordinator.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	p.StartAutoIndex()
+	if !p.coordinator.IsRunning() {
+		t.Fatal("expected indexing still running")
 	}
 }

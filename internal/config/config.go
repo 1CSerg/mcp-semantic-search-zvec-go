@@ -15,6 +15,7 @@ const (
 	DefaultHTTPAddrDaemon            = ":8080"          // daemon / Docker (all interfaces)
 	DefaultHTTPAddr                  = DefaultHTTPAddrDaemon
 	DefaultSearchLimit               = 10
+	DefaultMaxSearchLimit            = 100
 	DefaultLockStaleSeconds          = 300.0
 	DefaultStallSeconds              = 120.0
 	DefaultHeartbeatSeconds          = 15.0
@@ -118,10 +119,26 @@ func LoadAppConfig(path string) (AppConfig, error) {
 	}
 	var app AppConfig
 	if err := yaml.Unmarshal(data, &app); err != nil {
-		return AppConfig{}, fmt.Errorf("parse config %s: %w", path, err)
+		msg := fmt.Errorf("parse config %s: %w", path, err)
+		if strings.Contains(err.Error(), "mapping values") {
+			return AppConfig{}, fmt.Errorf("%w; hint: quote scalar values containing ':' in config.yaml", msg)
+		}
+		return AppConfig{}, msg
 	}
 	applyAppDefaults(&app)
+	if err := validateProfiles(app); err != nil {
+		return AppConfig{}, err
+	}
 	return app, nil
+}
+
+func validateProfiles(app AppConfig) error {
+	for name, p := range app.Profiles {
+		if p.Dimensions <= 0 {
+			return fmt.Errorf("profile %q: dimensions must be positive", name)
+		}
+	}
+	return nil
 }
 
 func applyAppDefaults(app *AppConfig) {
@@ -269,17 +286,17 @@ func applyEnvOverrides(app *AppConfig) {
 		}
 	}
 	if v := os.Getenv("INDEXING_MAX_FILE_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			app.Indexing.MaxFileBytes = n
 		}
 	}
 	if v := os.Getenv("INDEXING_STREAM_CHUNK_THRESHOLD_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			app.Indexing.StreamChunkThresholdBytes = n
 		}
 	}
 	if v := os.Getenv("INDEXING_MAX_LINE_BYTES"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			app.Indexing.MaxLineBytes = n
 		}
 	}

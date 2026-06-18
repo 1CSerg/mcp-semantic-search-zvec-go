@@ -237,17 +237,18 @@ func (t *toggleCoordinator) setIdleAfter(d time.Duration) {
 	t.mu.Unlock()
 }
 
-func TestWaitAndRetry(t *testing.T) {
+func TestRunRetryLoop(t *testing.T) {
 	coord := &toggleCoordinator{running: true}
 	w := &Watcher{
 		settings:    &config.Settings{},
 		coordinator: coord,
 		stopCh:      make(chan struct{}),
+		retryActive: true,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	go coord.setIdleAfter(400 * time.Millisecond)
-	w.waitAndRetry(ctx, "main.go")
+	w.runRetryLoop(ctx)
 	if coord.Starts() == 0 {
 		t.Fatal("expected reindex after coordinator became idle")
 	}
@@ -295,6 +296,27 @@ func TestWatcherTriggerReindexError(t *testing.T) {
 	w.triggerReindex(context.Background(), "main.go")
 	st := w.Snapshot()
 	if st.LastError != "start failed" {
+		t.Fatalf("last_error=%q", st.LastError)
+	}
+}
+
+type alreadyRunningCoordinator struct{}
+
+func (alreadyRunningCoordinator) Start(bool) (indexer.Progress, error) {
+	return indexer.Progress{}, indexer.ErrAlreadyRunning
+}
+
+func (alreadyRunningCoordinator) IsRunning() bool { return true }
+
+func TestWatcherAlreadyRunningNotLastError(t *testing.T) {
+	w := &Watcher{
+		settings:    &config.Settings{},
+		coordinator: alreadyRunningCoordinator{},
+		stopCh:      make(chan struct{}),
+	}
+	w.startReindex(context.Background(), "main.go")
+	st := w.Snapshot()
+	if st.LastError != "" {
 		t.Fatalf("last_error=%q", st.LastError)
 	}
 }

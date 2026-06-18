@@ -12,6 +12,8 @@ if ((Split-Path -Leaf $PSScriptRoot) -eq '.mcp-semantic-search-zvec-go') {
 }
 $ServerKey = "semantic-search-zvec-go"
 $DefaultCursorRuleRel = ".cursor/rules/semantic-search-zvec-go.mdc"
+$DefaultRooRuleRel = ".roo/rules/semantic-search-zvec-go.md"
+$DefaultRooMcpRel = ".roo/mcp.json"
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:StepErrors = @()
 
@@ -158,6 +160,36 @@ function Remove-CursorRule {
     Write-Host "Removed Cursor rule: $rulePath"
 }
 
+function Remove-RooRule {
+    param(
+        [string]$TargetRoot,
+        [string]$InstallDir
+    )
+
+    $rel = $DefaultRooRuleRel
+    $manifestPath = Join-Path $InstallDir "install-manifest.json"
+    if (Test-Path $manifestPath) {
+        try {
+            $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+            if ($manifest.PSObject.Properties.Name -contains "roo_rule" -and $manifest.roo_rule) {
+                $rel = [string]$manifest.roo_rule
+            }
+        } catch { }
+    }
+
+    $rulePath = Join-Path $TargetRoot ($rel -replace '/', '\')
+    if (-not (Test-Path $rulePath)) { return }
+
+    $content = Get-Content -Raw $rulePath
+    if ($content -notmatch "managedBy:\s*mcp-semantic-search-zvec-go") {
+        Write-Host "Skipped Roo rule (not install-managed): $rulePath"
+        return
+    }
+
+    Remove-ItemWithRetry -LiteralPath $rulePath
+    Write-Host "Removed Roo rule: $rulePath"
+}
+
 function Remove-GitignoreBlock {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return }
@@ -185,6 +217,35 @@ function Remove-McpJsonEntry {
     )
 
     $mcpJson = Join-Path $TargetRoot ".cursor\mcp.json"
+    if (-not (Test-Path $mcpJson)) { return }
+
+    $obj = Get-Content -Raw $mcpJson | ConvertFrom-Json
+    if ($obj.mcpServers.PSObject.Properties.Name -notcontains $ServerKey) { return }
+
+    $obj.mcpServers.PSObject.Properties.Remove($ServerKey)
+    [System.IO.File]::WriteAllText($mcpJson, ($obj | ConvertTo-Json -Depth 10) + [Environment]::NewLine, $Utf8NoBom)
+    Write-Host "Removed $ServerKey from $mcpJson"
+}
+
+function Remove-RooMcpJsonEntry {
+    param(
+        [string]$TargetRoot,
+        [string]$ServerKey,
+        [string]$InstallDir
+    )
+
+    $rel = $DefaultRooMcpRel
+    $manifestPath = Join-Path $InstallDir "install-manifest.json"
+    if (Test-Path $manifestPath) {
+        try {
+            $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+            if ($manifest.PSObject.Properties.Name -contains "roo_mcp" -and $manifest.roo_mcp) {
+                $rel = [string]$manifest.roo_mcp
+            }
+        } catch { }
+    }
+
+    $mcpJson = Join-Path $TargetRoot ($rel -replace '/', '\')
     if (-not (Test-Path $mcpJson)) { return }
 
     $obj = Get-Content -Raw $mcpJson | ConvertFrom-Json
@@ -263,6 +324,14 @@ Invoke-UninstallStep "remove mcp.json entry" {
 
 Invoke-UninstallStep "remove Cursor rule" {
     Remove-CursorRule -TargetRoot $TargetRoot -InstallDir $InstallDir
+}
+
+Invoke-UninstallStep "remove Roo mcp.json entry" {
+    Remove-RooMcpJsonEntry -TargetRoot $TargetRoot -ServerKey $ServerKey -InstallDir $InstallDir
+}
+
+Invoke-UninstallStep "remove Roo rule" {
+    Remove-RooRule -TargetRoot $TargetRoot -InstallDir $InstallDir
 }
 
 Invoke-UninstallStep "remove install directory" {

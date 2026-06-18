@@ -1,0 +1,110 @@
+package chunk
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+)
+
+// BatchFunc receives a batch of chunks produced from a single file.
+type BatchFunc func(chunks []zvec.Chunk) error
+
+type batchCollector struct {
+	size  int
+	acc   []zvec.Chunk
+	emit  BatchFunc
+	total int
+}
+
+func newBatchCollector(batchSize int, fn BatchFunc) *batchCollector {
+	if batchSize <= 0 {
+		batchSize = 32
+	}
+	return &batchCollector{
+		size: batchSize,
+		acc:  make([]zvec.Chunk, 0, batchSize),
+		emit: fn,
+	}
+}
+
+func (b *batchCollector) add(ch *zvec.Chunk) error {
+	if ch == nil {
+		return nil
+	}
+	b.acc = append(b.acc, *ch)
+	if len(b.acc) >= b.size {
+		return b.flush()
+	}
+	return nil
+}
+
+func (b *batchCollector) flush() error {
+	if len(b.acc) == 0 {
+		return nil
+	}
+	batch := b.acc
+	b.acc = make([]zvec.Chunk, 0, b.size)
+	b.total += len(batch)
+	return b.emit(batch)
+}
+
+func (b *batchCollector) totalChunks() int {
+	return b.total + len(b.acc)
+}
+
+// ProcessBatches reads and chunks a file, invoking fn for each batch without holding
+// all chunks for the file in memory at once.
+func ProcessBatches(root, relativePath string, opts Options, batchSize int, fn BatchFunc) (int, error) {
+	abs, err := resolveWithinRoot(root, relativePath)
+	if err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return 0, err
+	}
+	if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes {
+		return 0, fmt.Errorf("file too large for indexing: %d bytes (max %d)", info.Size(), opts.MaxFileBytes)
+	}
+	threshold := opts.StreamThresholdBytes
+	if threshold <= 0 {
+		threshold = defaultStreamThresholdBytes
+	}
+
+	coll := newBatchCollector(batchSize, fn)
+	if info.Size() <= threshold {
+		if err := readAllAndChunkBatched(abs, relativePath, opts, coll); err != nil {
+			return coll.totalChunks(), err
+		}
+	} else {
+		if err := streamChunkBatched(abs, relativePath, opts, coll); err != nil {
+			return coll.totalChunks(), err
+		}
+	}
+	if err := coll.flush(); err != nil {
+		return coll.totalChunks(), err
+	}
+	return coll.totalChunks(), nil
+}
+
+func readAllAndChunkBatched(abs, relativePath string, opts Options, coll *batchCollector) error {
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return err
+	}
+	maxLine := opts.MaxLineBytes
+	if maxLine <= 0 {
+		maxLine = defaultMaxLineBytes
+	}
+	if err := checkMaxLineBytes(data, maxLine); err != nil {
+		return err
+	}
+	chunks := FileChunks(relativePath, data, opts)
+	for i := range chunks {
+		if err := coll.add(&chunks[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}

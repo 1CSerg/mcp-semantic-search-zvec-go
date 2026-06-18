@@ -62,11 +62,13 @@ Windows: no CLI flags → desktop GUI. Linux/macOS: no CLI flags → `--stdio` (
 ./bin/mcp-semantic-search-zvec-go --stdio --config /path/to/config.yaml
 ```
 
-GUI mode reuses the per-project service layer but does not start auto-indexing or the file watcher in the GUI process. The Windows GUI is localized in Russian. When Cursor already runs `--stdio` for the same workspace, the GUI finds the live MCP process (`FindStdioForWorkspace`, then `LiveHolder`), shows a warning with that PID instead of competing with the MCP process, and offers a button to terminate the competing process; after termination, the GUI starts an incremental reindex automatically. Stale PIDs in `stdio.lock` are not shown after reclaim.
+GUI mode reuses the per-project service layer but does not start auto-indexing or the file watcher in the GUI process for a **new** empty index. The Windows GUI is localized in Russian. When Cursor already runs `--stdio` for the same workspace, the GUI finds the live MCP process (`FindStdioForWorkspace`, then `LiveHolder`), shows a warning with that PID instead of competing with the MCP process, and offers a button to terminate the competing process; after termination, the GUI starts an incremental reindex automatically. Stale PIDs in `stdio.lock` are not shown after reclaim.
+
+If indexing was **interrupted** (GUI closed mid-run), the next GUI start reclaims orphan zvec `LOCK` files, migrates `progress.json` from `context canceled` to idle interrupted state, and automatically runs incremental `reindex` to continue (manifest skips already indexed files). Shutdown waits for the background indexer before closing zvec to avoid orphan locks.
 
 Full flag table: [API.md](API.md#cli-flags).
 
-Logs go to stderr and `.mcp-semantic-search-zvec-go/data/logs/server.log` (rotation via `logging.max_bytes` / `logging.backup_count`). Fatal panics write `data/logs/last_crash.json`.
+Logs go to stderr and `.mcp-semantic-search-zvec-go/logs/server.log` (rotation via `logging.max_bytes` / `logging.backup_count`). Fatal panics write `logs/last_crash.json` under the install dir.
 
 ## Project layout
 
@@ -83,11 +85,15 @@ internal/
   watcher/                          # fsnotify + polling
   logging/                          # file log rotation
   crash/                            # last_crash.json
-  daemon/                           # multi-workspace registry
+  daemon/                           # multi-workspace registry (BorrowService, LRU, Close drain)
 docs/
 scripts/                            # install, fetch, dev, smoke, spike (see scripts/README.md)
 templates/                          # MCP fragments
 ```
+
+### Shared daemon (contributors)
+
+`internal/daemon/registry.go` — lazy workspace open, LRU eviction, `Close()` drain. HTTP handlers in `internal/transport/http/server.go` call `redactIfOpenDaemon` when `daemon` mode runs without `API_TOKEN` (strips path fields, sanitizes path-bearing text in status/search/reindex JSON). Tests: `internal/transport/http/server_test.go` (`TestRedactDaemon*`, `TestDaemonMode*`).
 
 ## zvec-go
 
@@ -268,7 +274,7 @@ With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile w
 
 ## CI
 
-- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥85% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), golangci-lint on push/PR
+- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥85% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), `test-windows`, golangci-lint (blocking) on push/PR
 - `.github/workflows/release.yml` — tag `v*` → binaries + Docker
 
 ## Testing MCP locally
@@ -304,12 +310,12 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 ## Contributing workflow
 
 1. Branch from `main`.
-2. `go test ./...` && `make test-cover-check` && `go vet ./...` && `gofmt -w .`
+2. `go test ./...` && `make test-cover-check` && `go vet ./...` && `gofmt -w .` (CI также гоняет `go test` на `windows-latest` без `-race`).
 3. При изменении install/config merge: `python -m unittest scripts/install/merge-config_test.py` (нужен `pip install -r scripts/install/requirements.txt`).
 4. Update docs if API/config changes.
 5. PR with Russian commit messages (project convention) — см. `.cursor/rules/git-commits-ru.mdc`.
 
-Конвенции для агентов в **этом репозитории**: `.cursor/rules/development.mdc` (краткие gate-правила).
+Конвенции для агентов в **этом репозитории**: `.cursor/rules/development.mdc` (gate-правила и MCP dogfooding при планировании/ревью).
 
 Использование MCP в **целевом проекте пользователя** (install, tools, troubleshooting): [AGENTS.md](../AGENTS.md).
 

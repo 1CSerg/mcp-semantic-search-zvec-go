@@ -58,7 +58,9 @@ func (b *fsnotifyBackend) run(ctx context.Context, settings *config.Settings, ev
 				return nil
 			}
 			if ev.Op&fsnotify.Create != 0 {
-				_ = addWatchTree(w, ev.Name, settings.App.Indexing.SkipDirs)
+				if err := addWatchTree(w, ev.Name, settings.App.Indexing.SkipDirs); err != nil {
+					slog.Warn("watcher failed to watch new directory", "path", ev.Name, "err", err)
+				}
 			}
 		}
 	}

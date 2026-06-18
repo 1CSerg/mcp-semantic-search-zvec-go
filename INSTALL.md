@@ -36,6 +36,8 @@ TARGET_ROOT="$PWD" bash /tmp/mcp-semantic-search-zvec-go/scripts/install/install
 your-project/
 ├── .cursor/mcp.json              # MCP wiring (merged)
 ├── .cursor/rules/semantic-search-zvec-go.mdc  # agent rule (install-managed, English)
+├── .roo/mcp.json                 # Roo/Zoo Code MCP wiring (merged)
+├── .roo/rules/semantic-search-zvec-go.md      # Roo agent rule (install-managed)
 ├── .mcp-semantic-search-zvec-go/
 │   ├── config.yaml               # settings (profiles, indexing, …)
 │   ├── .env                      # secrets (created on first install)
@@ -46,21 +48,32 @@ your-project/
 │   │   └── *.dll                 # runtime libs (Windows)
 │   ├── install-manifest.json
 │   ├── uninstall.ps1             # Windows uninstall (also uninstall.sh on Linux/macOS)
+│   ├── logs/                     # server.log (created at runtime)
 │   └── data/
-│       ├── index/
-│       └── logs/
+│       └── index/
 ```
 
 The whole `.mcp-semantic-search-zvec-go/` directory is gitignored. On first install, `.env` is copied from `templates/env.example` if it does not exist yet.
 
 On Windows, starting `mcp-semantic-search-zvec-go.exe` without flags opens the desktop GUI for status, reindex, search, and result viewing. Cursor MCP wiring still uses `run-mcp-stdio.ps1`, which passes `--stdio` explicitly. If Cursor already has the MCP process running for the same workspace, the GUI scans for a live `--stdio` process (and falls back to a verified `stdio.lock` holder via `LiveHolder`), shows a warning with that PID, and does not start its own auto-index or file watcher. Stale PIDs left in `stdio.lock` after a crashed MCP are ignored once the lock is reclaimed.
 
+## Zoo Code / Roo Code
+
+Install configures **both** Cursor and Roo/Zoo Code in the same target project:
+
+| IDE | MCP config | Agent rule |
+|-----|------------|------------|
+| Cursor | `.cursor/mcp.json` | `.cursor/rules/semantic-search-zvec-go.mdc` |
+| Roo / Zoo Code | `.roo/mcp.json` | `.roo/rules/semantic-search-zvec-go.md` |
+
+The MCP server entry (`semantic-search-zvec-go`) and launcher/env match Cursor install. After install or update, **restart Roo Code** (MCP has no hot-reload). Uninstall removes only install-managed Roo files (marker `managedBy: mcp-semantic-search-zvec-go` in the rule).
+
 ## Update / повторный install
 
 Re-run the same install command from an updated clone or release. The script:
 
 - Updates the binary and runtime DLLs/so/dylib
-- **Overwrites** `.cursor/rules/semantic-search-zvec-go.mdc` with the latest agent rule template
+- **Overwrites** `.cursor/rules/semantic-search-zvec-go.mdc` and `.roo/rules/semantic-search-zvec-go.md` with the latest agent rule templates
 - **Merges** new keys from repo `config.yaml` into your `.mcp-semantic-search-zvec-go/config.yaml` (your `active_profile`, profiles, lists, and comments are preserved)
 - Does **not** overwrite `.env` or `data/index/`
 
@@ -161,6 +174,12 @@ Fix:
 3. Re-run `install.ps1 -TargetRoot` (обновляет `workspace-root.txt` и `mcp.json`).
 4. `index_status` → при `diagnostics.duplicate_stdio_suspected` следовать `diagnostics.hint`.
 5. При необходимости MCP `reindex` с `force: true`.
+
+### Windows GUI: индексация прервана закрытием окна
+
+Симптомы (старые версии): `indexing.state: error`, `context canceled`, zvec LOCK после повторного открытия GUI.
+
+Fix (v0.1.8+): при следующем запуске GUI индексация **продолжается автоматически** (incremental reindex). Кнопка «Переиндексировать» остаётся для ручного запуска. Если видна «Освободить LOCK» — нажмите её или завершите лишние процессы `mcp-semantic-search-zvec-go.exe`.
 
 ### Индексация: частичные ошибки файлов
 
@@ -310,6 +329,8 @@ One HTTP process serves multiple projects via `workspace_id`. Architecture and t
 3. Point each Cursor project MCP entry to `--stdio-proxy --workspace-id=<id> --daemon-url=http://127.0.0.1:8080`.
 
 **Note:** `AUTO_INDEX_ON_START` from proxy install does not trigger indexing in the daemon — call MCP `reindex` per workspace after daemon start.
+
+**Security:** set `API_TOKEN` on the daemon process when it listens beyond loopback. Without it, `index_status` / `semantic_search` via proxy omit workspace paths and file-level indexing fields (`current_file`, `failed_files`); see [docs/API.md](docs/API.md#open-daemon-redaction).
 
 **Windows + Docker:** use install with proxy mode (launcher script in project bin):
 

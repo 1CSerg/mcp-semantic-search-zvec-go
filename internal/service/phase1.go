@@ -17,9 +17,12 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/update"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/watcher"
 )
+
+var errZvecRecoverySkipped = errors.New("zvec recovery skipped: indexing active")
 
 // Phase1 wires manifest read, embeddings, zvec store, and the indexer.
 type Phase1 struct {
@@ -32,9 +35,14 @@ type Phase1 struct {
 	watcherInst  *watcher.Watcher
 	startupMsg   string
 	lifecycleCtx context.Context
+	startupMu    sync.RWMutex
+
+	updateChecker *update.Checker
 
 	zvecLockWarnMu   sync.Mutex
 	lastZvecLockWarn time.Time
+	shutdownOnce     sync.Once
+	searchWG         sync.WaitGroup
 }
 
 // NewPhase1 creates the production service (zvec + indexer).
@@ -46,13 +54,7 @@ func NewPhase1(settings *config.Settings) (*Phase1, error) {
 
 	profile, err := settings.ActiveProfile()
 	if err != nil {
-		p.zvecCfg = zvec.Config{
-			IndexDir:      settings.IndexDir,
-			WorkspaceRoot: settings.WorkspaceRoot,
-			ProfileName:   settings.App.ActiveProfile,
-		}
-		p.zvec = zvec.New(p.zvecCfg)
-		return p, nil
+		return nil, err
 	}
 
 	p.zvecCfg = zvec.Config{
@@ -69,6 +71,7 @@ func NewPhase1(settings *config.Settings) (*Phase1, error) {
 	}
 	p.embed = embed
 	p.coordinator = indexer.NewCoordinator(settings, profile, embed, p.zvec, p.zvecCfg)
+	p.updateChecker = update.NewChecker(settings.GitHubRepo)
 	return p, nil
 }
 
@@ -125,13 +128,13 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	p.searchWG.Add(1)
+	defer p.searchWG.Done()
+
 	start := time.Now()
-	limit := req.Limit
-	if limit == 0 && req.TopK != nil {
-		limit = *req.TopK
-	}
-	if limit == 0 {
-		limit = config.DefaultSearchLimit
+	limit, err := normalizeSearchLimit(req.Limit, req.TopK)
+	if err != nil {
+		return nil, err
 	}
 
 	idx := p.indexingProgress()
@@ -160,13 +163,19 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 		return nil, err
 	}
 
-	hits, err := p.zvec.Search(vector, limit, derefString(req.PathGlob))
+	hits, err := p.zvecSearchWithContext(ctx, vector, limit, derefString(req.PathGlob))
 	if err != nil && lifecycle.IsZvecLockError(err) {
-		if recErr := p.recoverZvecLock(); recErr == nil {
-			hits, err = p.zvec.Search(vector, limit, derefString(req.PathGlob))
+		recErr := p.recoverZvecLock()
+		if recErr == nil {
+			hits, err = p.zvecSearchWithContext(ctx, vector, limit, derefString(req.PathGlob))
+		} else if !errors.Is(recErr, errZvecRecoverySkipped) {
+			err = fmt.Errorf("zvec lock recovery failed: %w (search: %w)", recErr, err)
 		}
 	}
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		if errors.Is(err, zvec.ErrCollectionMissing) {
 			return marshal(map[string]any{
 				"query":   req.Query,
@@ -254,7 +263,17 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 			filesFailed = int(n)
 		}
 	}
-	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks, zvecOpenOK, len(idx.SkippedPaths))
+	profileDims := 0
+	if profileErr == nil {
+		profileDims = profile.Dimensions
+	}
+	identityMismatch, _, identityErr := zvec.IndexIdentityMismatch(
+		p.Settings.IndexDir,
+		p.Settings.WorkspaceID,
+		p.Settings.App.ActiveProfile,
+		profileDims,
+	)
+	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks, zvecOpenOK, len(idx.SkippedPaths), identityMismatch)
 	payload := map[string]any{
 		"workspace_root":          root,
 		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),
@@ -269,10 +288,22 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 		"zvec_collection_path":    statusRelativePath(root, collectionPath),
 		"zvec_open_ok":            zvecOpenOK,
 		"index_meta_present":      zvec.IndexMetaPresent(p.Settings.IndexDir),
+		"active_profile":          p.Settings.App.ActiveProfile,
 		"indexing":                relativeIndexingMap(root, idx.ToIndexingMap()),
 		"file_watcher":            p.fileWatcherStatus(),
 		"search_performance":      p.searchStats.Snapshot(),
 		"diagnostics":             diag,
+	}
+	if meta, err := zvec.ReadIndexMeta(p.Settings.IndexDir); err == nil && meta != nil {
+		payload["index_embedding_profile"] = meta.EmbeddingProfile
+		payload["index_embedding_dimensions"] = meta.EmbeddingDimensions
+		payload["index_collection_name"] = meta.CollectionName
+	}
+	if identityMismatch {
+		payload["identity_mismatch"] = true
+		if identityErr != nil {
+			payload["identity_mismatch_reason"] = identityErr.Error()
+		}
 	}
 	if zvecErr != "" {
 		payload["zvec_error"] = zvecErr
@@ -286,8 +317,11 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 	if profileErr != nil {
 		payload["message"] = profileErr.Error()
 	}
-	if p.startupMsg != "" && profileErr == nil {
-		payload["message"] = p.startupMsg
+	p.startupMu.RLock()
+	startupMsg := p.startupMsg
+	p.startupMu.RUnlock()
+	if startupMsg != "" && profileErr == nil {
+		payload["message"] = startupMsg
 	}
 	return marshal(payload)
 }
@@ -341,12 +375,11 @@ func (p *Phase1) CheckUpdate(ctx context.Context) (json.RawMessage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return marshal(map[string]any{
-		"installed_version": version.Version,
-		"latest_version":    version.Version,
-		"update_available":  false,
-		"github_repo":       p.Settings.GitHubRepo,
-	})
+	if p.updateChecker == nil {
+		p.updateChecker = update.NewChecker(p.Settings.GitHubRepo)
+	}
+	info := p.updateChecker.Check(ctx, version.Version)
+	return marshal(info)
 }
 
 func (p *Phase1) Ready(ctx context.Context) error {
@@ -394,7 +427,9 @@ func (p *Phase1) StartFileWatcher(ctx context.Context) {
 	if w == nil {
 		return
 	}
+	p.startupMu.Lock()
 	p.watcherInst = w
+	p.startupMu.Unlock()
 	go w.Start(ctx)
 }
 
@@ -421,7 +456,7 @@ func (p *Phase1) runIdentityMigrationIfNeeded() bool {
 		slog.Warn("identity migration check skipped", "err", err)
 		return false
 	}
-	mismatch, _, err := zvec.IndexIdentityMismatch(
+	mismatch, meta, err := zvec.IndexIdentityMismatch(
 		p.Settings.IndexDir,
 		p.Settings.WorkspaceID,
 		p.Settings.App.ActiveProfile,
@@ -446,8 +481,19 @@ func (p *Phase1) runIdentityMigrationIfNeeded() bool {
 		return true
 	}
 
-	p.startupMsg = "workspace path changed — run reindex with force=true"
-	slog.Info(p.startupMsg)
+	if err != nil {
+		p.startupMu.Lock()
+		p.startupMsg = fmt.Sprintf("index identity mismatch: %v — run reindex with force=true", err)
+		p.startupMu.Unlock()
+	} else {
+		p.startupMu.Lock()
+		p.startupMsg = "index identity mismatch — run reindex with force=true"
+		p.startupMu.Unlock()
+	}
+	p.startupMu.RLock()
+	msg := p.startupMsg
+	p.startupMu.RUnlock()
+	slog.Info(msg, "old_meta", meta)
 	return true
 }
 
@@ -491,8 +537,11 @@ func (p *Phase1) runZvecGoMigrationIfNeeded() bool {
 		return true
 	}
 
+	p.startupMu.Lock()
 	p.startupMsg = "zvec-go updated — run reindex to rebuild the index"
-	slog.Info(p.startupMsg)
+	msg := p.startupMsg
+	p.startupMu.Unlock()
+	slog.Info(msg)
 	return true
 }
 
@@ -501,15 +550,64 @@ func (p *Phase1) StartAutoIndex() {
 	if p.coordinator == nil || !p.Settings.AutoIndexOnStart {
 		return
 	}
-	_, _ = p.coordinator.Start(false)
+	if _, err := p.coordinator.Start(false); err != nil {
+		slog.Warn("auto index on start failed", "err", err)
+	}
 }
 
 // Close releases workspace resources (zvec collection handle).
 func (p *Phase1) Close() error {
-	if p.zvec != nil {
-		return p.zvec.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return p.Shutdown(ctx)
+}
+
+// Shutdown waits for background indexing and in-flight searches to finish, then closes zvec.
+func (p *Phase1) Shutdown(ctx context.Context) error {
+	var err error
+	p.shutdownOnce.Do(func() {
+		indexIdle := true
+		if p.coordinator != nil {
+			if waitErr := p.coordinator.WaitForIdle(ctx); waitErr != nil {
+				if err == nil {
+					err = waitErr
+				}
+				indexIdle = false
+			}
+		}
+		if waitErr := p.waitSearches(ctx); waitErr != nil && err == nil {
+			err = waitErr
+		}
+
+		closeZvec := indexIdle
+		if !closeZvec && p.coordinator != nil && p.coordinator.TryLockZvecForClose() {
+			closeZvec = true
+			defer p.coordinator.UnlockZvecForClose()
+		} else if !closeZvec && p.coordinator == nil && !p.isIndexingRunning() {
+			closeZvec = true
+		}
+		if closeZvec && p.zvec != nil {
+			if closeErr := p.zvec.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+		zvec.ReclaimCollectionLock(p.zvecCfg)
+	})
+	return err
+}
+
+func (p *Phase1) waitSearches(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		p.searchWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
 
 func derefString(p *string) string {
@@ -528,8 +626,8 @@ func (p *Phase1) openZvecWithRecovery() error {
 		return err
 	}
 	p.logZvecLockWarn(err)
-	if recErr := p.recoverZvecLock(); recErr != nil {
-		return err
+	if recErr := p.recoverZvecLock(); recErr != nil && !errors.Is(recErr, errZvecRecoverySkipped) {
+		return fmt.Errorf("zvec lock recovery failed: %w (open: %w)", recErr, err)
 	}
 	return p.zvec.Open()
 }
@@ -549,8 +647,59 @@ func (p *Phase1) recoverZvecLock() error {
 		return recErr
 	}
 	zvec.ReclaimCollectionLock(p.zvecCfg)
-	if !p.isIndexingRunning() {
-		_ = p.zvec.Close()
+	if p.coordinator != nil {
+		if !p.coordinator.TryLockZvecForClose() {
+			return errZvecRecoverySkipped
+		}
+		defer p.coordinator.UnlockZvecForClose()
+	} else if p.isIndexingRunning() {
+		return errZvecRecoverySkipped
+	}
+	if closeErr := p.zvec.Close(); closeErr != nil {
+		return fmt.Errorf("zvec close during lock recovery: %w", closeErr)
 	}
 	return nil
+}
+
+func (p *Phase1) zvecSearchWithContext(ctx context.Context, vector []float32, limit int, pathGlob string) ([]zvec.SearchHit, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type result struct {
+		hits []zvec.SearchHit
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		hits, err := p.zvec.Search(vector, limit, pathGlob)
+		ch <- result{hits: hits, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		// Wait for the zvec goroutine so searchWG is not released before Search
+		// finishes (Shutdown must not close the collection mid-query).
+		res := <-ch
+		if res.err != nil {
+			slog.Debug("zvec search finished after client cancel", "err", res.err)
+		}
+		return nil, ctx.Err()
+	case res := <-ch:
+		return res.hits, res.err
+	}
+}
+
+func normalizeSearchLimit(limit int, topK *int) (int, error) {
+	if limit == 0 && topK != nil {
+		limit = *topK
+	}
+	if limit < 0 {
+		return 0, ErrInvalidSearchLimit
+	}
+	if limit == 0 {
+		limit = config.DefaultSearchLimit
+	}
+	if limit > config.DefaultMaxSearchLimit {
+		limit = config.DefaultMaxSearchLimit
+	}
+	return limit, nil
 }

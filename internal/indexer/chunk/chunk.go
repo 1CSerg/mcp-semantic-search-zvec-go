@@ -56,7 +56,22 @@ func ReadAndChunk(root, relativePath string, opts Options) ([]zvec.Chunk, error)
 	if info.Size() <= threshold {
 		return readAllAndChunk(abs, relativePath, opts)
 	}
-	return streamChunk(abs, relativePath, opts)
+	return streamChunkLegacy(abs, relativePath, opts)
+}
+
+func streamChunkLegacy(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
+	var chunks []zvec.Chunk
+	coll := newBatchCollector(len(chunks)+1, func(batch []zvec.Chunk) error {
+		chunks = append(chunks, batch...)
+		return nil
+	})
+	if err := streamChunkBatched(abs, relativePath, opts, coll); err != nil {
+		return nil, err
+	}
+	if err := coll.flush(); err != nil {
+		return nil, err
+	}
+	return chunks, nil
 }
 
 func readAllAndChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
@@ -157,16 +172,75 @@ func slideWindow(rel string, allLines []string, opts Options) []zvec.Chunk {
 	return chunks
 }
 
-// resolveWithinRoot joins root and relativePath and verifies the result stays
-// under root, rejecting "../" escapes and absolute path injection.
+// ResolveWithinRoot joins root and relativePath, resolves symlinks, and verifies
+// the result stays under root (rejects "../" escapes, symlink escapes, and absolute injection).
+func ResolveWithinRoot(root, relativePath string) (string, error) {
+	return resolveWithinRoot(root, relativePath)
+}
+
 func resolveWithinRoot(root, relativePath string) (string, error) {
 	rootClean := filepath.Clean(root)
 	abs := filepath.Clean(filepath.Join(rootClean, filepath.FromSlash(relativePath)))
+	if err := assertLexicalContainment(abs, rootClean, relativePath); err != nil {
+		return "", err
+	}
+
+	rootReal, err := filepath.EvalSymlinks(rootClean)
+	if err != nil {
+		return "", fmt.Errorf("workspace root: %w", err)
+	}
+
+	absReal, err := resolveSymlinksSafe(abs, rootReal, relativePath)
+	if err != nil {
+		return "", err
+	}
+	return absReal, nil
+}
+
+func assertLexicalContainment(abs, rootClean, relativePath string) error {
 	rootWithSep := rootClean + string(filepath.Separator)
 	if abs != rootClean && !strings.HasPrefix(abs, rootWithSep) {
-		return "", fmt.Errorf("path %q escapes workspace root", relativePath)
+		return fmt.Errorf("path %q escapes workspace root", relativePath)
 	}
-	return abs, nil
+	return nil
+}
+
+func assertRealContainment(path, rootReal, relativePath string) error {
+	rootClean := filepath.Clean(rootReal)
+	pathClean := filepath.Clean(path)
+	rootWithSep := rootClean + string(filepath.Separator)
+	if pathClean != rootClean && !strings.HasPrefix(pathClean, rootWithSep) {
+		if relativePath != "" {
+			return fmt.Errorf("path %q escapes workspace root", relativePath)
+		}
+		return fmt.Errorf("path escapes workspace root")
+	}
+	return nil
+}
+
+func resolveSymlinksSafe(abs, rootReal, relativePath string) (string, error) {
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return "", err
+		}
+		parentReal, parentErr := filepath.EvalSymlinks(parent)
+		if parentErr != nil {
+			return "", parentErr
+		}
+		if err := assertRealContainment(parentReal, rootReal, relativePath); err != nil {
+			return "", err
+		}
+		return filepath.Join(parentReal, filepath.Base(abs)), nil
+	}
+	if err := assertRealContainment(real, rootReal, relativePath); err != nil {
+		return "", err
+	}
+	return real, nil
 }
 
 func stripUTF8BOM(content []byte) []byte {

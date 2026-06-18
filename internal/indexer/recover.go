@@ -34,6 +34,19 @@ func RecoverStalledProgress(indexDir string, stallSeconds float64, hasLivePeer f
 	return store.Save(p)
 }
 
+// RecoverInterruptedProgress migrates legacy error progress from GUI/process shutdown to idle interrupted state.
+func RecoverInterruptedProgress(indexDir string) error {
+	store := NewProgressStore(indexDir)
+	p, err := store.Load()
+	if err != nil {
+		return err
+	}
+	if !p.Running && p.State == StateError && isLegacyContextCanceledProgressError(p.Error) {
+		return store.Save(FinishInterrupted(p))
+	}
+	return nil
+}
+
 var errStalledRecovery = stalledError{}
 
 type stalledError struct{}

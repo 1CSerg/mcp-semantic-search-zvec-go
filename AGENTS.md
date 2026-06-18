@@ -15,7 +15,7 @@ MCP-сервер семантического поиска (Go): zvec + HTTP/Ope
 
 Кратко: clone репозиторий → `install.ps1` / `install.sh` из корня целевого проекта → перезапустить Cursor / Roo Code (MCP без hot-reload).
 
-Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zvec-go.mdc`](.cursor/rules/semantic-search-zvec-go.mdc) (English, `alwaysApply`) с инструкциями по MCP tools; uninstall удаляет только install-managed файл с маркером `managedBy: mcp-semantic-search-zvec-go`.
+Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zvec-go.mdc`](.cursor/rules/semantic-search-zvec-go.mdc) и Roo/Zoo Code rule [`.roo/rules/semantic-search-zvec-go.md`](.roo/rules/semantic-search-zvec-go.md) (English) с инструкциями по MCP tools; uninstall удаляет только install-managed файлы с маркером `managedBy: mcp-semantic-search-zvec-go`. Install также обновляет `.cursor/mcp.json` и `.roo/mcp.json`.
 
 ## MCP tools
 
@@ -26,14 +26,17 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | `semantic_search` | NL-запрос → ranked chunks |
 | `index_status` | Пути, counts, progress индексации |
 | `reindex` | Полная или инкрементальная переиндексация |
-| `check_update` | Установленная версия (**stub** — GitHub Releases не опрашивается) |
+| `check_update` | Сравнение с последним GitHub Release (кэш успеха 1 ч, ошибки 1 мин; отключить: `CHECK_UPDATE_DISABLE=true`; stub-сборка без zvec — заглушка) |
 
 **Правила для агента:**
 
 - Исследование кодовой базы → сначала `semantic_search`, не полный обход репозитория.
+- **План или ревью** (code review, аудит, план рефакторинга) → **до** составления плана: `index_status`, затем несколько `semantic_search` по темам (concurrency, errors, security, indexing, transport и т.д.). Не заменять MCP на Task/explore, широкий grep или полный обход файлов, если MCP доступен.
+- **Реализация** → тоже начинать с `semantic_search` для связанного кода; Read/Grep — после semantic hits или для точечных правок.
 - Статус индекса → `index_status`; не grep реализацию tools в исходниках MCP.
 - При `indexing.running` результаты `semantic_search` могут быть неполными; в ответе есть поле `indexing` с прогрессом.
-- Не читать `.mcp-semantic-search-zvec-go/data/index/` целиком; при ошибках — tail `.mcp-semantic-search-zvec-go/data/logs/server.log`.
+- Не читать `.mcp-semantic-search-zvec-go/data/index/` целиком; при ошибках — tail `.mcp-semantic-search-zvec-go/logs/server.log`.
+- Пустой поиск при idle индексации → `reindex`; повторить поиск перед fallback на broad exploration.
 
 **Параметры `semantic_search`:**
 
@@ -61,12 +64,15 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 
 | Symptom | Action |
 |---------|--------|
-| MCP not listed | Restart IDE; check `.cursor/mcp.json` JSON |
+| MCP not listed | Restart IDE; check `.cursor/mcp.json` or `.roo/mcp.json` JSON |
+| `config load failed: mapping values are not allowed` | Quote scalar values containing `:` in `config.yaml` (e.g. `description: "Foo: Bar"`) |
 | Cursor MCP **error**, tools=0, но `exe --version` работает | Windows: re-run `install.ps1 -TargetRoot`; проверить `%APPDATA%\Cursor\logs\*\mcpprocess.log` (`ENOENT`, `non-retryable`); kill McpProcess + restart Cursor; см. [INSTALL.md](INSTALL.md#cursor-mcp-error-на-windows) |
 | После **переноса** проекта на Windows | Re-run `install.ps1 -TargetRoot` (обновляет `mcp.json` env и launcher paths) |
 | **Несколько репо**, два окна Cursor | Native install OK (отдельный `.mcp-semantic-search-zvec-go/` на проект). Multi-root в одном окне → shared daemon |
 | Docker + несколько репо | `docker-compose.daemon.yml` + `-McpMode Proxy` в install.ps1 на Windows |
 | Empty search, indexing idle | `reindex`; check `index_status` |
+| `embedding failed: dimension mismatch: got N want M` | Check `dimensions` in the active profile matches the model (MRL models need server v0.1.8+ which sends `dimensions` to the API); run `reindex` with `force: true` after fixing |
+| `index_status.message`: workspace path changed (misleading) | Check `identity_mismatch_reason` — often profile/dimensions changed, not path; `reindex` with `force: true` |
 | `zvec_open_ok: false`, LOCK error, `zvec_doc_count: 0` | Duplicate `--stdio` processes — restart Cursor; check `index_status.diagnostics`; re-run install; `reindex` with `force: true` if needed |
 | `--stdio` остался после закрытия Cursor/launcher | Сервер завершится сам, если исчезнет родительская цепочка запуска (`powershell`/`cmd` или Cursor). Если закрыт только workspace, но Cursor держит launcher живым, нужен Restart MCP/IDE или `--stop-stdio-for-workspace`. Для отладки: `MCP_DISABLE_PARENT_WATCH=true` |
 | After MCP binary update (zvec-go bump) | Index resets on first start; in **Native** mode with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |
@@ -74,6 +80,8 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
 | Shared daemon: `workspace_id` required | Use `--stdio-proxy --workspace-id=<id>` or HTTP `X-Workspace-ID` |
 | Shared daemon: unknown workspace | Check `daemon.yaml` id matches proxy `--workspace-id` |
+| Proxy / daemon without `API_TOKEN` | `index_status` omits `workspace_root`, `index_dir`, `current_file`, `failed_files`; set `API_TOKEN` on daemon + Bearer on HTTP for full paths |
+| Daemon shutdown: `503 registry is closing` | Expected while daemon stops; retry after restart or wait for in-flight requests to finish |
 
 ## Shared daemon (optional)
 
@@ -85,7 +93,7 @@ Install по умолчанию настраивает per-project `--stdio` ч�
 
 ## Обновление
 
-1. Сравнить `index_status.server_version` или `bin/mcp-semantic-search-zvec-go --version` с [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases) (`check_update` — stub, не опрашивает GitHub).
+1. Сравнить `index_status.server_version` или `bin/mcp-semantic-search-zvec-go --version` с [GitHub Releases](https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases) или вызвать MCP `check_update` (опрашивает GitHub, кроме stub-сборки).
 2. Re-run install script from updated clone/release.
 3. Restart IDE.
 

@@ -1,16 +1,22 @@
 package indexer
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
 
 const progressFileName = "progress.json"
+
+// InterruptedMessage is persisted when indexing stops due to process shutdown (e.g. GUI close).
+const InterruptedMessage = "indexing interrupted; incremental reindex will continue"
 
 // MaxFailedFilesInStatus caps failed_files entries in index_status / progress.json.
 const MaxFailedFilesInStatus = 20
@@ -162,12 +168,63 @@ func FinishIdleWithWarnings(p Progress, filesFailed int) Progress {
 	return p
 }
 
+// FinishInterrupted marks progress paused after lifecycle cancel (GUI close, shutdown).
+func FinishInterrupted(p Progress) Progress {
+	now := time.Now().UTC().Format(time.RFC3339)
+	p.State = StateIdle
+	p.Running = false
+	p.CurrentFile = ""
+	p.Error = ""
+	p.Message = InterruptedMessage
+	p.UpdatedAt = now
+	p.FinishedAt = now
+	return p
+}
+
+// IsInterruptedProgress reports incomplete indexing interrupted by cancel/shutdown.
+func IsInterruptedProgress(p Progress) bool {
+	if p.Running {
+		return false
+	}
+	if p.State == StateIdle && p.Message == InterruptedMessage {
+		return true
+	}
+	if p.State == StateError && p.Error == errContextCanceledProgress.Error() {
+		return true
+	}
+	return false
+}
+
+type contextCanceledProgressError struct{}
+
+func (contextCanceledProgressError) Error() string { return "context canceled" }
+
+var errContextCanceledProgress = contextCanceledProgressError{}
+
+// isLegacyContextCanceledProgressError reports persisted cancel errors for migration
+// of older progress files (typed sentinel or legacy substring text).
+func isLegacyContextCanceledProgressError(errStr string) bool {
+	if errStr == errContextCanceledProgress.Error() {
+		return true
+	}
+	return strings.Contains(strings.ToLower(errStr), "context canceled")
+}
+
+// IsIndexIncomplete reports whether files_done is below files_total.
+func IsIndexIncomplete(p Progress) bool {
+	return p.FilesTotal > 0 && p.FilesDone < p.FilesTotal
+}
+
 // FinishError marks progress failed.
 func FinishError(p Progress, err error) Progress {
 	now := time.Now().UTC().Format(time.RFC3339)
 	p.State = StateError
 	p.Running = false
-	p.Error = err.Error()
+	if errors.Is(err, context.Canceled) {
+		p.Error = errContextCanceledProgress.Error()
+	} else {
+		p.Error = err.Error()
+	}
 	p.Message = fmt.Sprintf("indexing failed: %v", err)
 	p.UpdatedAt = now
 	p.FinishedAt = now

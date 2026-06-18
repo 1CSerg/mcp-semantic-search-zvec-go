@@ -9,10 +9,10 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
-func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
+func streamChunkBatched(abs, relativePath string, opts Options, coll *batchCollector) error {
 	f, err := os.Open(abs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer f.Close()
 
@@ -24,11 +24,10 @@ func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
 
 	reader, err := newLineReader(f, maxLine)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	chunkType := chunkTypeForPath(relativePath)
-	var chunks []zvec.Chunk
 	buf := make([]string, 0, window)
 	start := 0
 	lineCount := 0
@@ -38,18 +37,20 @@ func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
 			line, err := reader.readLine()
 			if err == io.EOF {
 				if len(buf) == 0 {
-					return chunks, nil
+					return nil
 				}
 				end := start + len(buf)
 				if ch := chunkFromLineWindow(relativePath, buf, int64(start+1), chunkType); ch != nil {
-					chunks = append(chunks, *ch)
+					if err := coll.add(ch); err != nil {
+						return err
+					}
 				} else if end == lineCount {
-					return chunks, nil
+					return nil
 				}
-				return chunks, nil
+				return nil
 			}
 			if err != nil {
-				return nil, err
+				return err
 			}
 			lineCount++
 			buf = append(buf, line)
@@ -59,18 +60,20 @@ func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
 		end := start + window
 		ch := chunkFromLineWindow(relativePath, buf[:window], int64(start+1), chunkType)
 		if ch != nil {
-			chunks = append(chunks, *ch)
+			if err := coll.add(ch); err != nil {
+				return err
+			}
 		}
 
 		line, err := reader.readLine()
 		if err == io.EOF {
 			if ch == nil && end == lineCount {
-				return chunks, nil
+				return nil
 			}
-			return chunks, nil
+			return nil
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		lineCount++
 
@@ -78,6 +81,11 @@ func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
 		start += step
 		buf = append(buf[step:window], line)
 	}
+}
+
+// streamChunk reads a large file in a streaming fashion and returns all chunks.
+func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
+	return streamChunkLegacy(abs, relativePath, opts)
 }
 
 type lineReader struct {

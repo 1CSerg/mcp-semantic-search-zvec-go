@@ -3,8 +3,11 @@ package service
 import "encoding/json"
 
 func (p *Phase1) fileWatcherStatus() map[string]any {
-	if p.watcherInst != nil {
-		return watcherStatusMap(p.watcherInst.Snapshot())
+	p.startupMu.RLock()
+	w := p.watcherInst
+	p.startupMu.RUnlock()
+	if w != nil {
+		return watcherStatusMap(w.Snapshot())
 	}
 	return map[string]any{
 		"enabled_in_config": p.Settings.App.FileWatcher.Enabled,

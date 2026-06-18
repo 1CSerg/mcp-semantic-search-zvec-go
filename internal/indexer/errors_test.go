@@ -31,11 +31,24 @@ func TestIsPerFileSkippable(t *testing.T) {
 		errors.New("manifest get foo: database is locked"),
 		errors.New("some unexpected store failure"),
 		errors.New(`zvec error [INTERNAL_ERROR]: Can't open lock file: /tmp/ws/LOCK`),
+		errors.New("zvec error: upsert failed"),
 	}
 	for _, err := range fatal {
 		if isPerFileSkippable(err) {
 			t.Fatalf("expected fatal (non-skippable): %v", err)
 		}
+	}
+}
+
+func TestIsContextInterrupt(t *testing.T) {
+	if !IsContextInterrupt(context.Canceled) {
+		t.Fatal("expected Canceled to be interrupt")
+	}
+	if IsContextInterrupt(context.DeadlineExceeded) {
+		t.Fatal("DeadlineExceeded must not be treated as lifecycle interrupt")
+	}
+	if IsContextInterrupt(fatalEmbedErr(context.DeadlineExceeded)) {
+		t.Fatal("wrapped DeadlineExceeded must not be treated as interrupt")
 	}
 }
 

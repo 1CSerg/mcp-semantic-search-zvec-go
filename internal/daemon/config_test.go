@@ -66,6 +66,34 @@ func TestLoadConfigDuplicateID(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDuplicateIndexDir(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "proj")
+	sharedIndex := filepath.Join(dir, "shared-index")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sharedIndex, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "daemon.yaml")
+	content := `path_containment: warn
+workspaces:
+  - id: app-a
+    root: ` + strings.ReplaceAll(root, `\`, `/`) + `
+    index_dir: ` + strings.ReplaceAll(sharedIndex, `\`, `/`) + `
+  - id: app-b
+    root: ` + strings.ReplaceAll(root, `\`, `/`) + `
+    index_dir: ` + strings.ReplaceAll(sharedIndex, `\`, `/`) + `
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(cfgPath); err == nil {
+		t.Fatal("expected duplicate index_dir error")
+	}
+}
+
 func TestLoadConfigExternalIndexWithAllowlist(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "proj")

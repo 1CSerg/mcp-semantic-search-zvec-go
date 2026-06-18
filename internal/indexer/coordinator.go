@@ -19,6 +19,9 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
+// ErrAlreadyRunning is returned when Start is called while a job is active.
+var ErrAlreadyRunning = errors.New("indexing already running")
+
 // Embedder batches text into vectors during indexing.
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
@@ -40,6 +43,7 @@ type Coordinator struct {
 	running      bool
 	curProgress  Progress
 	lifecycleCtx context.Context
+	zvecCloseMu  sync.Mutex
 }
 
 // NewCoordinator creates an indexing coordinator.
@@ -57,14 +61,34 @@ func NewCoordinator(settings *config.Settings, profile config.EmbeddingProfile, 
 
 // SetLifecycleContext binds shutdown context for background indexing runs.
 func (c *Coordinator) SetLifecycleContext(ctx context.Context) {
+	c.mu.Lock()
 	c.lifecycleCtx = ctx
+	c.mu.Unlock()
 }
 
 func (c *Coordinator) runContext() context.Context {
-	if c.lifecycleCtx != nil {
-		return c.lifecycleCtx
+	c.mu.Lock()
+	ctx := c.lifecycleCtx
+	c.mu.Unlock()
+	if ctx != nil {
+		return ctx
 	}
 	return context.Background()
+}
+
+// ReleaseLock releases the cross-process index lock if this coordinator holds it.
+func (c *Coordinator) ReleaseLock() error {
+	return c.lock.Release()
+}
+
+// TryLockZvecForClose acquires the zvec close lock unless indexing holds it.
+func (c *Coordinator) TryLockZvecForClose() bool {
+	return c.zvecCloseMu.TryLock()
+}
+
+// UnlockZvecForClose releases the zvec close lock acquired by TryLockZvecForClose.
+func (c *Coordinator) UnlockZvecForClose() {
+	c.zvecCloseMu.Unlock()
 }
 
 // IsRunning reports whether a job is active in this process.
@@ -72,6 +96,22 @@ func (c *Coordinator) IsRunning() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.running
+}
+
+// WaitForIdle blocks until the background job finishes or ctx is canceled.
+func (c *Coordinator) WaitForIdle(ctx context.Context) error {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !c.IsRunning() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // CurrentProgress returns in-memory or persisted progress.
@@ -93,12 +133,22 @@ func (c *Coordinator) CurrentProgress() Progress {
 // Start launches indexing in the background. Returns initial progress snapshot.
 func (c *Coordinator) Start(force bool) (Progress, error) {
 	_ = RecoverStalledProgress(c.Settings.IndexDir, c.Settings.App.Indexing.StallSeconds, nil)
+	_ = RecoverInterruptedProgress(c.Settings.IndexDir)
+
+	if !force {
+		if need, err := c.manifestZvecDesync(); err != nil {
+			return Progress{State: StateIdle, Running: false}, err
+		} else if need {
+			force = true
+			slog.Warn("manifest populated but zvec empty; forcing full reindex")
+		}
+	}
 
 	c.mu.Lock()
 	if c.running {
 		p := c.curProgress
 		c.mu.Unlock()
-		return p, fmt.Errorf("indexing already running")
+		return p, ErrAlreadyRunning
 	}
 	c.mu.Unlock()
 
@@ -111,7 +161,7 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 		_ = c.lock.Release()
 		p := c.curProgress
 		c.mu.Unlock()
-		return p, fmt.Errorf("indexing already running")
+		return p, ErrAlreadyRunning
 	}
 	c.running = true
 	c.curProgress = StartRunning(force)
@@ -127,26 +177,41 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 
 	go func() {
-		filesFailed, finishFiles, finishChunks, err := c.run(c.runContext(), force)
-		_ = c.lock.Release()
-		c.mu.Lock()
-		c.running = false
-		if err != nil {
-			c.curProgress = FinishError(c.curProgress, err)
-		} else if filesFailed > 0 {
-			c.curProgress = FinishIdleWithWarnings(c.curProgress, filesFailed)
-			if finishFiles > 0 {
-				c.curProgress.FilesTotal = finishFiles
-				c.curProgress.FilesDone = finishFiles
+		c.zvecCloseMu.Lock()
+		var filesFailed, finishFiles, finishChunks int
+		var runErr error
+		defer func() {
+			if r := recover(); r != nil {
+				runErr = fmt.Errorf("indexing panic: %v", r)
+				slog.Error("indexing goroutine panic", "panic", r)
 			}
-			c.curProgress.ChunksIndexed = finishChunks
-		} else {
-			c.curProgress = FinishIdle(c.curProgress, finishFiles, finishChunks)
-		}
-		if err := c.progress.Save(c.curProgress); err != nil {
-			slog.Warn("persist final indexing progress failed", "err", err)
-		}
-		c.mu.Unlock()
+			_ = c.lock.Release()
+			c.mu.Lock()
+			c.running = false
+			if runErr != nil {
+				if IsContextInterrupt(runErr) {
+					c.curProgress = FinishInterrupted(c.curProgress)
+				} else {
+					c.curProgress = FinishError(c.curProgress, runErr)
+				}
+			} else if filesFailed > 0 {
+				c.curProgress = FinishIdleWithWarnings(c.curProgress, filesFailed)
+				if finishFiles > 0 {
+					c.curProgress.FilesTotal = finishFiles
+					c.curProgress.FilesDone = finishFiles
+				}
+				c.curProgress.ChunksIndexed = finishChunks
+			} else {
+				c.curProgress = FinishIdle(c.curProgress, finishFiles, finishChunks)
+			}
+			if err := c.progress.Save(c.curProgress); err != nil {
+				slog.Warn("persist final indexing progress failed", "err", err)
+			}
+			c.mu.Unlock()
+			c.zvecCloseMu.Unlock()
+		}()
+
+		filesFailed, finishFiles, finishChunks, runErr = c.run(c.runContext(), force)
 	}()
 
 	return p, nil
@@ -179,10 +244,10 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	defer manStore.Close()
 
 	if force {
-		if err := manStore.Clear(); err != nil {
+		if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
 			return 0, 0, 0, err
 		}
-		if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
+		if err := manStore.Clear(); err != nil {
 			return 0, 0, 0, err
 		}
 	}
@@ -238,12 +303,20 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 				return 0, 0, 0, fmt.Errorf("%s: %w", rel, err)
 			}
 			if isPerFileSkippable(err) {
-				filesFailed++
-				slog.Warn("index file skipped", "path", rel, "err", err)
-				c.updateProgress(func(p *Progress) {
-					p.FilesFailed = filesFailed
-					AppendFailedFile(p, rel)
-				})
+				if errors.Is(err, os.ErrNotExist) {
+					if purgeErr := c.purgeRemovedFile(manStore, rel); purgeErr != nil {
+						return 0, 0, 0, fmt.Errorf("%s: purge vanished file: %w", rel, purgeErr)
+					}
+					delete(discovered, rel)
+					slog.Info("index file vanished during run; purged stale index", "path", rel)
+				} else {
+					filesFailed++
+					slog.Warn("index file skipped", "path", rel, "err", err)
+					c.updateProgress(func(p *Progress) {
+						p.FilesFailed = filesFailed
+						AppendFailedFile(p, rel)
+					})
+				}
 				stallWatch.Touch()
 				continue
 			}
@@ -262,13 +335,13 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 			if _, ok := discovered[e.RelativePath]; ok {
 				continue
 			}
+			if err := manStore.Delete(e.RelativePath); err != nil {
+				return 0, 0, 0, err
+			}
 			if len(e.DocIDs) > 0 {
 				if err := c.Zvec.DeleteByIDs(e.DocIDs); err != nil && !isZvecUnavailable(err) {
 					return 0, 0, 0, err
 				}
-			}
-			if err := manStore.Delete(e.RelativePath); err != nil {
-				return 0, 0, 0, err
 			}
 		}
 	}
@@ -294,7 +367,10 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 }
 
 func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool) error {
-	abs := filepath.Join(c.Settings.WorkspaceRoot, filepath.FromSlash(rel))
+	abs, err := chunk.ResolveWithinRoot(c.Settings.WorkspaceRoot, rel)
+	if err != nil {
+		return err
+	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		return err
@@ -311,50 +387,167 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		}
 	}
 
-	chunks, err := chunk.ReadAndChunk(c.Settings.WorkspaceRoot, rel, chunk.Options{
+	chunkOpts := chunk.Options{
 		MaxFileBytes:         c.Settings.App.Indexing.MaxFileBytes,
 		StreamThresholdBytes: c.Settings.App.Indexing.StreamChunkThresholdBytes,
 		MaxLineBytes:         c.Settings.App.Indexing.MaxLineBytes,
-	})
-	if err != nil {
-		return err
 	}
-	if old != nil && len(old.DocIDs) > 0 {
-		if err := c.Zvec.DeleteByIDs(old.DocIDs); err != nil && !isZvecUnavailable(err) {
-			return err
-		}
+	batchSize := c.Profile.BatchSize
+	if batchSize <= 0 {
+		batchSize = 32
 	}
 
-	if len(chunks) == 0 {
+	var docIDs []string
+	var upsertedDocIDs []string
+	chunkCount, err := chunk.ProcessBatches(c.Settings.WorkspaceRoot, rel, chunkOpts, batchSize, func(batch []zvec.Chunk) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		texts := make([]string, len(batch))
+		for i, ch := range batch {
+			texts[i] = ch.Snippet
+		}
+		vectors, err := c.embedTexts(ctx, texts)
+		if err != nil {
+			return fatalEmbedErr(err)
+		}
+		if err := c.Zvec.UpsertChunks(batch, vectors); err != nil && !isZvecUnavailable(err) {
+			return err
+		}
+		for _, ch := range batch {
+			docIDs = append(docIDs, ch.DocID)
+			upsertedDocIDs = append(upsertedDocIDs, ch.DocID)
+		}
+		return nil
+	})
+	if err != nil {
+		if len(upsertedDocIDs) > 0 {
+			if delErr := c.Zvec.DeleteByIDs(upsertedDocIDs); delErr != nil && !isZvecUnavailable(delErr) {
+				slog.Warn("index file rollback incomplete", "path", rel, "index_err", err, "rollback_err", delErr)
+			}
+		}
+		return err
+	}
+
+	if chunkCount == 0 {
+		if old != nil && len(old.DocIDs) > 0 {
+			if err := c.Zvec.DeleteByIDs(old.DocIDs); err != nil && !isZvecUnavailable(err) {
+				return err
+			}
+		}
 		if err := manStore.Delete(rel); err != nil {
 			return fmt.Errorf("manifest delete %s: %w", rel, err)
 		}
 		return nil
 	}
 
-	texts := make([]string, len(chunks))
-	for i, ch := range chunks {
-		texts[i] = ch.Snippet
-	}
-	vectors, err := c.Embed.Embed(ctx, texts)
-	if err != nil {
-		return fatalEmbedErr(err)
-	}
-	if err := c.Zvec.UpsertChunks(chunks, vectors); err != nil && !isZvecUnavailable(err) {
-		return err
-	}
-
-	docIDs := make([]string, len(chunks))
-	for i, ch := range chunks {
-		docIDs[i] = ch.DocID
-	}
-	return manStore.Upsert(manifest.FileEntry{
+	if err := manStore.Upsert(manifest.FileEntry{
 		RelativePath: rel,
 		MtimeNs:      info.ModTime().UnixNano(),
 		Size:         info.Size(),
-		ChunkCount:   len(chunks),
+		ChunkCount:   chunkCount,
 		DocIDs:       docIDs,
-	})
+	}); err != nil {
+		if delErr := c.Zvec.DeleteByIDs(docIDs); delErr != nil && !isZvecUnavailable(delErr) {
+			slog.Warn("manifest upsert failed; zvec rollback incomplete", "path", rel, "manifest_err", err, "rollback_err", delErr)
+		}
+		return fmt.Errorf("manifest upsert %s: %w", rel, err)
+	}
+
+	if old != nil && len(old.DocIDs) > 0 {
+		stale := staleDocIDs(old.DocIDs, docIDs)
+		if len(stale) > 0 {
+			if err := c.deleteStaleVectors(stale); err != nil {
+				if delErr := c.Zvec.DeleteByIDs(docIDs); delErr != nil && !isZvecUnavailable(delErr) {
+					slog.Warn("stale vector rollback incomplete", "path", rel, "rollback_err", delErr)
+				}
+				if old != nil {
+					if upErr := manStore.Upsert(*old); upErr != nil {
+						slog.Warn("manifest rollback after stale delete failed", "path", rel, "err", upErr)
+					}
+				} else if delErr := manStore.Delete(rel); delErr != nil {
+					slog.Warn("manifest rollback delete failed", "path", rel, "err", delErr)
+				}
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Coordinator) purgeRemovedFile(manStore *manifest.Store, rel string) error {
+	entry, err := manStore.Get(rel)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("manifest get %s: %w", rel, err)
+	}
+	if entry == nil {
+		return nil
+	}
+	if len(entry.DocIDs) > 0 {
+		if err := c.Zvec.DeleteByIDs(entry.DocIDs); err != nil && !isZvecUnavailable(err) {
+			return err
+		}
+	}
+	if err := manStore.Delete(rel); err != nil {
+		return fmt.Errorf("manifest delete %s: %w", rel, err)
+	}
+	return nil
+}
+
+func (c *Coordinator) embedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	batchSize := c.Profile.BatchSize
+	if batchSize <= 0 {
+		batchSize = 32
+	}
+	if len(texts) <= batchSize {
+		return c.Embed.Embed(ctx, texts)
+	}
+	out := make([][]float32, 0, len(texts))
+	for start := 0; start < len(texts); start += batchSize {
+		end := start + batchSize
+		if end > len(texts) {
+			end = len(texts)
+		}
+		vecs, err := c.Embed.Embed(ctx, texts[start:end])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, vecs...)
+	}
+	return out, nil
+}
+
+func (c *Coordinator) deleteStaleVectors(ids []string) error {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := c.Zvec.DeleteByIDs(ids)
+		if err == nil || isZvecUnavailable(err) {
+			return nil
+		}
+		lastErr = err
+		slog.Warn("stale vector delete failed", "attempt", attempt, "count", len(ids), "err", err)
+		time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+	}
+	return lastErr
+}
+
+// staleDocIDs returns old document IDs that are not present in the new set.
+func staleDocIDs(oldIDs, newIDs []string) []string {
+	if len(oldIDs) == 0 {
+		return nil
+	}
+	keep := make(map[string]struct{}, len(newIDs))
+	for _, id := range newIDs {
+		keep[id] = struct{}{}
+	}
+	var stale []string
+	for _, id := range oldIDs {
+		if _, ok := keep[id]; !ok {
+			stale = append(stale, id)
+		}
+	}
+	return stale
 }
 
 func (c *Coordinator) updateProgress(fn func(*Progress)) {
@@ -386,5 +579,40 @@ func manifestStats(manStore *manifest.Store) (files, chunks int, err error) {
 }
 
 func isZvecUnavailable(err error) bool {
-	return err == zvec.ErrNotLinked
+	return errors.Is(err, zvec.ErrNotLinked)
+}
+
+func (c *Coordinator) manifestZvecDesync() (bool, error) {
+	manifestPath := filepath.Join(c.Settings.IndexDir, "manifest.db")
+	if _, err := os.Stat(manifestPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	manStore, err := manifest.Open(manifestPath)
+	if err != nil {
+		return false, err
+	}
+	defer manStore.Close()
+	_, chunks, err := manStore.Stats()
+	if err != nil {
+		return false, err
+	}
+	if chunks == 0 {
+		return false, nil
+	}
+	if !c.Zvec.IsOpen() {
+		if err := c.Zvec.Open(); err != nil {
+			if errors.Is(err, zvec.ErrCollectionMissing) {
+				return true, nil
+			}
+			return false, err
+		}
+	}
+	docCount, err := c.Zvec.DocCount()
+	if err != nil {
+		return false, err
+	}
+	return docCount == 0, nil
 }

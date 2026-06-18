@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -11,6 +12,9 @@ import (
 
 // ErrNotImplemented indicates the default stub build (no zvec tag).
 var ErrNotImplemented = fmt.Errorf("not implemented in stub build; use -tags zvec,onnx")
+
+// ErrInvalidSearchLimit is returned when search limit is negative.
+var ErrInvalidSearchLimit = errors.New("limit must be non-negative")
 
 // SearchRequest is shared by MCP and HTTP.
 type SearchRequest struct {
@@ -59,12 +63,9 @@ func (s *Stub) SemanticSearch(ctx context.Context, req SearchRequest) (json.RawM
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	limit := req.Limit
-	if limit == 0 && req.TopK != nil {
-		limit = *req.TopK
-	}
-	if limit == 0 {
-		limit = config.DefaultSearchLimit
+	limit, err := normalizeSearchLimit(req.Limit, req.TopK)
+	if err != nil {
+		return nil, err
 	}
 	payload := map[string]any{
 		"query":   req.Query,

@@ -76,7 +76,12 @@ func enrichIndexStatusDiagnostics(
 	manifestChunks int,
 	zvecOpenOK bool,
 	skippedScanPaths int,
+	identityMismatch bool,
 ) {
+	if identityMismatch {
+		setDiagnosticHint(diag, "active_profile or embedding dimensions changed; run reindex with force=true")
+	}
+
 	if runtime.GOOS == "windows" && pathContainsNonASCII(settings.IndexDir) {
 		diag["non_ascii_index_dir"] = true
 		diag["unicode_paths_supported"] = true
@@ -102,6 +107,10 @@ func enrichIndexStatusDiagnostics(
 	if docCount > 0 && manifestChunks > 0 && docCount > manifestChunks*2 {
 		diag["zvec_manifest_mismatch_suspected"] = true
 		setDiagnosticHint(diag, "zvec doc count exceeds manifest chunks; run reindex with force=true")
+	}
+	if manifestChunks > 0 && docCount == 0 {
+		diag["zvec_manifest_empty_suspected"] = true
+		setDiagnosticHint(diag, "manifest has chunks but zvec is empty; run reindex with force=true")
 	}
 	if msg, ok := diag["hint"].(string); ok {
 		diag["hint"] = strings.TrimSpace(msg)

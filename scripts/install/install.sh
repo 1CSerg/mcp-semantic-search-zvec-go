@@ -11,6 +11,8 @@ TEMPLATES="$REPO_ROOT/templates"
 BINARY_NAME="mcp-semantic-search-zvec-go"
 SERVER_KEY="semantic-search-zvec-go"
 CURSOR_RULE_REL=".cursor/rules/semantic-search-zvec-go.mdc"
+ROO_RULE_REL=".roo/rules/semantic-search-zvec-go.md"
+ROO_MCP_REL=".roo/mcp.json"
 
 version() {
   grep 'Version = ' "$REPO_ROOT/internal/version/version.go" | sed 's/.*"\(.*\)".*/\1/'
@@ -150,13 +152,41 @@ mkdir -p "$RULES_DIR"
 cp -f "$RULE_TEMPLATE" "$TARGET_ROOT/$CURSOR_RULE_REL"
 echo "Installed Cursor rule: $TARGET_ROOT/$CURSOR_RULE_REL"
 
+ROO_DIR="$TARGET_ROOT/.roo"
+mkdir -p "$ROO_DIR"
+ROO_MCP_JSON="$ROO_DIR/mcp.json"
+python3 - <<'PY' "$ROO_MCP_JSON" "$FRAGMENT" "$SERVER_KEY"
+import json, sys
+mcp_path, frag_path, key = sys.argv[1:4]
+frag = json.load(open(frag_path, encoding="utf-8"))
+try:
+    obj = json.load(open(mcp_path, encoding="utf-8"))
+except FileNotFoundError:
+    obj = {"mcpServers": {}}
+obj.setdefault("mcpServers", {}).update(frag["mcpServers"])
+json.dump(obj, open(mcp_path, "w", encoding="utf-8"), indent=2)
+PY
+echo "Updated Roo MCP config: $ROO_MCP_JSON"
+
+ROO_RULE_TEMPLATE="$TEMPLATES/roo-rules/semantic-search-zvec-go.md"
+if [[ ! -f "$ROO_RULE_TEMPLATE" ]]; then
+  echo "roo rule template not found: $ROO_RULE_TEMPLATE" >&2
+  exit 1
+fi
+ROO_RULES_DIR="$ROO_DIR/rules"
+mkdir -p "$ROO_RULES_DIR"
+cp -f "$ROO_RULE_TEMPLATE" "$TARGET_ROOT/$ROO_RULE_REL"
+echo "Installed Roo rule: $TARGET_ROOT/$ROO_RULE_REL"
+
 cat > "$INSTALL_DIR/install-manifest.json" <<EOF
 {
   "mode": "native",
   "runtime": "go",
   "version": "${VERSION}",
   "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "cursor_rule": "${CURSOR_RULE_REL}"
+  "cursor_rule": "${CURSOR_RULE_REL}",
+  "roo_rule": "${ROO_RULE_REL}",
+  "roo_mcp": "${ROO_MCP_REL}"
 }
 EOF
 echo "$VERSION" > "$INSTALL_DIR/installed-version.txt"
@@ -172,5 +202,6 @@ else
 fi
 
 echo "Done. Restart Cursor. MCP server key: $SERVER_KEY"
+echo "Roo/Zoo Code: .roo/mcp.json and $ROO_RULE_REL updated — restart Roo Code if used."
 echo "Fill in $ENV_FILE for cloud embedding profiles (RouterAI, DashScope, etc.)."
 echo "For offline ONNX: set active_profile: local_multilingual and run reindex with force=true."

@@ -1,27 +1,24 @@
 package lifecycle
 
 import (
+	"errors"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/zvecerr"
 )
 
 // IsZvecLockError reports zvec collection LOCK contention errors.
 func IsZvecLockError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "lock file") || strings.Contains(msg, "can't open lock")
+	return zvecerr.IsLockError(err)
 }
 
 // RecoverDuplicateStdio stops other stdio MCP instances for the workspace.
 func RecoverDuplicateStdio(settings *config.Settings) error {
 	stopped, err := stopStaleStdioInstances(settings.WorkspaceRoot, os.Getpid())
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrStdioScanUnsupported) {
 		return err
 	}
 	for _, pid := range stopped {

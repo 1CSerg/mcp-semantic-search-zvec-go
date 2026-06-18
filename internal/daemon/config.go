@@ -71,6 +71,7 @@ func normalizeConfig(cfg *Config) error {
 	cfg.PathAllowlist = allowlist
 
 	seen := make(map[string]struct{}, len(cfg.Workspaces))
+	seenIndexDirs := make(map[string]string, len(cfg.Workspaces))
 	for i := range cfg.Workspaces {
 		spec := &cfg.Workspaces[i]
 		spec.ID = strings.TrimSpace(spec.ID)
@@ -96,6 +97,11 @@ func normalizeConfig(cfg *Config) error {
 			return fmt.Errorf("workspace %q index_dir: %w", spec.ID, err)
 		}
 		spec.IndexDir = indexDir
+		indexDirClean := filepath.Clean(indexDir)
+		if otherID, ok := seenIndexDirs[indexDirClean]; ok {
+			return fmt.Errorf("daemon config: workspaces %q and %q share index_dir %q", otherID, spec.ID, indexDirClean)
+		}
+		seenIndexDirs[indexDirClean] = spec.ID
 		if err := config.ValidatePathContainment(config.PathContainmentOptions{
 			Mode:         mode,
 			FieldName:    "index_dir",

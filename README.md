@@ -51,7 +51,7 @@ curl http://127.0.0.1:8080/health
 
 ## Статус
 
-**v0.1.6** — retry эмбеддингов при transient HTTP 5xx, `indexing.failed_files` и `diagnostics.log_file` в `index_status`, обновлённая диагностика Unicode/cloud paths. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
+**v0.1.8** — MRL `dimensions` в embed API, interrupted indexing resume в GUI, shared-daemon registry lifecycle и open-daemon path redaction, `indexing.failed_files` / `diagnostics.log_file`. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
 
 ## Лицензия
 

@@ -25,11 +25,25 @@ Deprecated: inline `api_key` in YAML — use `.env` instead.
 
 Name of the profile from `profiles` used for embeddings and search. After changing profile or `dimensions`, run `reindex` with `force: true`.
 
+## YAML pitfalls
+
+Scalar values that contain a colon (`:`) must be wrapped in double quotes, or the YAML parser fails with `mapping values are not allowed in this context`:
+
+```yaml
+# Wrong — breaks parse:
+description: RouterAI — Perplexity: Embed V1 4B
+
+# Correct:
+description: "RouterAI — Perplexity: Embed V1 4B"
+```
+
+On parse failure, the server adds a hint when the error mentions `mapping values`. Install merge (`merge-config.py`) warns about unquoted `description:` lines with colons.
+
 ## profiles
 
 Semantic search uses **embedding** models (vectorization), not chat LLMs. All cloud examples use OpenAI-compatible `/v1/embeddings`.
 
-**Ready-made provider examples** (LM Studio, RouterAI, Alibaba DashScope) with Russian comments: [config.yaml](../config.yaml) — profiles `openai_local`, `lmstudio_qwen`, `routerai_bge_m3`, `routerai_openai_small`, `dashscope_beijing`, `dashscope_intl`. Switch via `active_profile`, then `reindex` with `force: true`.
+**Ready-made provider examples** (LM Studio, RouterAI, Alibaba DashScope) with Russian comments: [config.yaml](../config.yaml) — profiles `openai_local`, `lmstudio_qwen`, `routerai_bge_m3`, `routerai_openai_small`, `routerai_perplexity_4b`, `dashscope_beijing`, `dashscope_intl`. Switch via `active_profile`, then `reindex` with `force: true`.
 
 | Field | Providers | Description |
 |-------|-----------|-------------|
@@ -52,11 +66,22 @@ Semantic search uses **embedding** models (vectorization), not chat LLMs. All cl
 | Profile | Provider | `base_url` | API key env |
 |---------|----------|------------|-------------|
 | `openai_local`, `lmstudio_qwen` | [LM Studio](https://lmstudio.ai/docs/developer/openai-compat/embeddings) | `http://127.0.0.1:1234/v1` | — |
-| `routerai_bge_m3`, `routerai_openai_small` | [RouterAI](https://routerai.ru/) | `https://routerai.ru/api/v1` | `ROUTERAI_API_KEY` |
+| `routerai_bge_m3`, `routerai_openai_small`, `routerai_perplexity_4b` | [RouterAI](https://routerai.ru/) | `https://routerai.ru/api/v1` | `ROUTERAI_API_KEY` |
 | `dashscope_beijing` | [Alibaba Model Studio](https://modelstudio.console.alibabacloud.com/) (Beijing) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` |
 | `dashscope_intl` | Alibaba Model Studio (International) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` |
 
 Docker → host LM Studio: `http://host.docker.internal:1234/v1`
+
+### MRL embedding models (Matryoshka)
+
+Some OpenAI-compatible models support a `dimensions` request parameter (MRL). The server sends `profile.dimensions` in the embed API when set. The vector length in the response must match the configured value.
+
+| Model | Default dim | MRL range | Recommendation |
+|-------|-------------|-----------|----------------|
+| `perplexity/pplx-embed-v1-4B` | 2560 | 128–2560 | `dimensions: 1024` for large repos; `2560` for max accuracy |
+| `perplexity/pplx-embed-v1-0.6B` | 1024 | 128–1024 | `dimensions: 1024` |
+
+After changing `active_profile` or `dimensions`, run `reindex` with `force: true`.
 
 ### onnx (local offline)
 
@@ -143,7 +168,7 @@ Env overrides: `FILE_WATCHER_ENABLED`, `FILE_WATCHER_BACKEND`, `FILE_WATCHER_POL
 | `max_bytes` | 5242880 | 1048576 |
 | `backup_count` | 3 | 1 |
 
-Env overrides: `MCP_LOG_LEVEL`, `MCP_LOG_VERBOSE`, `MCP_LOG_MAX_BYTES`, `MCP_LOG_BACKUP_COUNT`. Logs: stderr + `data/logs/server.log`.
+Env overrides: `MCP_LOG_LEVEL`, `MCP_LOG_VERBOSE`, `MCP_LOG_MAX_BYTES`, `MCP_LOG_BACKUP_COUNT`. Logs: stderr + `.mcp-semantic-search-zvec-go/logs/server.log` (relative to install dir, not under `data/`).
 
 ## server
 
@@ -162,14 +187,15 @@ Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:80
 | `INDEX_DIR` | `.mcp-semantic-search-zvec-go/data/index` | Index storage |
 | `CONFIG_PATH` | `.mcp-semantic-search-zvec-go/config.yaml` | Config file |
 | `AUTO_INDEX_ON_START` | false (code); `true` in Native install `mcp.json` | Background index on start via `reindex` coordinator. **Per-project `--stdio` only** — shared daemon workspaces ignore this env; call `reindex` manually |
-| `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | Returned in `check_update` JSON (stub; GitHub API not called yet) |
+| `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | GitHub repo for `check_update` (polls Releases API) |
+| `CHECK_UPDATE_DISABLE` | false | Set `true` to skip GitHub release polling in `check_update` |
 | `HTTP_ADDR` | `127.0.0.1:8080` (per-project); `:8080` (daemon/Docker) | HTTP bind |
-| `API_TOKEN` | — | HTTP Bearer auth (set in `.env`) |
+| `API_TOKEN` | — | HTTP Bearer auth. **Recommended** for shared daemon and `--stdio-proxy` when the daemon listens beyond loopback; without it, daemon HTTP redacts workspace paths in status/search/reindex (see [API.md](API.md#open-daemon-redaction)). Set in workspace or daemon `.env` |
 | `ENV_PATH` | auto | Path to `.env` secrets file |
 | `MCP_PATH_CONTAINMENT` | `warn` | Path validation for `INDEX_DIR` / `CONFIG_PATH`: `strict` (fail startup), `warn` (log only), `off` (disable) |
-| `INDEXING_MAX_FILE_BYTES` | from yaml (`2097152`) | Override `indexing.max_file_bytes`; `0` = no limit |
-| `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES` | from yaml (`262144`) | Override `indexing.stream_chunk_threshold_bytes` |
-| `INDEXING_MAX_LINE_BYTES` | from yaml (`1048576`) | Override `indexing.max_line_bytes`; `0` = no limit |
+| `INDEXING_MAX_FILE_BYTES` | from yaml (`2097152`) | Override `indexing.max_file_bytes` (positive integer) |
+| `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES` | from yaml (`262144`) | Override `indexing.stream_chunk_threshold_bytes` (positive integer) |
+| `INDEXING_MAX_LINE_BYTES` | from yaml (`1048576`) | Override `indexing.max_line_bytes` (positive integer) |
 | `MANIFEST_WAL` | `auto` | SQLite manifest journal: `auto` (WAL off on cloud-sync paths), `on`, `off` |
 | `MCP_CRASH_REDACT_PATHS` | `true` | Redact absolute paths in `last_crash.json` stack |
 | `MCP_PROXY_LOG_DIR` | temp subdir | Crash report dir for `--stdio-proxy` |
@@ -213,6 +239,8 @@ Run daemon:
 ```bash
 .mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go --daemon --daemon-config /path/to/daemon.yaml --http-addr :8080
 ```
+
+Set `API_TOKEN` in the daemon process environment (or daemon host `.env`) when exposing the daemon on a network interface; pass `Authorization: Bearer <token>` from HTTP clients and configure proxy launchers accordingly.
 
 Env alternative: `WORKSPACES_CONFIG=/path/to/daemon.yaml`.
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from copy import deepcopy
@@ -15,6 +16,18 @@ try:
 except ImportError:
     YAML = None  # type: ignore[misc, assignment]
     CommentedMap = dict  # type: ignore[misc, assignment]
+
+_UNQUOTED_DESCRIPTION_COLON = re.compile(r"^(\s*)description:\s*[^\"'].*:.*", re.MULTILINE)
+
+
+def warn_unquoted_description_colons(text: str, path: Path) -> None:
+    """Warn when description values contain ':' but are not YAML-quoted."""
+    for match in _UNQUOTED_DESCRIPTION_COLON.finditer(text):
+        line_no = text.count("\n", 0, match.start()) + 1
+        print(
+            f"warning: {path}:{line_no}: description contains ':' — quote the value in double quotes",
+            file=sys.stderr,
+        )
 
 
 def is_mapping(value: object) -> bool:
@@ -70,6 +83,7 @@ def main() -> int:
         existed = args.dest.is_file()
         args.dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(args.template, args.dest)
+        warn_unquoted_description_colons(args.dest.read_text(encoding="utf-8"), args.dest)
         print("replaced" if args.replace and existed else "created")
         return 0
 
@@ -100,6 +114,7 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    warn_unquoted_description_colons(args.dest.read_text(encoding="utf-8"), args.dest)
     print("merged")
     return 0
 

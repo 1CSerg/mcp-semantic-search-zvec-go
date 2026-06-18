@@ -17,6 +17,8 @@ $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $BinaryName = "mcp-semantic-search-zvec-go.exe"
 $ServerKey = "semantic-search-zvec-go"
 $CursorRuleRelPath = ".cursor/rules/semantic-search-zvec-go.mdc"
+$RooRuleRelPath = ".roo/rules/semantic-search-zvec-go.md"
+$RooMcpRelPath = ".roo/mcp.json"
 
 function Write-Utf8File {
     param([string]$Path, [string]$Content)
@@ -233,6 +235,54 @@ function Install-CursorRule {
     Write-Host "Installed Cursor rule: $dest"
 }
 
+function Merge-RooMcpJson {
+    param(
+        [string]$TargetRoot,
+        [string]$BinDir
+    )
+
+    $rooDir = Join-Path $TargetRoot ".roo"
+    if (-not (Test-Path $rooDir)) { New-Item -ItemType Directory -Force -Path $rooDir | Out-Null }
+    $path = Join-Path $rooDir "mcp.json"
+    Merge-WindowsMcpJson -Path $path -TargetRoot $TargetRoot -BinDir $BinDir
+}
+
+function Merge-RooMcpJsonProxy {
+    param(
+        [string]$TargetRoot,
+        [string]$BinDir,
+        [string]$WorkspaceId,
+        [string]$DaemonUrl
+    )
+
+    $rooDir = Join-Path $TargetRoot ".roo"
+    if (-not (Test-Path $rooDir)) { New-Item -ItemType Directory -Force -Path $rooDir | Out-Null }
+    $path = Join-Path $rooDir "mcp.json"
+    Merge-WindowsMcpJsonProxy -Path $path -TargetRoot $TargetRoot -BinDir $BinDir `
+        -WorkspaceId $WorkspaceId -DaemonUrl $DaemonUrl
+}
+
+function Install-RooCodeRule {
+    param(
+        [string]$TargetRoot,
+        [string]$TemplatesDir
+    )
+
+    $src = Join-Path $TemplatesDir "roo-rules\semantic-search-zvec-go.md"
+    if (-not (Test-Path $src)) {
+        throw "roo rule template not found: $src"
+    }
+
+    $rulesDir = Join-Path $TargetRoot ".roo\rules"
+    if (-not (Test-Path $rulesDir)) {
+        New-Item -ItemType Directory -Force -Path $rulesDir | Out-Null
+    }
+
+    $dest = Join-Path $TargetRoot ($RooRuleRelPath -replace '/', '\')
+    Copy-Item -Force $src $dest
+    Write-Host "Installed Roo rule: $dest"
+}
+
 function Install-ConfigYaml {
     param(
         [string]$TemplatePath,
@@ -361,6 +411,16 @@ if ($McpMode -eq "Proxy") {
 
 Install-CursorRule -TargetRoot $TargetRoot -TemplatesDir $Templates
 
+$rooDir = Join-Path $TargetRoot ".roo"
+if (-not (Test-Path $rooDir)) { New-Item -ItemType Directory -Force -Path $rooDir | Out-Null }
+if ($McpMode -eq "Proxy") {
+    Merge-RooMcpJsonProxy -TargetRoot $TargetRoot -BinDir $BinDir `
+        -WorkspaceId $WorkspaceId -DaemonUrl $DaemonUrl
+} else {
+    Merge-RooMcpJson -TargetRoot $TargetRoot -BinDir $BinDir
+}
+Install-RooCodeRule -TargetRoot $TargetRoot -TemplatesDir $Templates
+
 $manifest = @{
     mode = if ($McpMode -eq "Proxy") { "proxy" } else { "native" }
     runtime = "go"
@@ -370,6 +430,8 @@ $manifest = @{
     workspace_id = $WorkspaceId
     daemon_url = if ($McpMode -eq "Proxy") { $DaemonUrl } else { $null }
     cursor_rule = $CursorRuleRelPath
+    roo_rule = $RooRuleRelPath
+    roo_mcp = $RooMcpRelPath
 } | ConvertTo-Json
 Write-Utf8File (Join-Path $InstallDir "install-manifest.json") $manifest
 
@@ -390,5 +452,6 @@ if (Test-Path $gitignore) {
 }
 
 Write-Host "Done. Restart Cursor. MCP server key: $ServerKey"
+Write-Host "Roo/Zoo Code: .roo/mcp.json and $RooRuleRelPath updated — restart Roo Code if used."
 Write-Host "Fill in $envFile for cloud embedding profiles (RouterAI, DashScope, etc.)."
 Write-Host "For offline ONNX: set active_profile: local_multilingual and run reindex with force=true."

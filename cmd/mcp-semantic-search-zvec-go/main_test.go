@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestResolveRunMode(t *testing.T) {
@@ -161,5 +162,41 @@ func TestAwaitTransportResultsMultipleTransports(t *testing.T) {
 
 	if got := awaitTransportResults(ctx, stop, 2, errCh); got != 0 {
 		t.Fatalf("awaitTransportResults() = %d, want 0", got)
+	}
+}
+
+func TestAwaitTransportResultsDrainTimeout(t *testing.T) {
+	old := transportDrainTimeout
+	transportDrainTimeout = 50 * time.Millisecond
+	defer func() { transportDrainTimeout = old }()
+
+	ctx, stop := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	stop()
+	if got := awaitTransportResults(ctx, stop, 1, errCh); got != 1 {
+		t.Fatalf("awaitTransportResults() = %d, want 1", got)
+	}
+}
+
+func TestAwaitTransportResultsStopsRemainingTransports(t *testing.T) {
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+
+	errCh := make(chan error, 2)
+	peerStopped := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(peerStopped)
+		errCh <- nil
+	}()
+	errCh <- nil
+
+	if got := awaitTransportResults(ctx, stop, 2, errCh); got != 0 {
+		t.Fatalf("awaitTransportResults() = %d, want 0", got)
+	}
+	select {
+	case <-peerStopped:
+	case <-time.After(time.Second):
+		t.Fatal("expected stop() to cancel peer transport")
 	}
 }

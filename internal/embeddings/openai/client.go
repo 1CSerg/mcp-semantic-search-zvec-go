@@ -130,6 +130,9 @@ func (c *Client) healthCheckOnce(ctx context.Context, base string) error {
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
 		return fmt.Errorf("embeddings health probe HTTP %d", resp.StatusCode)
 	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("embeddings health probe HTTP %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -162,6 +165,9 @@ func (c *Client) embedBatch(ctx context.Context, batch []string) ([][]float32, e
 	payload := map[string]any{
 		"model": c.profile.Model,
 		"input": batch,
+	}
+	if c.profile.Dimensions > 0 {
+		payload["dimensions"] = c.profile.Dimensions
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {

@@ -195,6 +195,13 @@ func (l *Lock) liveHolderFromPayload(data string) (int, bool) {
 			return 0, false
 		}
 		if payload.Legacy {
+			if !processAlive(payload.PID) {
+				return 0, false
+			}
+			age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
+			if age > l.staleSecs {
+				return 0, false
+			}
 			return payload.PID, true
 		}
 		if !processMatchesLock(payload.PID, payload.StartTime) {

@@ -1,12 +1,8 @@
----
-description: Semantic code search via MCP semantic-search-zvec-go
-alwaysApply: true
-managedBy: mcp-semantic-search-zvec-go
----
-
 # Semantic search (mcp-semantic-search-zvec-go)
 
 > This file is managed by `mcp-semantic-search-zvec-go` install. Do not edit manually — re-run install to update.
+>
+> managedBy: mcp-semantic-search-zvec-go
 
 MCP server for semantic code search (zvec + embeddings). Install dir: `.mcp-semantic-search-zvec-go/`.
 

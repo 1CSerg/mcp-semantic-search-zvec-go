@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// LoadDotEnv reads KEY=VALUE pairs from the first existing path.
+// LoadDotEnv reads KEY=VALUE pairs from candidate paths (merged in order).
 // Does not override variables already set in the process environment.
 // Missing files are skipped without error.
 func LoadDotEnv(paths ...string) error {
@@ -17,7 +17,7 @@ func LoadDotEnv(paths ...string) error {
 		return err
 	}
 	for key, value := range parsed {
-		if os.Getenv(key) != "" {
+		if !isProcessEnvKey(key) || os.Getenv(key) != "" {
 			continue
 		}
 		if err := os.Setenv(key, value); err != nil {
@@ -27,7 +27,8 @@ func LoadDotEnv(paths ...string) error {
 	return nil
 }
 
-// ParseDotEnv reads KEY=VALUE pairs from the first existing path into a map.
+// ParseDotEnv reads KEY=VALUE pairs from all existing paths into a map.
+// Later paths override earlier keys. Empty files are skipped.
 // Does not mutate the process environment.
 func ParseDotEnv(paths ...string) (map[string]string, error) {
 	out := make(map[string]string)
@@ -42,10 +43,12 @@ func ParseDotEnv(paths ...string) (map[string]string, error) {
 			}
 			return nil, fmt.Errorf("load %s: %w", path, err)
 		}
+		if len(parsed) == 0 {
+			continue
+		}
 		for k, v := range parsed {
 			out[k] = v
 		}
-		return out, nil
 	}
 	return out, nil
 }
@@ -64,12 +67,11 @@ func loadDotEnvCandidates(workspace, configPath string) error {
 	if err != nil {
 		return err
 	}
-	// Non-secret keys (HTTP_ADDR, AUTO_INDEX_ON_START, ...) go into the process
-	// environment for os.Getenv overrides. Secrets (API tokens, embedding keys)
-	// are deliberately NOT exported — LoadWithOptions reads them from a private
-	// map so they never appear in /proc/<pid>/environ or child processes.
+	// Only non-secret keys explicitly allowlisted go into the process environment
+	// for os.Getenv overrides. All other keys (including custom api_key_env names)
+	// stay in the private secrets map loaded by LoadWithOptions.
 	for key, value := range parsed {
-		if isSecretEnvKey(key) || os.Getenv(key) != "" {
+		if !isProcessEnvKey(key) || os.Getenv(key) != "" {
 			continue
 		}
 		if err := os.Setenv(key, value); err != nil {
@@ -77,6 +79,21 @@ func loadDotEnvCandidates(workspace, configPath string) error {
 		}
 	}
 	return nil
+}
+
+// isProcessEnvKey reports env keys safe to export into the process environment.
+func isProcessEnvKey(key string) bool {
+	switch strings.ToUpper(strings.TrimSpace(key)) {
+	case "HTTP_ADDR", "AUTO_INDEX_ON_START", "WORKSPACE_ROOT", "INDEX_DIR", "CONFIG_PATH", "ENV_PATH",
+		"SEARCH_SLOW_THRESHOLD_SECONDS", "SEARCH_DEGRADE_RATIO", "SEARCH_STATS_WINDOW",
+		"INDEXING_STALL_SECONDS", "INDEXING_MAX_FILE_BYTES", "INDEXING_STREAM_CHUNK_THRESHOLD_BYTES",
+		"INDEXING_MAX_LINE_BYTES", "FILE_WATCHER_ENABLED", "FILE_WATCHER_BACKEND",
+		"FILE_WATCHER_POLL_INTERVAL_SECONDS", "MCP_LOG_LEVEL", "MCP_LOG_VERBOSE",
+		"MCP_LOG_MAX_BYTES", "MCP_LOG_BACKUP_COUNT", "PATH_CONTAINMENT":
+		return true
+	default:
+		return false
+	}
 }
 
 // isSecretEnvKey reports whether an env key likely holds a credential.

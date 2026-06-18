@@ -13,12 +13,16 @@
 # В config.yaml только api_key_env: ИМЯ_ПЕРЕМЕННОЙ; значение — в .env. Свои переменные в .env можно добавлять.
 # Поле api_key в yaml устарело — не используйте.
 #
+# YAML: скалярные значения с двоеточием (:) нужно заключать в кавычки, иначе парсер сломается.
+#   description: "RouterAI — Perplexity: Embed V1 4B"
+#
 # После смены active_profile или dimensions выполните reindex с force=true.
 #
 # Переключение провайдера (раскомментируйте одну строку):
 # active_profile: lmstudio_qwen
 # active_profile: routerai_bge_m3
 # active_profile: routerai_openai_small
+# active_profile: routerai_perplexity_4b
 # active_profile: dashscope_beijing
 # active_profile: dashscope_intl
 
@@ -78,6 +82,17 @@ profiles:
     base_url: https://routerai.ru/api/v1
     dimensions: 1536
     # Значение ROUTERAI_API_KEY — в .env.
+    api_key_env: ROUTERAI_API_KEY
+    batch_size: 32
+    timeout_seconds: 60
+
+  # RouterAI — Perplexity Embed V1 4B (MRL: 128–2560, default 2560).
+  routerai_perplexity_4b:
+    description: "RouterAI — Perplexity. Embed V1 4B"
+    provider: openai_compatible
+    model: perplexity/pplx-embed-v1-4B
+    base_url: https://routerai.ru/api/v1
+    dimensions: 1024
     api_key_env: ROUTERAI_API_KEY
     batch_size: 32
     timeout_seconds: 60

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -21,6 +22,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
@@ -79,6 +81,9 @@ type appUI struct {
 	resultList    *widget.List
 	snippetText   *widget.Entry
 	results       []service.SearchResultItem
+
+	autoResumeAttempted bool
+	statusRefreshBusy   atomic.Bool
 }
 
 func windowTitle() string {
@@ -113,6 +118,9 @@ func PrepareWorkspaceLocks(settings *config.Settings) {
 	if zvec.ReclaimCollectionLock(cfg) {
 		slog.Info("gui reclaimed orphaned zvec collection lock", "collection", zvec.CollectionPath(cfg))
 	}
+	if err := indexer.RecoverInterruptedProgress(settings.IndexDir); err != nil {
+		slog.Warn("gui recover interrupted progress failed", "err", err)
+	}
 }
 
 // Run starts the Windows desktop GUI.
@@ -131,6 +139,7 @@ func Run(ctx context.Context, settings *config.Settings, svc service.Service) er
 	w.SetContent(ui.build())
 
 	ui.refreshStatus()
+	go ui.maybeAutoResumeIndexing()
 	go ui.pollStatus(ctx)
 	go func() {
 		<-ctx.Done()
@@ -249,7 +258,11 @@ func (ui *appUI) pollStatus(ctx context.Context) {
 }
 
 func (ui *appUI) refreshStatus() {
+	if !ui.statusRefreshBusy.CompareAndSwap(false, true) {
+		return
+	}
 	go func() {
+		defer ui.statusRefreshBusy.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		raw, err := ui.svc.GetIndexStatus(ctx)
@@ -280,6 +293,11 @@ func (ui *appUI) applyStatus(status indexStatus, raw []byte) {
 	chunks := intValue(idx, "chunks_indexed", status.IndexedChunksManifest)
 	message := firstNonEmpty(stringValue(idx, "message", ""), status.Message)
 	running, _ := idx["running"].(bool)
+	interrupted := isInterruptedProgressState(state, message, stringValue(idx, "error", ""), running)
+
+	if interrupted {
+		message = "Индексация была прервана. Уже проиндексированные файлы будут пропущены при продолжении."
+	}
 
 	if pid, notice := ui.concurrentStdioHolder(); notice != "" {
 		ui.killButton.SetText(fmt.Sprintf("Завершить MCP-процесс (PID %d)", pid))
@@ -315,7 +333,11 @@ func (ui *appUI) applyStatus(status indexStatus, raw []byte) {
 	}
 
 	ui.progress.SetValue(percent)
-	ui.statusLabel.SetText(fmt.Sprintf("Индексация: %s | %.1f%% | %s | файлов %d/%d | чанков %d", translateIndexState(state), percent, remaining, filesDone, filesTotal, chunks))
+	displayState := translateIndexState(state)
+	if interrupted {
+		displayState = "прервана"
+	}
+	ui.statusLabel.SetText(fmt.Sprintf("Индексация: %s | %.1f%% | %s | файлов %d/%d | чанков %d", displayState, percent, remaining, filesDone, filesTotal, chunks))
 	ui.messageLabel.SetText(message)
 	ui.detailText.SetText(formatStatusDetail(status, raw))
 }
@@ -330,6 +352,70 @@ func zvecLockMessage(status indexStatus) string {
 		path = status.IndexDir
 	}
 	return fmt.Sprintf("Индекс zvec заблокирован (%s). Нажмите «Освободить LOCK» или завершите другие процессы MCP.", path)
+}
+
+func (ui *appUI) maybeAutoResumeIndexing() {
+	if ui.autoResumeAttempted {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	raw, err := ui.svc.GetIndexStatus(ctx)
+	if err != nil {
+		slog.Debug("auto-resume indexing skipped", "reason", "index_status", "err", err)
+		return
+	}
+	var status indexStatus
+	if err := json.Unmarshal(raw, &status); err != nil {
+		slog.Debug("auto-resume indexing skipped", "reason", "parse status", "err", err)
+		return
+	}
+	pid, _ := ui.concurrentStdioHolder()
+	if !shouldAutoResumeIndexing(status, pid) {
+		return
+	}
+	ui.autoResumeAttempted = true
+	fyne.Do(func() {
+		ui.searchStatus.SetText("Индексация была прервана. Продолжаем с места остановки...")
+	})
+	ui.reindex(false)
+}
+
+func shouldAutoResumeIndexing(status indexStatus, concurrentStdioPID int) bool {
+	if concurrentStdioPID != 0 {
+		return false
+	}
+	if !status.ZvecOpenOK {
+		return false
+	}
+	p := indexingProgressFromMap(status.Indexing)
+	if !indexer.IsInterruptedProgress(p) {
+		return false
+	}
+	return indexer.IsIndexIncomplete(p)
+}
+
+func isInterruptedProgressState(state, message, errStr string, running bool) bool {
+	return indexer.IsInterruptedProgress(indexer.Progress{
+		State:   indexer.State(state),
+		Message: message,
+		Error:   errStr,
+		Running: running,
+	})
+}
+
+func indexingProgressFromMap(idx map[string]any) indexer.Progress {
+	p := indexer.Progress{
+		State:   indexer.State(stringValue(idx, "state", "idle")),
+		Message: stringValue(idx, "message", ""),
+		Error:   stringValue(idx, "error", ""),
+	}
+	if running, ok := idx["running"].(bool); ok {
+		p.Running = running
+	}
+	p.FilesDone = intValue(idx, "files_done", 0)
+	p.FilesTotal = intValue(idx, "files_total", 0)
+	return p
 }
 
 func (ui *appUI) reclaimZvecLock() {

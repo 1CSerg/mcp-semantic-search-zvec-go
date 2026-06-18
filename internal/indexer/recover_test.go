@@ -1,6 +1,8 @@
 package indexer
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -90,4 +92,75 @@ func TestRecoverStalledProgressWithActiveLock(t *testing.T) {
 		t.Fatal("expected running progress while lock held")
 	}
 	_ = filepath.Join(dir, "index.lock")
+}
+
+func TestRecoverInterruptedProgress(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProgressStore(dir)
+	p := FinishError(StartRunning(false), context.Canceled)
+	p.FilesTotal = 100
+	p.FilesDone = 25
+	p.ChunksIndexed = 500
+	if err := store.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverInterruptedProgress(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateIdle {
+		t.Fatalf("state=%q want idle", got.State)
+	}
+	if got.Error != "" {
+		t.Fatalf("error=%q want empty", got.Error)
+	}
+	if got.Message != InterruptedMessage {
+		t.Fatalf("message=%q", got.Message)
+	}
+	if got.FilesDone != 25 || got.FilesTotal != 100 || got.ChunksIndexed != 500 {
+		t.Fatalf("progress stats lost: %+v", got)
+	}
+}
+
+func TestRecoverInterruptedProgressLegacySubstring(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProgressStore(dir)
+	p := StartRunning(false)
+	p.State = StateError
+	p.Running = false
+	p.Error = "indexing embed: context canceled"
+	if err := store.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverInterruptedProgress(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateIdle {
+		t.Fatalf("state=%q want idle", got.State)
+	}
+}
+
+func TestRecoverInterruptedProgressNoOp(t *testing.T) {
+	dir := t.TempDir()
+	store := NewProgressStore(dir)
+	if err := store.Save(FinishError(StartRunning(false), errors.New("embed down"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecoverInterruptedProgress(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateError {
+		t.Fatalf("state=%q want error", got.State)
+	}
 }

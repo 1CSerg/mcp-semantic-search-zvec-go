@@ -131,6 +131,25 @@ active_profile: lmstudio_qwen
         self.assertIn("replaced", result.stdout)
         self.assertEqual(dest.read_text(encoding="utf-8"), template.read_text(encoding="utf-8"))
 
+    def test_warns_unquoted_description_with_colon(self) -> None:
+        template = self.root / "template.yaml"
+        dest = self.root / "config.yaml"
+        template.write_text(
+            """active_profile: test
+profiles:
+  test:
+    description: Foo: Bar
+    provider: openai_compatible
+    dimensions: 384
+""",
+            encoding="utf-8",
+        )
+
+        result = run_merge(template, dest, "--replace")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIn("warning:", result.stderr)
+        self.assertIn("description contains", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

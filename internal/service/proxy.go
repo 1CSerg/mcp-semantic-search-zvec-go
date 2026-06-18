@@ -61,14 +61,19 @@ func (p *HTTPProxy) Ready(ctx context.Context) error {
 		return err
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		return fmt.Errorf("read ready response: %w", err)
+	}
 	if resp.StatusCode == http.StatusOK {
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	var payload struct {
 		Error string `json:"error"`
 	}
-	_ = json.Unmarshal(body, &payload)
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("not ready: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	if payload.Error != "" {
 		return fmt.Errorf("%s", payload.Error)
 	}
@@ -124,7 +129,9 @@ func (p *HTTPProxy) do(req *http.Request) (json.RawMessage, error) {
 		var payload struct {
 			Error string `json:"error"`
 		}
-		_ = json.Unmarshal(raw, &payload)
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		}
 		if payload.Error != "" {
 			return nil, fmt.Errorf("%s", payload.Error)
 		}

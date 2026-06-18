@@ -42,3 +42,5 @@ Thumbs.db
 .mcp-semantic-search-zvec-go/
 # END mcp-semantic-search-zvec-go
 /cover
+/docs/issue/*
+/docs/todo/*

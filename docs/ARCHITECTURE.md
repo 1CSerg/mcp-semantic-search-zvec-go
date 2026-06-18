@@ -64,6 +64,12 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 - MCP: thin `--stdio-proxy --workspace-id=... --daemon-url=...` for Cursor.
 - CLI: `--daemon --daemon-config daemon.yaml` starts HTTP only; no per-project stdio cleanup.
 
+### Registry lifecycle
+
+`internal/daemon.WorkspaceRegistry` lazy-opens workspaces on first request (cold-open). Concurrent opens for the same `workspace_id` share one two-phase init (`config` → `phase1` service). `BorrowService` tracks in-flight HTTP handlers; LRU eviction waits until `refs` drain.
+
+`Close()` sets `closing`, cancels the registry context, drains borrows and cold-opens (default 30 s), then closes idle handles and shuts down the zvec runtime. While closing, new `BorrowService` calls return `ErrRegistryClosing` → HTTP **503** `registry is closing`.
+
 ## Package layout
 
 | Package | Role |
@@ -88,6 +94,9 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 ├── config.yaml
 ├── bin/mcp-semantic-search-zvec-go[.exe]
 ├── models/                    # ONNX model bundles
+├── logs/
+│   ├── server.log
+│   └── mcp.log
 └── data/
     ├── index/
     │   ├── manifest.db
@@ -95,9 +104,6 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
     │   ├── index.lock
     │   ├── stdio.lock
     │   └── zvec/ws_<hash>/
-    └── logs/
-        ├── server.log
-        └── mcp.log
 ```
 
 ### index_meta.json
@@ -149,9 +155,12 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
   address is non-loopback (network-reachable). Per-project `--http` defaults to
   loopback (`127.0.0.1:8080`); daemon/Docker default `:8080`. Bind to
   `127.0.0.1` or set a token for network exposure.
-- `GET /v1/workspaces` (shared daemon) returns only workspace `id` and `open` by
-  default; absolute paths from `daemon.yaml` require explicit `?include_paths=1`
-  and, when `API_TOKEN` is set, a valid Bearer token.
+- Shared daemon **open mode** (no `API_TOKEN`): `GET /v1/status`, `POST /v1/search`,
+  and `POST /v1/reindex` redact workspace path fields and sanitize path-bearing
+  messages (see [API.md — Open daemon redaction](API.md#open-daemon-redaction)).
+- `GET /v1/workspaces` returns only workspace `id` and `open` by default; absolute
+  paths from `daemon.yaml` require `?include_paths=1` **and** a valid Bearer token
+  (`401` when token is unset or header missing/invalid).
 - Secrets from `.env` (anything matching `*TOKEN*`, `*SECRET*`, `*PASSWORD*`,
   `*API_KEY*`, `*CREDENTIAL*`) are loaded into a private in-memory map and are
   **not** exported to the process environment (`os.Setenv`), so they don't leak

@@ -4,6 +4,8 @@ set -euo pipefail
 KEEP_DATA="${KEEP_DATA:-0}"
 SERVER_KEY="semantic-search-zvec-go"
 DEFAULT_CURSOR_RULE_REL=".cursor/rules/semantic-search-zvec-go.mdc"
+DEFAULT_ROO_RULE_REL=".roo/rules/semantic-search-zvec-go.md"
+DEFAULT_ROO_MCP_REL=".roo/mcp.json"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ "$(basename "$SCRIPT_DIR")" == ".mcp-semantic-search-zvec-go" ]]; then
@@ -128,6 +130,34 @@ PY
   echo "Removed Cursor rule: $rule_path"
 }
 
+remove_roo_rule() {
+  local target_root="$1"
+  local install_dir="$2"
+  local rel="$DEFAULT_ROO_RULE_REL"
+  local manifest="$install_dir/install-manifest.json"
+  if [[ -f "$manifest" ]]; then
+    rel="$(python3 - <<'PY' "$manifest"
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        obj = json.load(f)
+    print(obj.get("roo_rule") or ".roo/rules/semantic-search-zvec-go.md")
+except Exception:
+    print(".roo/rules/semantic-search-zvec-go.md")
+PY
+)"
+  fi
+  local rule_path="$target_root/$rel"
+  [[ -f "$rule_path" ]] || return 0
+  if ! grep -q "managedBy: mcp-semantic-search-zvec-go" "$rule_path"; then
+    echo "Skipped Roo rule (not install-managed): $rule_path"
+    return 0
+  fi
+  rm -f "$rule_path"
+  echo "Removed Roo rule: $rule_path"
+}
+
 remove_mcp_json_entry() {
   local mcp_json="$1"
   local key="$2"
@@ -192,6 +222,24 @@ MCP_JSON="$TARGET_ROOT/.cursor/mcp.json"
 run_step "remove mcp.json entry" remove_mcp_json_entry "$MCP_JSON" "$SERVER_KEY"
 
 run_step "remove Cursor rule" remove_cursor_rule "$TARGET_ROOT" "$INSTALL_DIR"
+
+ROO_MCP_JSON="$TARGET_ROOT/$DEFAULT_ROO_MCP_REL"
+if [[ -f "$MANIFEST" ]]; then
+  ROO_MCP_JSON="$TARGET_ROOT/$(python3 - <<'PY' "$MANIFEST"
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        obj = json.load(f)
+    print(obj.get("roo_mcp") or ".roo/mcp.json")
+except Exception:
+    print(".roo/mcp.json")
+PY
+)"
+fi
+run_step "remove Roo mcp.json entry" remove_mcp_json_entry "$ROO_MCP_JSON" "$SERVER_KEY"
+
+run_step "remove Roo rule" remove_roo_rule "$TARGET_ROOT" "$INSTALL_DIR"
 
 run_step "remove install directory" remove_install_dir "$INSTALL_DIR"
 

@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
@@ -592,6 +593,96 @@ func TestApplyStatusZvecLockShowsReclaim(t *testing.T) {
 		t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
 	}
 	if !strings.Contains(ui.messageLabel.Text, "Прогресс manifest не означает рабочий поиск") {
+		t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
+	}
+}
+
+func TestShouldAutoResumeIndexing(t *testing.T) {
+	base := indexStatus{
+		ZvecOpenOK: true,
+		Indexing: map[string]any{
+			"state":       "idle",
+			"running":     false,
+			"message":     indexer.InterruptedMessage,
+			"files_done":  100,
+			"files_total": 500,
+		},
+	}
+	if !shouldAutoResumeIndexing(base, 0) {
+		t.Fatal("expected auto-resume for interrupted incomplete index")
+	}
+	if shouldAutoResumeIndexing(base, 1234) {
+		t.Fatal("expected no auto-resume with concurrent stdio")
+	}
+	closed := base
+	closed.ZvecOpenOK = false
+	if shouldAutoResumeIndexing(closed, 0) {
+		t.Fatal("expected no auto-resume when zvec closed")
+	}
+	complete := base
+	complete.Indexing = map[string]any{
+		"state":       "idle",
+		"running":     false,
+		"message":     indexer.InterruptedMessage,
+		"files_done":  500,
+		"files_total": 500,
+	}
+	if shouldAutoResumeIndexing(complete, 0) {
+		t.Fatal("expected no auto-resume when complete")
+	}
+	legacy := base
+	legacy.Indexing = map[string]any{
+		"state":       "error",
+		"running":     false,
+		"error":       "indexing failed: foo: indexing embed: context canceled",
+		"files_done":  100,
+		"files_total": 500,
+	}
+	if shouldAutoResumeIndexing(legacy, 0) {
+		t.Fatal("expected no auto-resume for unmigrated legacy error; RecoverInterruptedProgress migrates first")
+	}
+	migrated := base
+	migrated.Indexing = map[string]any{
+		"state":       "idle",
+		"running":     false,
+		"message":     indexer.InterruptedMessage,
+		"files_done":  100,
+		"files_total": 500,
+	}
+	if !shouldAutoResumeIndexing(migrated, 0) {
+		t.Fatal("expected auto-resume after interrupted migration")
+	}
+	fatal := base
+	fatal.Indexing = map[string]any{
+		"state":       "error",
+		"running":     false,
+		"error":       "embedding provider down",
+		"files_done":  100,
+		"files_total": 500,
+	}
+	if shouldAutoResumeIndexing(fatal, 0) {
+		t.Fatal("expected no auto-resume for fatal error")
+	}
+}
+
+func TestApplyStatusInterrupted(t *testing.T) {
+	ui := newTestAppUI(t, &mockGUIService{}, nil)
+	status := indexStatus{
+		ZvecOpenOK: true,
+		Indexing: map[string]any{
+			"state":       "idle",
+			"running":     false,
+			"message":     indexer.InterruptedMessage,
+			"files_done":  100,
+			"files_total": 500,
+			"percent":     20.0,
+		},
+	}
+	ui.applyStatus(status, []byte(`{}`))
+	if !strings.Contains(ui.statusLabel.Text, "прервана") {
+		t.Fatalf("statusLabel=%q", ui.statusLabel.Text)
+	}
+	if !strings.Contains(ui.messageLabel.Text, "прервана") {
 		t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
 	}
 }

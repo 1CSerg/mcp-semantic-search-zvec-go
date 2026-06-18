@@ -9,12 +9,16 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/update"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
@@ -81,9 +85,12 @@ func bearerAuthorized(r *http.Request, token string) bool {
 	if token == "" {
 		return true
 	}
-	auth := r.Header.Get("Authorization")
-	expected := "Bearer " + token
-	return subtle.ConstantTimeCompare([]byte(auth), []byte(expected)) == 1
+	auth := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(auth) < 7 || !strings.EqualFold(auth[:7], "Bearer ") {
+		return false
+	}
+	got := strings.TrimSpace(auth[7:])
+	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 }
 
 // ListenAndServe starts the HTTP server until ctx is cancelled.
@@ -123,7 +130,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
-	svc, err := s.resolveService(r, r.URL.Query().Get("workspace_id"))
+	svc, release, err := s.borrowService(r, r.URL.Query().Get("workspace_id"))
+	if release != nil {
+		defer release()
+	}
 	if err != nil {
 		writeWorkspaceError(w, err)
 		return
@@ -140,6 +150,16 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if s.daemon {
+		repo := ""
+		if s.settings != nil {
+			repo = s.settings.GitHubRepo
+		}
+		checker := update.NewChecker(repo)
+		info := checker.Check(r.Context(), version.Version)
+		writeJSON(w, http.StatusOK, info)
+		return
+	}
 	raw, err := s.svc.CheckUpdate(r.Context())
 	if err != nil {
 		writeError(w, err)
@@ -159,7 +179,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := firstNonEmpty(req.WorkspaceID, r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
-	svc, err := s.resolveService(r, workspaceID)
+	svc, release, err := s.borrowService(r, workspaceID)
+	if release != nil {
+		defer release()
+	}
 	if err != nil {
 		writeWorkspaceError(w, err)
 		return
@@ -169,12 +192,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	raw = s.redactIfOpenDaemon(raw)
 	writeRawJSON(w, http.StatusOK, raw)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID := firstNonEmpty(r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
-	svc, err := s.resolveService(r, workspaceID)
+	svc, release, err := s.borrowService(r, workspaceID)
+	if release != nil {
+		defer release()
+	}
 	if err != nil {
 		writeWorkspaceError(w, err)
 		return
@@ -184,19 +211,27 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	raw = s.redactIfOpenDaemon(raw)
 	writeRawJSON(w, http.StatusOK, raw)
 }
 
 func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 	var req service.ReindexRequest
-	if r.ContentLength > 0 {
+	if r.Body != nil && r.Body != http.NoBody {
 		if err := decodeJSON(r, &req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
+			if errors.Is(err, io.EOF) {
+				// Empty body is valid for incremental reindex.
+			} else {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
 		}
 	}
 	workspaceID := firstNonEmpty(req.WorkspaceID, r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
-	svc, err := s.resolveService(r, workspaceID)
+	svc, release, err := s.borrowService(r, workspaceID)
+	if release != nil {
+		defer release()
+	}
 	if err != nil {
 		writeWorkspaceError(w, err)
 		return
@@ -206,6 +241,7 @@ func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	raw = s.redactIfOpenDaemon(raw)
 	writeRawJSON(w, http.StatusOK, raw)
 }
 
@@ -218,13 +254,91 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includePaths := queryTruthy(r.URL.Query().Get("include_paths"))
-	if includePaths && s.settings.APIToken != "" && !bearerAuthorized(r, s.settings.APIToken) {
+	if includePaths && (s.settings.APIToken == "" || !bearerAuthorized(r, s.settings.APIToken)) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspaces": s.registry.ListWorkspaces(includePaths),
 	})
+}
+
+func (s *Server) redactIfOpenDaemon(raw json.RawMessage) json.RawMessage {
+	if s.daemon && s.settings != nil && s.settings.APIToken == "" {
+		return redactDaemonStatusPaths(raw)
+	}
+	return raw
+}
+
+func redactDaemonStatusPaths(raw json.RawMessage) json.RawMessage {
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	for _, key := range []string{
+		"workspace_root",
+		"index_dir",
+		"config_path",
+		"zvec_collection_path",
+		"embedding_model_path",
+	} {
+		delete(payload, key)
+	}
+	for _, key := range []string{"zvec_error", "message", "identity_mismatch_reason"} {
+		if v, ok := payload[key].(string); ok && v != "" {
+			payload[key] = sanitizeDaemonStatusText(v)
+		}
+	}
+	if diag, ok := payload["diagnostics"].(map[string]any); ok {
+		delete(diag, "log_dir")
+		delete(diag, "log_file")
+	}
+	if idx, ok := payload["indexing"].(map[string]any); ok {
+		redactDaemonIndexingMap(idx)
+	}
+	if prog, ok := payload["progress"].(map[string]any); ok {
+		redactDaemonIndexingMap(prog)
+	}
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func redactDaemonIndexingMap(idx map[string]any) {
+	delete(idx, "current_file")
+	delete(idx, "failed_files")
+	delete(idx, "skipped_paths")
+	if msg, ok := idx["message"].(string); ok && msg != "" {
+		idx["message"] = sanitizeDaemonStatusText(msg)
+	}
+	if errMsg, ok := idx["error"].(string); ok && errMsg != "" {
+		idx["error"] = sanitizeDaemonStatusText(errMsg)
+	}
+	if warnings, ok := idx["scan_warnings"].([]any); ok {
+		for i, w := range warnings {
+			if s, ok := w.(string); ok {
+				warnings[i] = sanitizeDaemonStatusText(s)
+			}
+		}
+	}
+}
+
+var daemonStatusDrivePathRE = regexp.MustCompile(`[A-Za-z]:[\\/][^\s"',;]+`)
+var daemonStatusUnixPathRE = regexp.MustCompile(`/(?:[\w.-]+/)+[\w.-]+(?:\.[\w.-]+)?`)
+
+func sanitizeDaemonStatusText(s string) string {
+	if s == "" {
+		return s
+	}
+	out := crash.SanitizeStack(s)
+	out = daemonStatusDrivePathRE.ReplaceAllString(out, "<redacted>")
+	out = daemonStatusUnixPathRE.ReplaceAllString(out, "<redacted>")
+	if filepath.IsAbs(out) {
+		return "<redacted>"
+	}
+	return out
 }
 
 func queryTruthy(v string) bool {
@@ -236,17 +350,17 @@ func queryTruthy(v string) bool {
 	}
 }
 
-func (s *Server) resolveService(r *http.Request, workspaceID string) (service.Service, error) {
+func (s *Server) borrowService(_ *http.Request, workspaceID string) (service.Service, func(), error) {
 	if s.daemon {
 		if strings.TrimSpace(workspaceID) == "" {
-			return nil, errWorkspaceIDRequired
+			return nil, nil, errWorkspaceIDRequired
 		}
-		return s.registry.GetService(workspaceID)
+		return s.registry.BorrowService(workspaceID)
 	}
 	if s.svc == nil {
-		return nil, fmt.Errorf("service not configured")
+		return nil, nil, fmt.Errorf("service not configured")
 	}
-	return s.svc, nil
+	return s.svc, func() {}, nil
 }
 
 var errWorkspaceIDRequired = errors.New("workspace_id is required in shared daemon mode")
@@ -258,6 +372,10 @@ func writeWorkspaceError(w http.ResponseWriter, err error) {
 	}
 	if errors.Is(err, daemon.ErrUnknownWorkspace) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, daemon.ErrRegistryClosing) {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
 		return
 	}
 	writeError(w, err)
@@ -284,13 +402,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		slog.Warn("write JSON response failed", "err", err)
+	}
 }
 
 func writeRawJSON(w http.ResponseWriter, status int, raw json.RawMessage) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write(raw)
+	if _, err := w.Write(raw); err != nil {
+		slog.Warn("write raw JSON response failed", "err", err)
+	}
 }
 
 // statusClientClosedRequest mirrors nginx's non-standard 499 for a client that
@@ -308,6 +430,9 @@ func writeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.DeadlineExceeded):
 		slog.Warn("request timed out", "err", err)
 		writeJSON(w, http.StatusGatewayTimeout, map[string]string{"error": "request timed out"})
+		return
+	case errors.Is(err, service.ErrInvalidSearchLimit):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// Log the detailed error server-side; return a generic message so internal

@@ -3,6 +3,7 @@ package service
 import (
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -101,7 +102,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeHint(t *testing.T) {
 		IndexDir:      filepath.Join(root, "База", "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 3, 77, 12, true, 0)
+	enrichIndexStatusDiagnostics(d, settings, 3, 77, 12, true, 0, false)
 	if d["non_ascii_index_dir"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
@@ -126,7 +127,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeZvecFailure(t *testing.T) {
 		IndexDir:      filepath.Join(root, "База", "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 0, 0, 0, false, 0)
+	enrichIndexStatusDiagnostics(d, settings, 0, 0, 0, false, 0, false)
 	if d["unicode_index_path_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
 	}
@@ -139,9 +140,26 @@ func TestEnrichIndexStatusDiagnosticsCloudDrive(t *testing.T) {
 		IndexDir:      filepath.Join(root, "GDrive", "База знаний", ".mcp-semantic-search-zvec-go", "data", "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 1, 10, 10, true, 0)
+	enrichIndexStatusDiagnostics(d, settings, 1, 10, 10, true, 0, false)
 	if d["synced_cloud_drive_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
+	}
+}
+
+func TestEnrichIndexStatusDiagnosticsManifestEmpty(t *testing.T) {
+	root := t.TempDir()
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, "index"),
+	}
+	d := indexStatusDiagnostics(settings)
+	enrichIndexStatusDiagnostics(d, settings, 0, 0, 100, false, 0, false)
+	if d["zvec_manifest_empty_suspected"] != true {
+		t.Fatalf("diagnostics=%v", d)
+	}
+	hint, _ := d["hint"].(string)
+	if !strings.Contains(hint, "zvec is empty") {
+		t.Fatalf("hint=%q", hint)
 	}
 }
 
@@ -152,8 +170,22 @@ func TestEnrichIndexStatusDiagnosticsManifestMismatch(t *testing.T) {
 		IndexDir:      filepath.Join(root, "index"),
 	}
 	d := indexStatusDiagnostics(settings)
-	enrichIndexStatusDiagnostics(d, settings, 0, 77, 12, true, 0)
+	enrichIndexStatusDiagnostics(d, settings, 0, 77, 12, true, 0, false)
 	if d["zvec_manifest_mismatch_suspected"] != true {
 		t.Fatalf("diagnostics=%v", d)
+	}
+}
+
+func TestEnrichIndexStatusDiagnosticsIdentityMismatch(t *testing.T) {
+	root := t.TempDir()
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, "index"),
+	}
+	d := indexStatusDiagnostics(settings)
+	enrichIndexStatusDiagnostics(d, settings, 0, 0, 100, false, 0, true)
+	hint, _ := d["hint"].(string)
+	if !strings.Contains(hint, "active_profile or embedding dimensions changed") {
+		t.Fatalf("hint=%q", hint)
 	}
 }

@@ -3,6 +3,7 @@ package chunk
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +27,25 @@ func TestReadAndChunkWithinRoot(t *testing.T) {
 	}
 	if len(chunks) == 0 {
 		t.Fatal("expected at least one chunk")
+	}
+}
+
+func TestReadAndChunkRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "secret.go")
+	if err := os.WriteFile(outsideFile, []byte("package secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(root, "link.go")
+	if err := os.Symlink(outsideFile, linkPath); err != nil {
+		t.Skip("symlinks not supported:", err)
+	}
+	_, err := ReadAndChunk(root, "link.go", Options{})
+	if err == nil {
+		t.Fatal("expected symlink escape rejected")
+	}
+	if !strings.Contains(err.Error(), "escapes workspace root") {
+		t.Fatalf("err=%v", err)
 	}
 }

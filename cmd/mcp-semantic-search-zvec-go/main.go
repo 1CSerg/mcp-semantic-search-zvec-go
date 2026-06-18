@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
@@ -20,6 +21,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/logging"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 	httptransport "github.com/1CSerg/mcp-semantic-search-zvec-go/internal/transport/http"
 	mcptransport "github.com/1CSerg/mcp-semantic-search-zvec-go/internal/transport/mcp"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
@@ -198,7 +200,17 @@ func runGUI(ctx context.Context, stop context.CancelFunc) int {
 		slog.Error("gui setup failed", "err", err)
 		return 1
 	}
-	defer rt.Close()
+	defer func() {
+		stop()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if p, ok := rt.svc.(*service.Phase1); ok {
+			if err := p.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("gui shutdown wait", "err", err)
+			}
+		}
+		rt.Close()
+	}()
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -213,10 +225,8 @@ func runGUI(ctx context.Context, stop context.CancelFunc) int {
 	slog.Info("starting", "version", version.Version, "workspace", rt.settings.WorkspaceRoot, "mode", "gui")
 	if err := gui.Run(ctx, rt.settings, rt.svc); err != nil {
 		slog.Error("gui error", "err", err)
-		stop()
 		return 1
 	}
-	stop()
 	return 0
 }
 
@@ -235,6 +245,7 @@ func (rt *perProjectRuntime) Close() {
 	for i := len(rt.cleanup) - 1; i >= 0; i-- {
 		rt.cleanup[i]()
 	}
+	zvec.ShutdownRuntime()
 }
 
 func setupPerProject(ctx context.Context, opts perProjectOptions) (*perProjectRuntime, error) {
@@ -343,8 +354,12 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 		return 1
 	case <-ctx.Done():
 		slog.Info("shutdown signal received")
-		return 0
 	}
+
+	if err := <-errCh; err != nil {
+		slog.Warn("daemon http stopped", "err", err)
+	}
+	return 0
 }
 
 func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
@@ -379,6 +394,10 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 		}
 		return 0
 	case <-ctx.Done():
+		if err := <-errCh; err != nil {
+			slog.Error("mcp proxy error", "err", err)
+			return 1
+		}
 		return 0
 	}
 }
@@ -428,6 +447,8 @@ func serveTransports(ctx context.Context, stop context.CancelFunc, settings *con
 	return awaitTransportResults(ctx, stop, pending, errCh)
 }
 
+var transportDrainTimeout = 15 * time.Second
+
 // awaitTransportResults waits for pending transport goroutines to report on errCh.
 // A nil value means clean shutdown (e.g. MCP client disconnect on stdio).
 func awaitTransportResults(ctx context.Context, stop context.CancelFunc, pending int, errCh <-chan error) int {
@@ -438,16 +459,31 @@ func awaitTransportResults(ctx context.Context, stop context.CancelFunc, pending
 			completed++
 			if err != nil && firstErr == nil {
 				firstErr = err
+			}
+			if completed < pending {
 				stop()
 			}
 		case <-ctx.Done():
 			slog.Info("shutdown signal received")
 			stop()
+			drainDeadline := time.After(transportDrainTimeout)
 			for completed < pending {
-				err := <-errCh
-				completed++
-				if err != nil && firstErr == nil {
-					firstErr = err
+				select {
+				case err := <-errCh:
+					completed++
+					if err != nil && firstErr == nil {
+						firstErr = err
+					}
+				case <-drainDeadline:
+					slog.Warn("transport drain timeout", "pending", pending-completed)
+					if firstErr == nil {
+						firstErr = context.DeadlineExceeded
+					}
+					if firstErr != nil {
+						slog.Error("server error", "err", firstErr)
+						return 1
+					}
+					return 0
 				}
 			}
 			if firstErr != nil {

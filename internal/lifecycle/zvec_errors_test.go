@@ -5,32 +5,34 @@ import (
 	"testing"
 )
 
-func TestIsZvecCorruptSegmentError(t *testing.T) {
-	if IsZvecCorruptSegmentError(nil) {
-		t.Fatal("nil should be false")
+func TestLifecycleZvecWrappersDelegateToZvecerr(t *testing.T) {
+	lockErr := errors.New(`zvec error [INTERNAL_ERROR]: Can't open lock file: /tmp/ws/LOCK`)
+	skippable := errors.New(`zvec error [INTERNAL_ERROR]: File is too small: 6`)
+	generic := errors.New("zvec error: upsert failed")
+	fatalInternal := errors.New(`zvec error [INTERNAL_ERROR]: upsert failed`)
+
+	if !IsZvecLockError(lockErr) || IsZvecLockError(generic) {
+		t.Fatal("IsZvecLockError wrapper mismatch")
 	}
-	if !IsZvecCorruptSegmentError(errors.New("File is too small: 12")) {
-		t.Fatal("expected corrupt segment")
+	if IsZvecSkippablePerFileError(lockErr) {
+		t.Fatal("lock must not be skippable")
 	}
-	if !IsZvecCorruptSegmentError(errors.New("segment CORRUPT")) {
-		t.Fatal("expected corrupt keyword")
+	if !IsZvecSkippablePerFileError(skippable) || IsZvecSkippablePerFileError(generic) || IsZvecSkippablePerFileError(fatalInternal) {
+		t.Fatal("IsZvecSkippablePerFileError wrapper mismatch")
 	}
-	if IsZvecCorruptSegmentError(errors.New("other failure")) {
-		t.Fatal("unexpected match")
+	if !IsZvecCorruptSegmentError(errors.New("File is too small: 8")) {
+		t.Fatal("IsZvecCorruptSegmentError wrapper mismatch")
+	}
+	if !IsPerFileRecoverable(skippable) {
+		t.Fatal("IsPerFileRecoverable wrapper mismatch")
+	}
+	if IsPerFileRecoverable(skippable) != IsZvecSkippablePerFileError(skippable) {
+		t.Fatal("IsPerFileRecoverable must match IsZvecSkippablePerFileError")
 	}
 }
 
-func TestIsPerFileRecoverable(t *testing.T) {
-	if IsPerFileRecoverable(nil) {
-		t.Fatal("nil should be false")
-	}
-	if !IsPerFileRecoverable(errors.New("File is too small: 8")) {
-		t.Fatal("expected recoverable corrupt segment")
-	}
-	if !IsPerFileRecoverable(errors.New("zvec error: upsert failed")) {
-		t.Fatal("expected recoverable zvec error")
-	}
-	if IsPerFileRecoverable(errors.New("fatal embed failure")) {
-		t.Fatal("unexpected recoverable")
+func TestErrStdioScanUnsupported(t *testing.T) {
+	if ErrStdioScanUnsupported == nil || ErrStdioScanUnsupported.Error() == "" {
+		t.Fatal("expected sentinel error")
 	}
 }

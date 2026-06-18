@@ -2,9 +2,11 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -284,8 +286,91 @@ func TestCoordinatorAlreadyRunning(t *testing.T) {
 	}
 	if _, err := c.Start(true); err == nil {
 		t.Fatal("expected already running error")
+	} else if !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("err=%v want ErrAlreadyRunning", err)
 	}
 	waitCoordinatorIdle(t, c)
+}
+
+type slowEmbedder struct {
+	mockEmbedder
+	delay time.Duration
+}
+
+func (s *slowEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	time.Sleep(s.delay)
+	return s.mockEmbedder.Embed(ctx, texts)
+}
+
+func TestCoordinatorFileDeletedMidRun(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	slowPath := filepath.Join(root, "pkg", "aaa_slow.go")
+	vanishPath := filepath.Join(root, "pkg", "zzz_vanish.go")
+	slowContent := "package pkg\n" + strings.Repeat("// line\n", 200)
+	if err := os.WriteFile(slowPath, []byte(slowContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vanishPath, []byte("package pkg\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 8}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &slowEmbedder{mockEmbedder: mockEmbedder{dims: 4}, delay: 150 * time.Millisecond}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	if err := os.WriteFile(slowPath, []byte(slowContent+"\n// changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := os.Remove(vanishPath); err != nil {
+			t.Error(err)
+		}
+	}()
+	if _, err := c.Start(false); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	if _, err := man.Get("pkg/zzz_vanish.go"); err == nil {
+		t.Fatal("expected vanished file removed from manifest")
+	}
+	store.mu.Lock()
+	for _, ch := range store.chunks {
+		if strings.Contains(ch.RelativePath, "zzz_vanish.go") {
+			store.mu.Unlock()
+			t.Fatalf("unexpected zvec chunk for vanished file: %+v", ch)
+		}
+	}
+	store.mu.Unlock()
 }
 
 func TestIsZvecUnavailable(t *testing.T) {
@@ -682,8 +767,38 @@ func TestCoordinatorRunStopsOnLifecycleCancel(t *testing.T) {
 		t.Fatal("expected indexing to stop after lifecycle cancel")
 	}
 	cur := c.CurrentProgress()
-	if cur.Error == "" && cur.State != StateIdle {
-		t.Fatalf("progress=%+v", cur)
+	if cur.State != StateIdle {
+		t.Fatalf("state=%q want idle", cur.State)
+	}
+	if cur.Error != "" {
+		t.Fatalf("error=%q want empty after interrupt", cur.Error)
+	}
+	if cur.Message != InterruptedMessage {
+		t.Fatalf("message=%q want %q", cur.Message, InterruptedMessage)
+	}
+}
+
+func TestCoordinatorWaitForIdle(t *testing.T) {
+	c := &Coordinator{}
+	if err := c.WaitForIdle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	c.mu.Lock()
+	c.running = true
+	c.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := c.WaitForIdle(ctx); err == nil {
+		t.Fatal("expected timeout")
+	}
+
+	c.mu.Lock()
+	c.running = false
+	c.mu.Unlock()
+	if err := c.WaitForIdle(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -694,5 +809,124 @@ func TestManifestStatsNil(t *testing.T) {
 	}
 	if files != 0 || chunks != 0 {
 		t.Fatalf("files=%d chunks=%d", files, chunks)
+	}
+}
+
+type failEmbedder struct {
+	dims  int
+	fail  bool
+	calls int
+	mu    sync.Mutex
+}
+
+func (m *failEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	m.mu.Lock()
+	m.calls++
+	shouldFail := m.fail
+	m.mu.Unlock()
+	if shouldFail {
+		return nil, fmt.Errorf("embed failed")
+	}
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		v := make([]float32, m.dims)
+		v[0] = 1
+		out[i] = v
+	}
+	return out, nil
+}
+
+func (m *failEmbedder) Dimensions() int { return m.dims }
+
+func TestCoordinatorPreservesIndexOnEmbedFailure(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "auth.go")
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Auth() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	embed := &failEmbedder{dims: 4}
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, embed, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := man.Get("pkg/auth.go")
+	if err != nil {
+		t.Fatalf("initial manifest: %v", err)
+	}
+	beforeCount, err := store.DocCount()
+	if err != nil || beforeCount == 0 {
+		t.Fatalf("initial zvec count=%d err=%v", beforeCount, err)
+	}
+	_ = man.Close()
+
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Auth() {}\nfunc Other() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	embed.fail = true
+	if _, err := c.Start(false); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+	if p := c.CurrentProgress(); p.State != StateError {
+		t.Fatalf("expected error state, got %+v", p)
+	}
+
+	man, err = manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	after, err := man.Get("pkg/auth.go")
+	if err != nil {
+		t.Fatalf("manifest after failed reindex: %v", err)
+	}
+	if after.MtimeNs != before.MtimeNs || len(after.DocIDs) != len(before.DocIDs) {
+		t.Fatalf("manifest changed after embed failure: before=%+v after=%+v", before, after)
+	}
+	afterCount, err := store.DocCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterCount != beforeCount {
+		t.Fatalf("zvec doc count changed: before=%d after=%d", beforeCount, afterCount)
+	}
+}
+
+func TestStaleDocIDs(t *testing.T) {
+	got := staleDocIDs([]string{"a", "b", "c"}, []string{"b", "d"})
+	if len(got) != 2 || got[0] != "a" || got[1] != "c" {
+		t.Fatalf("staleDocIDs=%v", got)
+	}
+	if stale := staleDocIDs(nil, []string{"a"}); stale != nil {
+		t.Fatalf("expected nil, got %v", stale)
 	}
 }

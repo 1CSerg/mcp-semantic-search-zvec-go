@@ -2,6 +2,7 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -45,6 +46,9 @@ type Watcher struct {
 	lastError     string
 	debounce      *time.Timer
 	stopCh        chan struct{}
+	retryActive   bool
+	retryPending  bool
+	lastRetryRel  string
 }
 
 // New creates a watcher when enabled in config.
@@ -107,13 +111,14 @@ func (w *Watcher) Start(ctx context.Context) {
 	go w.loop(ctx, events)
 
 	<-ctx.Done()
-	close(w.stopCh)
 	w.mu.Lock()
 	w.running = false
 	if w.debounce != nil {
 		w.debounce.Stop()
+		w.debounce = nil
 	}
 	w.mu.Unlock()
+	close(w.stopCh)
 }
 
 func (w *Watcher) loop(ctx context.Context, events <-chan string) {
@@ -159,6 +164,14 @@ func (w *Watcher) noteEvent() {
 }
 
 func (w *Watcher) triggerReindex(ctx context.Context, rel string) {
+	select {
+	case <-ctx.Done():
+		return
+	case <-w.stopCh:
+		return
+	default:
+	}
+
 	w.mu.Lock()
 	w.pendingEvents = 0
 	w.mu.Unlock()
@@ -166,27 +179,30 @@ func (w *Watcher) triggerReindex(ctx context.Context, rel string) {
 	if w.coordinator.IsRunning() {
 		w.mu.Lock()
 		w.pendingEvents = 1
+		if w.retryActive {
+			w.retryPending = true
+			w.mu.Unlock()
+			return
+		}
+		w.retryActive = true
+		w.lastRetryRel = rel
 		w.mu.Unlock()
-		go w.waitAndRetry(ctx, rel)
+		go w.runRetryLoop(ctx)
 		return
 	}
-	if _, err := w.coordinator.Start(false); err != nil {
-		w.mu.Lock()
-		w.lastError = err.Error()
-		w.mu.Unlock()
-		slog.Warn("watcher reindex failed", "file", rel, "err", err)
-		return
-	}
-	w.mu.Lock()
-	w.lastReindexAt = time.Now().UTC()
-	w.lastError = ""
-	w.mu.Unlock()
-	slog.Info("watcher triggered incremental reindex", "file", rel)
+	w.startReindex(ctx, rel)
 }
 
-func (w *Watcher) waitAndRetry(ctx context.Context, rel string) {
+func (w *Watcher) runRetryLoop(ctx context.Context) {
+	defer func() {
+		w.mu.Lock()
+		w.retryActive = false
+		w.mu.Unlock()
+	}()
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -194,11 +210,55 @@ func (w *Watcher) waitAndRetry(ctx context.Context, rel string) {
 		case <-w.stopCh:
 			return
 		case <-ticker.C:
-			if !w.coordinator.IsRunning() {
-				w.triggerReindex(ctx, rel)
+			if w.coordinator.IsRunning() {
+				continue
+			}
+			w.mu.Lock()
+			w.retryPending = false
+			rel := w.lastRetryRel
+			w.mu.Unlock()
+			w.startReindex(ctx, rel)
+			w.mu.Lock()
+			needAgain := w.retryPending
+			w.mu.Unlock()
+			if !needAgain {
 				return
 			}
 		}
+	}
+}
+
+func (w *Watcher) startReindex(ctx context.Context, rel string) {
+	if err := ctx.Err(); err != nil {
+		return
+	}
+	select {
+	case <-w.stopCh:
+		return
+	default:
+	}
+	if _, err := w.coordinator.Start(false); err != nil {
+		if errors.Is(err, indexer.ErrAlreadyRunning) {
+			return
+		}
+		w.mu.Lock()
+		w.lastError = err.Error()
+		w.mu.Unlock()
+		if rel != "" {
+			slog.Warn("watcher reindex failed", "file", rel, "err", err)
+		} else {
+			slog.Warn("watcher reindex failed", "err", err)
+		}
+		return
+	}
+	w.mu.Lock()
+	w.lastReindexAt = time.Now().UTC()
+	w.lastError = ""
+	w.mu.Unlock()
+	if rel != "" {
+		slog.Info("watcher triggered incremental reindex", "file", rel)
+	} else {
+		slog.Info("watcher triggered incremental reindex")
 	}
 }
 

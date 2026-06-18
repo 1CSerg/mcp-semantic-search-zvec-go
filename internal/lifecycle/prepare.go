@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -30,7 +31,7 @@ func PrepareStdio(settings *config.Settings) (*lock.Lock, error) {
 	var lastErr error
 	for attempt := 0; attempt < stdioLockRetries; attempt++ {
 		stopped, err := stopStaleStdioInstances(settings.WorkspaceRoot, os.Getpid())
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrStdioScanUnsupported) {
 			return nil, err
 		}
 		for _, pid := range stopped {
@@ -51,6 +52,9 @@ func PrepareStdio(settings *config.Settings) (*lock.Lock, error) {
 			_, ok := FindStdioForWorkspace(settings.WorkspaceRoot, os.Getpid())
 			return ok
 		}); err != nil {
+			return nil, err
+		}
+		if err := indexer.RecoverInterruptedProgress(settings.IndexDir); err != nil {
 			return nil, err
 		}
 

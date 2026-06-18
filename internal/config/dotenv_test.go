@@ -33,11 +33,11 @@ export DASHSCOPE_API_KEY=exported
 	if got := os.Getenv("ROUTERAI_API_KEY"); got != "preset" {
 		t.Fatalf("ROUTERAI_API_KEY = %q, want preset (no override)", got)
 	}
-	if got := os.Getenv("DASHSCOPE_API_KEY"); got != "exported" {
-		t.Fatalf("DASHSCOPE_API_KEY = %q, want exported", got)
+	if got := os.Getenv("DASHSCOPE_API_KEY"); got != "" {
+		t.Fatalf("DASHSCOPE_API_KEY = %q, want empty (secrets not exported)", got)
 	}
-	if got := os.Getenv("QUOTED"); got != "hello world" {
-		t.Fatalf("QUOTED = %q", got)
+	if got := os.Getenv("QUOTED"); got != "" {
+		t.Fatalf("QUOTED = %q, want empty (non-allowlisted keys not exported)", got)
 	}
 	if got := os.Getenv("EMPTY"); got != "" {
 		t.Fatalf("EMPTY = %q, want empty", got)
@@ -96,10 +96,38 @@ func TestIsSecretEnvKey(t *testing.T) {
 			t.Fatalf("expected %q to be secret", k)
 		}
 	}
-	nonSecrets := []string{"HTTP_ADDR", "WORKSPACE_ROOT", "AUTO_INDEX_ON_START", "INDEX_DIR"}
-	for _, k := range nonSecrets {
-		if isSecretEnvKey(k) {
-			t.Fatalf("expected %q to be non-secret", k)
+}
+
+func TestIsProcessEnvKey(t *testing.T) {
+	allowed := []string{"HTTP_ADDR", "AUTO_INDEX_ON_START", "INDEX_DIR", "MCP_LOG_LEVEL"}
+	for _, k := range allowed {
+		if !isProcessEnvKey(k) {
+			t.Fatalf("expected %q to be process env key", k)
 		}
+	}
+	denied := []string{"ROUTERAI_API_KEY", "MY_CUSTOM_KEY", "DASHSCOPE_API_KEY"}
+	for _, k := range denied {
+		if isProcessEnvKey(k) {
+			t.Fatalf("expected %q to be denied", k)
+		}
+	}
+}
+
+func TestParseDotEnvMergesSkipsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.env")
+	real := filepath.Join(dir, "real.env")
+	if err := os.WriteFile(empty, []byte("# only comments\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(real, []byte("HTTP_ADDR=:8081\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseDotEnv(empty, real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["HTTP_ADDR"] != ":8081" {
+		t.Fatalf("ParseDotEnv merge = %v", got)
 	}
 }
