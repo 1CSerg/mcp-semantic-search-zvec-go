@@ -97,6 +97,8 @@ If merge dependencies are missing and `config.yaml` already exists, install **pr
 
 After moving the project to a new path, call MCP `reindex` with `force: true`, use the Windows GUI force rebuild action, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
 
+**Hybrid chunking upgrade:** after updating to a server with hybrid chunking config (or switching to a `treesitter` build), run MCP `reindex` with `force: true` so `symbol_name`, `parent_scope`, `chunk_strategy`, and `chunking_version` in `index_meta.json` match the new pipeline. Shipped install binary (`-tags "zvec,onnx"`) still indexes `.go` via `line_window`; AST fields appear only after reindex with a `treesitter` binary.
+
 ## Configure secrets
 
 1. Open `.mcp-semantic-search-zvec-go/.env`.
@@ -251,16 +253,18 @@ Or set in systemd / Docker — see [docker/docker-compose.yml](docker/docker-com
 
 ## Build from source
 
-Plain `go build` without tags produces a **stub** binary (no zvec/ONNX — semantic search will not work). For a production binary:
+Plain `go build` without tags produces a **stub** binary (no zvec/ONNX — semantic search will not work). For a production binary matching **GitHub Release and install scripts**:
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
 make fetch-zvec-libs
-make build-zvec    # -tags "zvec,onnx"
+make build-zvec    # -tags "zvec,onnx" — line_window for all files including .go
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows CGO, ONNX runtime, and cross-compile notes.
+For **AST hybrid chunking** on `.go` (when `indexing.chunking.strategy: hybrid` and `languages.go.enabled: true`), build locally with `-tags "zvec,onnx,treesitter"` — not included in current Release/install builds.
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows CGO, ONNX runtime, tree-sitter, and cross-compile notes.
 
 Copy binary, runtime libs, and `config.yaml` into target `.mcp-semantic-search-zvec-go/`.
 

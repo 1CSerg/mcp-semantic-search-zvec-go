@@ -13,6 +13,7 @@ import (
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/scan"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
@@ -389,25 +390,26 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		}
 	}
 
-	chunkOpts := chunk.Options{
-		MaxFileBytes:         c.Settings.App.Indexing.MaxFileBytes,
-		StreamThresholdBytes: c.Settings.App.Indexing.StreamChunkThresholdBytes,
-		MaxLineBytes:         c.Settings.App.Indexing.MaxLineBytes,
-	}
+	chunkOpts := chunk.OptionsFromConfig(c.Settings.App.Indexing, c.Profile)
 	batchSize := c.Profile.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
 	}
+	counter, err := token.NewCounter(c.Profile, c.Settings.WorkspaceRoot)
+	if err != nil {
+		return err
+	}
+	contextPrefix := c.Settings.App.Indexing.Chunking.ContextPrefix
 
 	var docIDs []string
 	var upsertedDocIDs []string
-	chunkCount, err := chunk.ProcessBatches(c.Settings.WorkspaceRoot, rel, chunkOpts, batchSize, func(batch []zvec.Chunk) error {
+	chunkCount, err := chunk.ProcessBatches(c.Settings.WorkspaceRoot, rel, chunkOpts, counter, batchSize, func(batch []zvec.Chunk) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		texts := make([]string, len(batch))
 		for i, ch := range batch {
-			texts[i] = ch.Snippet
+			texts[i] = chunk.EmbedTextForChunk(ch.RelativePath, ch.ParentScope, ch.Snippet, contextPrefix)
 		}
 		vectors, err := c.embedTexts(ctx, texts)
 		if err != nil {

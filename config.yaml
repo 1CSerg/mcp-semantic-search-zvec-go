@@ -197,7 +197,8 @@ indexing:
   stream_chunk_threshold_bytes: 262144
   # Максимальная длина одной строки (байты); 0 — без лимита.
   max_line_bytes: 1048576
-  # Гибридный AST-чанкинг (Phase 1a: конфиг и identity; pipeline — Phase 1b+).
+  # Гибридный AST-чанкинг (Phase 1b: Go + ChunkRouter; python/js/ts/bsl — Phase 1c/1d).
+  # Shipped install binary (-tags zvec,onnx): .go тоже через line_window; AST нужен treesitter-сборка.
   chunking:
     # hybrid | line_window (line_window — legacy slideWindow)
     strategy: hybrid

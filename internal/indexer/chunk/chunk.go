@@ -19,76 +19,6 @@ const (
 	defaultMaxLineBytes         int64 = 1024 * 1024 // 1 MiB
 )
 
-// Options configures chunk splitting.
-type Options struct {
-	WindowLines          int
-	OverlapLines         int
-	MaxFileBytes         int64
-	StreamThresholdBytes int64
-	MaxLineBytes         int64
-}
-
-// FileChunks splits in-memory file content into searchable chunks.
-func FileChunks(relativePath string, content []byte, opts Options) []zvec.Chunk {
-	content = stripUTF8BOM(content)
-	content = normalizeLineEndings(content)
-	lines := strings.Split(string(content), "\n")
-	return slideWindow(relativePath, lines, opts)
-}
-
-// ReadAndChunk reads a file from disk and returns chunks.
-func ReadAndChunk(root, relativePath string, opts Options) ([]zvec.Chunk, error) {
-	abs, err := resolveWithinRoot(root, relativePath)
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		return nil, err
-	}
-	if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes {
-		return nil, fmt.Errorf("file too large for indexing: %d bytes (max %d)", info.Size(), opts.MaxFileBytes)
-	}
-	threshold := opts.StreamThresholdBytes
-	if threshold <= 0 {
-		threshold = defaultStreamThresholdBytes
-	}
-	if info.Size() <= threshold {
-		return readAllAndChunk(abs, relativePath, opts)
-	}
-	return streamChunkLegacy(abs, relativePath, opts)
-}
-
-func streamChunkLegacy(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
-	var chunks []zvec.Chunk
-	coll := newBatchCollector(len(chunks)+1, func(batch []zvec.Chunk) error {
-		chunks = append(chunks, batch...)
-		return nil
-	})
-	if err := streamChunkBatched(abs, relativePath, opts, coll); err != nil {
-		return nil, err
-	}
-	if err := coll.flush(); err != nil {
-		return nil, err
-	}
-	return chunks, nil
-}
-
-func readAllAndChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		return nil, err
-	}
-	maxLine := opts.MaxLineBytes
-	if maxLine <= 0 {
-		maxLine = defaultMaxLineBytes
-	}
-	if err := checkMaxLineBytes(data, maxLine); err != nil {
-		return nil, err
-	}
-	return FileChunks(relativePath, data, opts), nil
-}
-
 // checkMaxLineBytes mirrors the streaming path's per-line limit so the in-memory
 // path rejects over-long lines identically (matters when the stream threshold is
 // configured above max_line_bytes). CR and LF reset the running line length.
@@ -108,68 +38,6 @@ func checkMaxLineBytes(content []byte, maxLine int64) error {
 		}
 	}
 	return nil
-}
-
-func normalizeWindowOpts(opts Options) (window, overlap int) {
-	window = opts.WindowLines
-	if window <= 0 {
-		window = defaultWindowLines
-	}
-	overlap = opts.OverlapLines
-	if overlap <= 0 {
-		overlap = defaultOverlapLines
-	}
-	if overlap >= window {
-		overlap = window / 4
-	}
-	return window, overlap
-}
-
-func chunkFromLineWindow(rel string, lines []string, startLine int64, chunkType string) *zvec.Chunk {
-	if len(lines) == 0 {
-		return nil
-	}
-	snippet := strings.Join(lines, "\n")
-	if strings.TrimSpace(snippet) == "" {
-		return nil
-	}
-	endLine := startLine + int64(len(lines)) - 1
-	return &zvec.Chunk{
-		DocID:        docID(rel, startLine, endLine),
-		RelativePath: filepath.ToSlash(rel),
-		StartLine:    startLine,
-		EndLine:      endLine,
-		ChunkType:    chunkType,
-		Name:         filepath.Base(rel),
-		Snippet:      snippet,
-	}
-}
-
-func slideWindow(rel string, allLines []string, opts Options) []zvec.Chunk {
-	window, overlap := normalizeWindowOpts(opts)
-	if len(allLines) == 0 {
-		return nil
-	}
-	chunkType := chunkTypeForPath(rel)
-	var chunks []zvec.Chunk
-	for start := 0; start < len(allLines); start += window - overlap {
-		end := start + window
-		if end > len(allLines) {
-			end = len(allLines)
-		}
-		if start >= end {
-			break
-		}
-		if ch := chunkFromLineWindow(rel, allLines[start:end], int64(start+1), chunkType); ch != nil {
-			chunks = append(chunks, *ch)
-		} else if end == len(allLines) {
-			break
-		}
-		if end == len(allLines) {
-			break
-		}
-	}
-	return chunks
 }
 
 // ResolveWithinRoot joins root and relativePath, resolves symlinks, and verifies
@@ -255,8 +123,9 @@ func normalizeLineEndings(content []byte) []byte {
 	return bytes.ReplaceAll(content, []byte("\r"), []byte("\n"))
 }
 
-func docID(relativePath string, startLine, endLine int64) string {
-	raw := fmt.Sprintf("%s:%d:%d", relativePath, startLine, endLine)
+// DocID derives a stable document id including symbol name for AST chunks.
+func DocID(relativePath string, startLine, endLine int64, symbolName string) string {
+	raw := fmt.Sprintf("%s:%d:%d:%s", relativePath, startLine, endLine, symbolName)
 	sum := sha256.Sum256([]byte(raw))
 	return "doc_" + hex.EncodeToString(sum[:])[:16]
 }
@@ -270,5 +139,40 @@ func chunkTypeForPath(rel string) string {
 		return "config"
 	default:
 		return "code"
+	}
+}
+
+// prepareContent normalizes file bytes before chunking.
+func prepareContent(content []byte) []byte {
+	return normalizeLineEndings(stripUTF8BOM(content))
+}
+
+// chunkFromLineWindow builds a line-window chunk (used by stream.go and line_window.go).
+func chunkFromLineWindow(rel string, lines []string, startLine int64, meta SlideWindowMeta) *zvec.Chunk {
+	if len(lines) == 0 {
+		return nil
+	}
+	snippet := strings.Join(lines, "\n")
+	if strings.TrimSpace(snippet) == "" {
+		return nil
+	}
+	endLine := startLine + int64(len(lines)) - 1
+	strategy := meta.ChunkStrategy
+	if strategy == "" {
+		strategy = "line_window"
+	}
+	symbolName := meta.SymbolName
+	return &zvec.Chunk{
+		DocID:         DocID(rel, startLine, endLine, symbolName),
+		RelativePath:  filepath.ToSlash(rel),
+		StartLine:     startLine,
+		EndLine:       endLine,
+		ChunkType:     chunkTypeForPath(rel),
+		Name:          filepath.Base(rel),
+		Snippet:       snippet,
+		SymbolName:    symbolName,
+		SymbolKind:    meta.SymbolKind,
+		ParentScope:   meta.ParentScope,
+		ChunkStrategy: strategy,
 	}
 }

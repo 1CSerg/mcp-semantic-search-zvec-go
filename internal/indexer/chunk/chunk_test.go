@@ -9,14 +9,14 @@ import (
 
 func TestFileChunksStableIDs(t *testing.T) {
 	content := []byte("line1\nline2\nline3\nline4\nline5\n")
-	chunks := FileChunks("pkg/a.go", content, Options{WindowLines: 3, OverlapLines: 1})
+	chunks := FileChunks("pkg/a.go", content, Options{WindowLines: 3, OverlapLines: 1, ChunkingStrategy: "line_window"})
 	if len(chunks) == 0 {
 		t.Fatal("expected chunks")
 	}
 	if chunks[0].DocID == "" || chunks[0].RelativePath != "pkg/a.go" {
 		t.Fatalf("chunk=%+v", chunks[0])
 	}
-	again := FileChunks("pkg/a.go", content, Options{WindowLines: 3, OverlapLines: 1})
+	again := FileChunks("pkg/a.go", content, Options{WindowLines: 3, OverlapLines: 1, ChunkingStrategy: "line_window"})
 	if again[0].DocID != chunks[0].DocID {
 		t.Fatalf("doc id not stable: %s vs %s", again[0].DocID, chunks[0].DocID)
 	}

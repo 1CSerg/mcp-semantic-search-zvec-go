@@ -10,7 +10,7 @@
 
 ## Clone and build
 
-Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec`.
+Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"` — то же, что GitHub Release и install). Для **AST hybrid chunking** по `.go` нужна отдельная сборка `-tags "zvec,onnx,treesitter"` (см. [tree-sitter](#tree-sitter-hybrid-ast-chunking)); без `treesitter` даже при `strategy: hybrid` все файлы, включая `.go`, идут через `line_window`.
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
@@ -82,6 +82,8 @@ internal/
   store/zvec/                       # zvec-go vector store
   embeddings/                       # openai_compatible, onnx
   indexer/                          # scan, chunk, coordinator
+    chunk/                          # ChunkRouter, line_window, ProcessBatches
+      ast/                          # cAST engine, tree-sitter (build tag treesitter)
   watcher/                          # fsnotify + polling
   logging/                          # file log rotation
   crash/                            # last_crash.json
@@ -104,7 +106,9 @@ Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go)
 | Command | Tags | Result |
 |---------|------|--------|
 | `go test ./...` | default (`!zvec`) | Stub store, no native deps |
-| `make build-zvec` | `zvec,onnx` | Production binary with zvec + local ONNX |
+| `make build-zvec` | `zvec,onnx` | **Shipped** production binary (Release, install scripts): zvec + ONNX; hybrid config without AST on `.go` |
+| `go build -tags "zvec,onnx,treesitter"` | `zvec,onnx,treesitter` | Full hybrid: `.go` → AST when `languages.go.enabled` |
+| `go test -tags "zvec,treesitter" ./internal/indexer/chunk/...` | `zvec,treesitter` | AST chunking tests (CGO + tree-sitter) |
 | `make test-integration` | `integration,zvec` | Spike gate tests |
 
 ### Native deps (one-time per machine / after clean)
@@ -115,6 +119,37 @@ make fetch-zvec-libs
 ```
 
 Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+
+### tree-sitter (hybrid AST chunking)
+
+AST chunking for Go uses [go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter) with build tag **`treesitter`** (requires CGO, same toolchain as zvec-go). **Release/install binaries omit `treesitter`** until the release pipeline adds it; contributors build hybrid locally with the tag below.
+
+| Build | Tags | Behavior |
+|-------|------|----------|
+| Stub | (none) | No zvec, no AST; `ast.ChunkGo` returns `ErrNotImplemented` |
+| Shipped / Release / install | `zvec,onnx` or `zvec,!treesitter` | All files use `line_window` (router falls back when AST unavailable) |
+| Full hybrid (local/CI) | `zvec,onnx,treesitter` | Hybrid: enabled `.go` → AST cAST; others → `line_window` |
+
+Verify CGO + grammar linkage (spike gate):
+
+```bash
+bash scripts/fetch/fetch-tree-sitter-grammars.sh
+# with zvec libs on PATH/LD_LIBRARY_PATH:
+source .deps/zvec-lib.env
+export CGO_ENABLED=1 LD_LIBRARY_PATH="$ZVEC_LIB_DIR:$LD_LIBRARY_PATH"
+go test -tags "zvec,treesitter" ./internal/indexer/chunk/...
+```
+
+Windows (PowerShell):
+
+```powershell
+.\scripts\fetch\fetch-zvec-libs.ps1   # if not yet fetched
+.\scripts\fetch\fetch-tree-sitter-grammars.ps1
+# prepends ZVEC_LIB_DIR to PATH when .deps/zvec-lib.env exists
+go test -tags "zvec,treesitter" ./internal/indexer/chunk/...
+```
+
+Grammars are vendored via Go modules (`tree-sitter-go`); fetch scripts only verify compile/link. CI runs `treesitter-chunk` on Linux and AST chunk tests on Windows (`test-windows` job).
 
 ### ONNX (local offline)
 
@@ -264,7 +299,13 @@ Collection name: `ws_<sha256(workspace:profile:dims)[:16]>`. Fields:
 | `chunk_type` | string |
 | `name` | string |
 | `snippet` | string |
+| `symbol_name` | string |
+| `symbol_kind` | string |
+| `parent_scope` | string |
+| `chunk_strategy` | string |
 | `embedding` | vector fp32, N = profile dimensions |
+
+Hybrid AST chunks populate `symbol_*`, `parent_scope`, and `chunk_strategy` (`ast`, `partial`, or `line_window`). Legacy indexes may leave the four symbol fields empty until `reindex` with `force: true`.
 
 ## Cross-compile
 

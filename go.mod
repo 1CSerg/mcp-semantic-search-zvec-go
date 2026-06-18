@@ -8,6 +8,8 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/sugarme/tokenizer v0.3.0
+	github.com/tree-sitter/go-tree-sitter v0.24.0
+	github.com/tree-sitter/tree-sitter-go v0.23.4
 	github.com/yalue/onnxruntime_go v1.31.0
 	github.com/zvec-ai/zvec-go v0.5.0
 	golang.org/x/sys v0.42.0
@@ -39,6 +41,7 @@ require (
 	github.com/jsummers/gobmp v0.0.0-20230614200233-a9de23ed2e25 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/mattn/go-runewidth v0.0.17 // indirect
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

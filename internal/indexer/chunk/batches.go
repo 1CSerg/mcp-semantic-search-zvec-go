@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
@@ -55,7 +56,7 @@ func (b *batchCollector) totalChunks() int {
 
 // ProcessBatches reads and chunks a file, invoking fn for each batch without holding
 // all chunks for the file in memory at once.
-func ProcessBatches(root, relativePath string, opts Options, batchSize int, fn BatchFunc) (int, error) {
+func ProcessBatches(root, relativePath string, opts Options, counter token.TokenCounter, batchSize int, fn BatchFunc) (int, error) {
 	abs, err := resolveWithinRoot(root, relativePath)
 	if err != nil {
 		return 0, err
@@ -73,12 +74,27 @@ func ProcessBatches(root, relativePath string, opts Options, batchSize int, fn B
 	}
 
 	coll := newBatchCollector(batchSize, fn)
-	if info.Size() <= threshold {
-		if err := readAllAndChunkBatched(abs, relativePath, opts, coll); err != nil {
+	emit := func(ch *zvec.Chunk) error { return coll.add(ch) }
+	router := NewChunkRouter()
+
+	useStreaming := info.Size() > threshold && !hybridASTPath(relativePath, opts)
+	if useStreaming {
+		if err := streamChunkBatched(abs, relativePath, opts, coll); err != nil {
 			return coll.totalChunks(), err
 		}
 	} else {
-		if err := streamChunkBatched(abs, relativePath, opts, coll); err != nil {
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return coll.totalChunks(), err
+		}
+		maxLine := opts.MaxLineBytes
+		if maxLine <= 0 {
+			maxLine = defaultMaxLineBytes
+		}
+		if err := checkMaxLineBytes(data, maxLine); err != nil {
+			return coll.totalChunks(), err
+		}
+		if err := router.ChunkFile(relativePath, data, opts, counter, emit); err != nil {
 			return coll.totalChunks(), err
 		}
 	}
@@ -86,25 +102,4 @@ func ProcessBatches(root, relativePath string, opts Options, batchSize int, fn B
 		return coll.totalChunks(), err
 	}
 	return coll.totalChunks(), nil
-}
-
-func readAllAndChunkBatched(abs, relativePath string, opts Options, coll *batchCollector) error {
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		return err
-	}
-	maxLine := opts.MaxLineBytes
-	if maxLine <= 0 {
-		maxLine = defaultMaxLineBytes
-	}
-	if err := checkMaxLineBytes(data, maxLine); err != nil {
-		return err
-	}
-	chunks := FileChunks(relativePath, data, opts)
-	for i := range chunks {
-		if err := coll.add(&chunks[i]); err != nil {
-			return err
-		}
-	}
-	return nil
 }

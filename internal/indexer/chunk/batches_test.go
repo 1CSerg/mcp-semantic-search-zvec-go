@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
@@ -21,7 +22,7 @@ func TestProcessBatches(t *testing.T) {
 
 	var batches int
 	var total int
-	n, err := ProcessBatches(root, rel, Options{WindowLines: 2}, 1, func(batch []zvec.Chunk) error {
+	n, err := ProcessBatches(root, rel, Options{WindowLines: 2, ChunkingStrategy: "line_window"}, &token.HeuristicCounter{}, 1, func(batch []zvec.Chunk) error {
 		batches++
 		total += len(batch)
 		return nil

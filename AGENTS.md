@@ -43,6 +43,8 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 - `limit` (integer, default 10) — число результатов; опционально `path_glob`.
 - Пример: `{"query": "authentication middleware", "limit": 15}`.
 
+**Поля результатов** (после hybrid reindex; в legacy-индексе могут быть пустыми): `symbol_name`, `symbol_kind`, `parent_scope`, `chunk_strategy` — см. [docs/API.md](docs/API.md#post-v1search). `snippet` — исходный код без embed-префикса.
+
 ## HTTP API
 
 Справочник эндпоинтов и примеры curl: [docs/API.md](docs/API.md).
@@ -72,7 +74,9 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | Docker + несколько репо | `docker-compose.daemon.yml` + `-McpMode Proxy` в install.ps1 на Windows |
 | Empty search, indexing idle | `reindex`; check `index_status` |
 | `embedding failed: dimension mismatch: got N want M` | Check `dimensions` in the active profile matches the model (MRL models need server v0.1.8+ which sends `dimensions` to the API); run `reindex` with `force: true` after fixing |
-| `index_status.message`: workspace path changed (misleading) | Check `identity_mismatch_reason` — often profile/dimensions changed, not path; `reindex` with `force: true` |
+| `index_status.message`: workspace path changed (misleading) | Check `identity_mismatch_reason` — often profile/dimensions/**chunking_version** changed, not path; `reindex` with `force: true` |
+| Hybrid chunking: пустые `symbol_*` / `chunk_strategy` в поиске | Shipped binary без `treesitter` индексирует `.go` через `line_window`; для AST-полей — `treesitter`-сборка + `reindex` `force: true`. Смена `chunking.strategy` / `chunking.version` / `languages.*` — тоже `reindex` `force: true` |
+| `identity_mismatch` / `chunking_version mismatch` | MCP `reindex` with `force: true`. Native `AUTO_INDEX_ON_START=true` — на следующем старте; shared daemon — вручную |
 | `zvec_open_ok: false`, LOCK error, `zvec_doc_count: 0` | Duplicate `--stdio` processes — restart Cursor; check `index_status.diagnostics`; re-run install; `reindex` with `force: true` if needed |
 | `--stdio` остался после закрытия Cursor/launcher | Сервер завершится сам, если исчезнет родительская цепочка запуска (`powershell`/`cmd` или Cursor). Если закрыт только workspace, но Cursor держит launcher живым, нужен Restart MCP/IDE или `--stop-stdio-for-workspace`. Для отладки: `MCP_DISABLE_PARENT_WATCH=true` |
 | After MCP binary update (zvec-go bump) | Index resets on first start; in **Native** mode with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |

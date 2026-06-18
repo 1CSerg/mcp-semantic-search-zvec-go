@@ -1,0 +1,242 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 12,
+    "symbol_name": "",
+    "symbol_kind": "import",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 14,
+    "end_line": 14,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 15,
+    "end_line": 20,
+    "symbol_name": "MyFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 22,
+    "end_line": 22,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 23,
+    "end_line": 23,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main \u003e func OversizedFunc"
+  },
+  {
+    "start_line": 24,
+    "end_line": 25,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main \u003e func OversizedFunc"
+  },
+  {
+    "start_line": 26,
+    "end_line": 29,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 29,
+    "end_line": 33,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 33,
+    "end_line": 37,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 37,
+    "end_line": 40,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 40,
+    "end_line": 43,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 43,
+    "end_line": 46,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 46,
+    "end_line": 49,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 50,
+    "end_line": 52,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main \u003e func OversizedFunc"
+  },
+  {
+    "start_line": 53,
+    "end_line": 53,
+    "symbol_name": "OversizedFunc",
+    "symbol_kind": "function",
+    "chunk_strategy": "partial",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 55,
+    "end_line": 55,
+    "symbol_name": "Server",
+    "symbol_kind": "type",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 57,
+    "end_line": 57,
+    "symbol_name": "Foo",
+    "symbol_kind": "method",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main \u003e type Server"
+  },
+  {
+    "start_line": 58,
+    "end_line": 58,
+    "symbol_name": "Bar",
+    "symbol_kind": "method",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main \u003e type Server"
+  },
+  {
+    "start_line": 60,
+    "end_line": 60,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 61,
+    "end_line": 61,
+    "symbol_name": "A",
+    "symbol_kind": "const",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 62,
+    "end_line": 62,
+    "symbol_name": "B",
+    "symbol_kind": "const",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 63,
+    "end_line": 63,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 65,
+    "end_line": 65,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 66,
+    "end_line": 66,
+    "symbol_name": "x",
+    "symbol_kind": "var",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 67,
+    "end_line": 67,
+    "symbol_name": "y",
+    "symbol_kind": "var",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 68,
+    "end_line": 68,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 70,
+    "end_line": 70,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 71,
+    "end_line": 71,
+    "symbol_name": "T1",
+    "symbol_kind": "type",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 72,
+    "end_line": 72,
+    "symbol_name": "T2",
+    "symbol_kind": "type",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  },
+  {
+    "start_line": 73,
+    "end_line": 73,
+    "symbol_name": "",
+    "symbol_kind": "",
+    "chunk_strategy": "ast",
+    "parent_scope": "package main"
+  }
+]

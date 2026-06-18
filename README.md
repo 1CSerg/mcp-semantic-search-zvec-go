@@ -10,7 +10,7 @@
 
 ## Quick start (разработка)
 
-Первый `go build` без тегов — **stub** (без zvec/ONNX, поиск не работает). Для production-поведения: `make fetch-zvec-libs && make build-zvec` — см. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Первый `go build` без тегов — **stub** (без zvec/ONNX, поиск не работает). Для production-поведения как в Release/install: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"`). AST-разбиение `.go` по функциям/методам — только бинарник с `-tags "zvec,onnx,treesitter"`; см. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
@@ -51,7 +51,7 @@ curl http://127.0.0.1:8080/health
 
 ## Статус
 
-**v0.1.8** — MRL `dimensions` в embed API, interrupted indexing resume в GUI, shared-daemon registry lifecycle и open-daemon path redaction, `indexing.failed_files` / `diagnostics.log_file`. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
+**v0.1.8** — MRL `dimensions` в embed API, interrupted indexing resume в GUI, shared-daemon registry lifecycle и open-daemon path redaction, `indexing.failed_files` / `diagnostics.log_file`. **Hybrid chunking (Phase 1b):** shipped Release/install — `-tags "zvec,onnx"` (`.go` через `line_window`); полный AST hybrid — `-tags "zvec,onnx,treesitter"`. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
 
 ## Лицензия
 

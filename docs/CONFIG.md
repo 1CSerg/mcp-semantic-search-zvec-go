@@ -115,7 +115,7 @@ Install with model fetch (when `active_profile: local_multilingual` or explicit 
 FETCH_ONNX_MODEL=1 bash scripts/install/install.sh
 ```
 
-Production build tags: `-tags "zvec,onnx"`. Default unit tests use stub ONNX (`go test ./...`); smoke/release use production tags.
+**Shipped build vs hybrid AST:** GitHub Releases and `install.ps1` / `install.sh` build with `-tags "zvec,onnx"` (no `treesitter`). With that binary, `indexing.chunking.strategy: hybrid` still applies, but **`.go` files use `line_window`** — tree-sitter AST chunking requires a binary built with `-tags "zvec,onnx,treesitter"` (see [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking)). Default unit tests use stub ONNX (`go test ./...`); smoke/release use production tags.
 
 ## indexing
 
@@ -129,22 +129,22 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | `stall_seconds` | 120 | 120 | No progress → recovery |
 | `heartbeat_seconds` | 15 | 15 | **Deprecated** — ignored for indexing; kept for config compatibility |
 | `max_file_bytes` | 2097152 | 2097152 | Max file size to index (bytes); `0` = no limit |
-| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming line chunker |
+| `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming `line_window` — **except** hybrid `.go` with `languages.go.enabled: true` and a `treesitter` binary: those files are read whole (up to `max_file_bytes`) for AST chunking |
 | `max_line_bytes` | 1048576 | 1048576 | Max single line length (bytes); `0` = no limit |
 
 ### indexing.chunking
 
 | Key | Code fallback | Description |
 |-----|---------------|-------------|
-| `strategy` | `hybrid` | `hybrid` or `line_window` (legacy slideWindow) |
+| `strategy` | `hybrid` | `hybrid` or `line_window` (legacy slideWindow). With shipped `-tags "zvec,onnx"` binary, hybrid AST runs only when built with `treesitter`; otherwise all extensions fall back to `line_window` |
 | `version` | `1` | Chunking schema version stored in `index_meta.json`; mismatch triggers `identity_mismatch` |
-| `size_metric` | `tokens` | Chunk size unit |
-| `min_chunk_tokens` | `10` | Minimum chunk size (tokens) |
-| `prose_overlap_ratio` | `0.12` | Overlap ratio for prose regions |
-| `context_prefix` | `false` | Prefix parent scope to chunk text |
+| `size_metric` | `tokens` | Chunk size unit (only `tokens` is implemented; reserved for future metrics) |
+| `min_chunk_tokens` | `10` | Minimum chunk size (tokens); chunks below this are dropped |
+| `prose_overlap_ratio` | `0.12` | **Not used yet** — reserved for prose/Markdown chunking (Phase 1e) |
+| `context_prefix` | `false` | When `true`, prepend `// file: …` and `// scope: …` to **embed input only**; `snippet` stored in zvec stays raw source (prefix rebuilt at embed time from path + `parent_scope`) |
 | `line_window.window_lines` | `40` | Legacy line window size |
 | `line_window.overlap_lines` | `8` | Legacy line overlap |
-| `languages` | go, python, js/ts, bsl | Per-language AST chunking toggles (`bsl.include_sdbl`) |
+| `languages` | go, python, js/ts, bsl | Per-language AST toggles. **Phase 1b:** only `go` with `enabled: true` uses AST when binary has `treesitter`; other keys are ignored until Phase 1c/1d (`bsl.include_sdbl` likewise unused until BSL grammar lands) |
 
 Env overrides: `CHUNKING_STRATEGY`, `CHUNKING_VERSION`.
 

@@ -76,16 +76,27 @@ Response (success):
       "end_line": 45,
       "path": "internal/auth/middleware.go",
       "score": 0.87,
-      "snippet": "...",
-      "symbol_name": "",
-      "symbol_kind": "",
-      "parent_scope": "",
-      "chunk_strategy": ""
+      "snippet": "func AuthMiddleware(next http.Handler) http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\t// ...\n\t})\n}",
+      "symbol_name": "AuthMiddleware",
+      "symbol_kind": "function",
+      "parent_scope": "package middleware",
+      "chunk_strategy": "ast"
     }
   ],
   "performance": { "total_ms": 42.1, "degraded": false }
 }
 ```
+
+**Symbol metadata** (populated after hybrid AST reindex; empty strings on legacy `line_window` indexes):
+
+| Field | Description |
+|-------|-------------|
+| `symbol_name` | Name from AST boundary (`@name` capture), e.g. `AuthMiddleware`, `Server` |
+| `symbol_kind` | Boundary kind: `function`, `method`, `type`, `const`, `var`, `import`, … |
+| `parent_scope` | Scope chain, e.g. `package auth > type Server > func Foo` |
+| `chunk_strategy` | How the chunk was produced: `ast` (whole boundary), `partial` (AST node split via `line_window`), `line_window` (legacy or fallback) |
+
+`snippet` is always raw source from the file. When `context_prefix: true`, the embed model sees an extra header (`// file:` / `// scope:`), but that prefix is **not** stored in `snippet`.
 
 During indexing: HTTP 200 with partial `results` from already indexed chunks, plus `indexing` progress object and optional `message` warning that results may be incomplete.
 
@@ -122,7 +133,7 @@ In shared daemon mode, `workspace_id` is required (JSON body, query, or `X-Works
 
 Starts background indexing; returns initial progress.
 
-With `"force": true`, the server wipes the index and rebuilds from scratch. This is required after changing `WORKSPACE_ROOT` / project path, `active_profile`, embedding dimensions, or chunking settings (`chunking_version`, `chunking_strategy`) when `index_meta.json` no longer matches (otherwise indexing fails with `index_owner_mismatch`).
+With `"force": true`, the server wipes the index and rebuilds from scratch. Required after changing `WORKSPACE_ROOT` / project path, `active_profile`, embedding dimensions, or chunking settings (`chunking_version`, `chunking_strategy`, `languages.*`, `context_prefix`, embed budget fields) when `index_meta.json` no longer matches (otherwise indexing fails with `index_owner_mismatch` or `identity_mismatch`).
 
 ---
 
@@ -258,7 +269,7 @@ All tools return **JSON text** in tool result content.
 
 No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_performance`, `diagnostics`.
 
-Identity fields (when `index_meta.json` exists): `active_profile`, `index_embedding_profile`, `index_embedding_dimensions`, `index_collection_name`, `chunking_strategy`, `chunking_version`, `index_chunking_version`, `index_chunking_strategy`. When on-disk index metadata does not match the current profile/dimensions/chunking settings: `identity_mismatch: true` and `identity_mismatch_reason` (e.g. profile mismatch, `chunking_version mismatch`). `message` may summarize required action (`reindex` with `force: true`).
+Identity fields (when `index_meta.json` exists): `active_profile`, `index_embedding_profile`, `index_embedding_dimensions`, `index_collection_name`, **`chunking_strategy`**, **`chunking_version`**, **`index_chunking_version`**, **`index_chunking_strategy`**. Compare config vs on-disk values to detect stale indexes after chunking upgrades. When metadata does not match the current profile/dimensions/chunking settings: `identity_mismatch: true` and `identity_mismatch_reason` (e.g. profile mismatch, `chunking_version mismatch`). `message` may summarize required action (`reindex` with `force: true`).
 
 When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Skipped paths (up to 20) appear in `indexing.failed_files`. Details are also in `diagnostics.log_file` (`index file skipped` in server.log). Via shared daemon proxy without `API_TOKEN`, `failed_files`, `current_file`, and path fields are redacted — see [Open daemon redaction](#open-daemon-redaction).
 
@@ -270,7 +281,7 @@ Fatal failures (embed provider down, `index_owner_mismatch`, stall) still set `i
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `force` | bool | false | Full reindex. With `force: true`, also resets the index when `workspace_root`, `active_profile`, or embedding `dimensions` changed (e.g. after moving the project). Incremental reindex without `force` returns `index_owner_mismatch` if metadata does not match. |
+| `force` | bool | false | Full reindex. With `force: true`, also resets the index when `workspace_root`, `active_profile`, embedding `dimensions`, or **chunking identity** changed (`chunking_version`, `chunking_strategy`, language toggles, `context_prefix`, `max_input_tokens` / `embed_budget_ratio`). Incremental reindex without `force` returns `index_owner_mismatch` if metadata does not match. |
 
 ### `check_update`
 
