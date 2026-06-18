@@ -58,6 +58,8 @@ profiles:
     model: text-embedding-qwen3-embedding-0.6b
     base_url: http://127.0.0.1:1234/v1
     dimensions: 1024
+    max_input_tokens: 512
+    embed_budget_ratio: 0.50
     batch_size: 10
     timeout_seconds: 200
     # Ключ не нужен; при авторизации в LM Studio: api_key_env: LM_STUDIO_API_KEY и значение в .env
@@ -130,9 +132,8 @@ profiles:
     provider: onnx
     model: paraphrase-multilingual-MiniLM-L12-v2
     dimensions: 384
-    # Лимит токенов для embed body (ONNX default 256; openai_compatible default 512).
-    # max_input_tokens: 256
-    # embed_budget_ratio: 0.90
+    max_input_tokens: 256
+    embed_budget_ratio: 0.90
     # Каталог с model_optimized.onnx относительно корня workspace.
     model_path: .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
 

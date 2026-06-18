@@ -150,6 +150,74 @@ profiles:
         self.assertIn("warning:", result.stderr)
         self.assertIn("description contains", result.stderr)
 
+    def test_merge_adds_provider_aware_max_input_tokens(self) -> None:
+        template = self.root / "template.yaml"
+        dest = self.root / "config.yaml"
+        template.write_text(
+            """active_profile: local_multilingual
+indexing:
+  chunking:
+    strategy: hybrid
+    version: 1
+profiles:
+  local_multilingual:
+    provider: onnx
+    dimensions: 384
+  lmstudio_qwen:
+    provider: openai_compatible
+    dimensions: 1024
+""",
+            encoding="utf-8",
+        )
+        dest.write_text(
+            """active_profile: local_multilingual
+profiles:
+  local_multilingual:
+    provider: onnx
+    dimensions: 384
+  lmstudio_qwen:
+    provider: openai_compatible
+    dimensions: 1024
+""",
+            encoding="utf-8",
+        )
+
+        result = run_merge(template, dest)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        text = dest.read_text(encoding="utf-8")
+        self.assertIn("max_input_tokens: 256", text)
+        self.assertIn("max_input_tokens: 512", text)
+        self.assertIn("chunking:", text)
+        self.assertIn("strategy: hybrid", text)
+
+    def test_merge_preserves_existing_max_input_tokens(self) -> None:
+        template = self.root / "template.yaml"
+        dest = self.root / "config.yaml"
+        template.write_text(
+            """profiles:
+  local_multilingual:
+    provider: onnx
+    dimensions: 384
+    max_input_tokens: 256
+""",
+            encoding="utf-8",
+        )
+        dest.write_text(
+            """profiles:
+  local_multilingual:
+    provider: onnx
+    dimensions: 384
+    max_input_tokens: 128
+""",
+            encoding="utf-8",
+        )
+
+        result = run_merge(template, dest)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        text = dest.read_text(encoding="utf-8")
+        self.assertIn("max_input_tokens: 128", text)
+        self.assertNotIn("max_input_tokens: 256", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,6 +49,44 @@ def merge_missing(template: CommentedMap, user: CommentedMap) -> bool:
     return changed
 
 
+def _provider_name(profile: CommentedMap) -> str:
+    provider = profile.get("provider")
+    if provider is None:
+        return "openai_compatible"
+    return str(provider).strip().lower()
+
+
+def default_max_input_tokens(provider: str) -> int:
+    if provider == "onnx":
+        return 256
+    return 512
+
+
+def default_embed_budget_ratio(provider: str) -> float:
+    if provider == "onnx":
+        return 0.90
+    return 0.50
+
+
+def merge_profile_embed_budget(user: CommentedMap) -> bool:
+    """Add provider-aware max_input_tokens / embed_budget_ratio to profiles when missing."""
+    profiles = user.get("profiles")
+    if not is_mapping(profiles):
+        return False
+    changed = False
+    for _name, profile in profiles.items():
+        if not is_mapping(profile):
+            continue
+        provider = _provider_name(profile)
+        if "max_input_tokens" not in profile:
+            profile["max_input_tokens"] = default_max_input_tokens(provider)
+            changed = True
+        if "embed_budget_ratio" not in profile:
+            profile["embed_budget_ratio"] = default_embed_budget_ratio(provider)
+            changed = True
+    return changed
+
+
 def load_yaml(yaml: YAML, path: Path) -> CommentedMap:
     data = yaml.load(path.read_text(encoding="utf-8"))
     if data is None:
@@ -108,6 +146,7 @@ def main() -> int:
         return 1
 
     merge_missing(template_data, user_data)
+    merge_profile_embed_budget(user_data)
     try:
         write_yaml(yaml, args.dest, user_data)
     except OSError as exc:

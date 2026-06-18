@@ -43,7 +43,9 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 - `limit` (integer, default 10) — число результатов; опционально `path_glob`.
 - Пример: `{"query": "authentication middleware", "limit": 15}`.
 
-**Поля результатов** (после hybrid reindex; в legacy-индексе могут быть пустыми): `symbol_name`, `symbol_kind`, `parent_scope`, `chunk_strategy` — см. [docs/API.md](docs/API.md#post-v1search). Prose (`.md`, `.markdown`, `.mdc`, `.txt`): `chunk_strategy: prose`, `symbol_kind` e.g. `section`/`paragraph` — без `treesitter`. `snippet` — исходный код без embed-префикса.
+**Поля результатов** (после hybrid reindex; в legacy-индексе могут быть пустыми): `symbol_name`, `symbol_kind`, `parent_scope`, `chunk_strategy` — используйте их для понимания контекста (функция, секция markdown, SDBL query и т.д.); см. [docs/API.md](docs/API.md#post-v1search). Prose (`.md`, `.markdown`, `.mdc`, `.txt`): `chunk_strategy: prose`, `symbol_kind` e.g. `section`/`paragraph` — без `treesitter`. `snippet` — исходный код без embed-префикса.
+
+**После upgrade** на версию с hybrid chunking (или смены `chunking.version` / `treesitter` binary) → MCP `reindex` с `force: true` (install-скрипт выводит предупреждение).
 
 ## HTTP API
 

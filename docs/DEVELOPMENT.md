@@ -152,6 +152,16 @@ go test -tags "zvec,treesitter" ./internal/indexer/chunk/...
 
 Grammars are vendored via Go modules (`tree-sitter-go`, `tree-sitter-python`, `tree-sitter-javascript`, `tree-sitter-typescript`, `tree-sitter-bsl` via `replace` → `github.com/alkoleft/tree-sitter-bsl`); fetch scripts only verify compile/link. CI runs `treesitter-chunk` on Linux and AST chunk tests on Windows (`test-windows` job).
 
+**Hybrid chunk benchmark gate** (`internal/indexer/chunk/benchmark_test.go`, tags `zvec,onnx,treesitter`):
+
+```bash
+BENCH_CHECK=1 go test -tags "zvec,onnx,treesitter" -run TestBenchmarkHybridWithin2x ./internal/indexer/chunk/...
+BENCH_CHECK=1 BENCH_FULL=1 go test -tags "zvec,onnx,treesitter" -run TestBenchmarkHybridWithin2x ./internal/indexer/chunk/...  # 1000/200/200 fixtures
+python scripts/dev/generate-chunk-benchmark-fixtures.py /tmp/chunk-bench --go 1000 --tsx 200 --bsl 200
+```
+
+Gate compares hybrid vs `line_window` wall time and `HeapInuse` delta (limit 2×). CI `treesitter-chunk` runs the reduced set (50/10/10) in the main chunk test step, then a blocking `BENCH_FULL=1` gate on 1000/200/200 fixtures (hybrid must stay within 2× line_window).
+
 ### ONNX (local offline)
 
 Local embeddings use [onnxruntime_go](https://github.com/yalue/onnxruntime_go) with build tag `onnx`.
@@ -317,6 +327,9 @@ With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile w
 ## CI
 
 - `.github/workflows/ci.yml` — `go test -race`, покрытие (≥80% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), `test-windows`, golangci-lint (blocking) on push/PR
+- **Matrix (OS × build tags):** stub (no tags), `zvec,onnx` / `zvec,!treesitter`, `zvec,onnx,treesitter` on Ubuntu/Windows; optional `macos-latest` treesitter job (`continue-on-error`)
+- **`treesitter-chunk` job:** AST chunk tests, blocking `BENCH_FULL=1` hybrid benchmark gate (1000/200/200 fixtures, ≤2× `line_window`), **≥80% coverage** on `internal/indexer/chunk` and `internal/indexer/chunk/ast` with `-tags "zvec,onnx,treesitter"`
+- **`merge-config` job:** `python -m unittest scripts/install/merge-config_test.py`
 - `.github/workflows/release.yml` — tag `v*` → binaries + Docker
 
 ## Testing MCP locally

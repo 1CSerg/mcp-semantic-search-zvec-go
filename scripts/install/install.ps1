@@ -451,6 +451,7 @@ if (Test-Path $gitignore) {
     Write-Utf8File $gitignore $block
 }
 
+Write-Host "WARNING: Chunking strategy updated. You must run MCP 'reindex' with force: true after starting the IDE."
 Write-Host "Done. Restart Cursor. MCP server key: $ServerKey"
 Write-Host "Roo/Zoo Code: .roo/mcp.json and $RooRuleRelPath updated — restart Roo Code if used."
 Write-Host "Fill in $envFile for cloud embedding profiles (RouterAI, DashScope, etc.)."

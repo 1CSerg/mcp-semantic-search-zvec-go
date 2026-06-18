@@ -17,10 +17,10 @@ jobs:
           go-version: "1.26.3"
           cache: true
 
-      - name: Build
+      - name: Build (stub)
         run: go build -v ./...
 
-      - name: Test
+      - name: Test (stub)
         run: go test -v -race -count=1 ./...
 
       - name: Coverage check (project min 80%, module min 50%)
@@ -30,8 +30,133 @@ jobs:
           COVERAGE_PKG_MIN: "50"
           COVERAGE_PACKAGES: "./internal/..."
 
+      - name: Chunk package coverage (stub min 80%)
+        run: |
+          go test -coverprofile=coverage-chunk-parent.out ./internal/indexer/chunk/...
+          total="$(go tool cover -func=coverage-chunk-parent.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          echo "chunk parent coverage: ${total}%"
+          awk -v total="$total" 'BEGIN {
+            if (total + 0 < 80) {
+              printf "chunk package coverage %.1f%% is below minimum 80%%\n", total > "/dev/stderr"
+              exit 1
+            }
+          }'
+
       - name: go vet
         run: go vet ./...
+
+  test-matrix:
+    name: test (${{ matrix.os }}, tags=${{ matrix.tags }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            tags: ""
+            cgo: "0"
+            fetch_zvec: false
+            fetch_grammars: false
+          - os: ubuntu-latest
+            tags: "zvec,onnx"
+            cgo: "1"
+            fetch_zvec: true
+            fetch_grammars: false
+          - os: ubuntu-latest
+            tags: "zvec,!treesitter"
+            cgo: "1"
+            fetch_zvec: true
+            fetch_grammars: false
+          - os: ubuntu-latest
+            tags: "zvec,onnx,treesitter"
+            cgo: "1"
+            fetch_zvec: true
+            fetch_grammars: true
+          - os: windows-latest
+            tags: ""
+            cgo: "0"
+            fetch_zvec: false
+            fetch_grammars: false
+          - os: windows-latest
+            tags: "zvec,onnx"
+            cgo: "1"
+            fetch_zvec: true
+            fetch_grammars: false
+          - os: windows-latest
+            tags: "zvec,onnx,treesitter"
+            cgo: "1"
+            fetch_zvec: true
+            fetch_grammars: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.3"
+          cache: true
+
+      - name: Fetch zvec-go vendor libs
+        if: matrix.fetch_zvec
+        shell: bash
+        run: bash scripts/fetch/fetch-zvec-libs.sh >> "$GITHUB_ENV"
+
+      - name: Cache tree-sitter grammars
+        if: matrix.fetch_grammars
+        uses: actions/cache@v4
+        with:
+          path: |
+            .deps/tree-sitter-grammars.stamp
+          key: treesitter-grammars-${{ runner.os }}-${{ hashFiles('go.sum', 'scripts/fetch/fetch-tree-sitter-grammars.sh') }}
+
+      - name: Install MSYS2 GCC (Windows tree-sitter)
+        if: matrix.fetch_grammars && runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+          path-type: inherit
+
+      - name: Fetch tree-sitter grammars
+        if: matrix.fetch_grammars
+        shell: bash
+        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+
+      - name: Test
+        shell: bash
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          GOFLAGS: "-tags=${{ matrix.tags }}"
+          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
+        run: |
+          if [ -n "${{ matrix.tags }}" ]; then
+            go test -tags "${{ matrix.tags }}" -count=1 ./...
+          else
+            go test -count=1 ./...
+          fi
+
+  test-macos-treesitter:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.3"
+          cache: true
+
+      - name: Fetch zvec-go vendor libs
+        run: bash scripts/fetch/fetch-zvec-libs.sh >> "$GITHUB_ENV"
+
+      - name: Fetch tree-sitter grammars
+        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+
+      - name: AST chunk tests (optional macOS)
+        env:
+          CGO_ENABLED: "1"
+          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
+        run: go test -tags "zvec,onnx,treesitter" -count=1 ./internal/indexer/chunk/...
 
   zvec-integration:
     runs-on: ubuntu-latest
@@ -54,6 +179,7 @@ jobs:
 
   treesitter-chunk:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -65,18 +191,53 @@ jobs:
       - name: Fetch zvec-go vendor libs
         run: bash scripts/fetch/fetch-zvec-libs.sh >> "$GITHUB_ENV"
 
+      - name: Cache tree-sitter grammars
+        uses: actions/cache@v4
+        with:
+          path: |
+            .deps/tree-sitter-grammars.stamp
+          key: treesitter-grammars-${{ runner.os }}-${{ hashFiles('go.sum', 'scripts/fetch/fetch-tree-sitter-grammars.sh') }}
+
+      - name: Fetch tree-sitter grammars
+        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+
       - name: AST chunk tests (tree-sitter + CGO)
         env:
           CGO_ENABLED: "1"
           LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
-        run: go test -tags "zvec,treesitter" -v -count=1 ./internal/indexer/chunk/...
+          BENCH_CHECK: "1"
+        run: go test -tags "zvec,onnx,treesitter" -v -count=1 ./internal/indexer/chunk/...
+
+      - name: Hybrid benchmark full fixture gate (1000/200/200)
+        timeout-minutes: 15
+        env:
+          CGO_ENABLED: "1"
+          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
+          BENCH_CHECK: "1"
+          BENCH_FULL: "1"
+        run: go test -tags "zvec,onnx,treesitter" -count=1 -run TestBenchmarkHybridWithin2x ./internal/indexer/chunk/...
+
+      - name: Chunk package coverage (treesitter min 80%)
+        env:
+          CGO_ENABLED: "1"
+          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
+        run: |
+          go test -tags "zvec,onnx,treesitter" -coverprofile=coverage-chunk-parent.out ./internal/indexer/chunk/...
+          total="$(go tool cover -func=coverage-chunk-parent.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          echo "chunk parent coverage (treesitter): ${total}%"
+          awk -v total="$total" 'BEGIN {
+            if (total + 0 < 80) {
+              printf "chunk package coverage %.1f%% is below minimum 80%%\n", total > "/dev/stderr"
+              exit 1
+            }
+          }'
 
       - name: AST package coverage (min 80%)
         env:
           CGO_ENABLED: "1"
           LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
         run: |
-          go test -tags "zvec,treesitter" -coverprofile=coverage-ast.out ./internal/indexer/chunk/ast/...
+          go test -tags "zvec,onnx,treesitter" -coverprofile=coverage-ast.out ./internal/indexer/chunk/ast/...
           total="$(go tool cover -func=coverage-ast.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
           echo "ast coverage: ${total}%"
           awk -v total="$total" 'BEGIN {
@@ -111,7 +272,7 @@ jobs:
           go-version: "1.26.3"
           cache: true
 
-      - name: Test (Windows)
+      - name: Test (Windows stub)
         run: go test ./... -count=1
 
       - name: Fetch zvec-go vendor libs
@@ -138,4 +299,19 @@ jobs:
           Get-Content .deps/zvec-lib.env | ForEach-Object {
             if ($_ -match '^ZVEC_LIB_DIR=(.+)$') { $env:PATH = "$($Matches[1]);$env:PATH" }
           }
-          go test -tags "zvec,treesitter" -count=1 ./internal/indexer/chunk/...
+          go test -tags "zvec,onnx,treesitter" -count=1 ./internal/indexer/chunk/...
+
+  merge-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install merge-config deps
+        run: pip install -r scripts/install/requirements.txt
+
+      - name: merge-config unit tests
+        run: python -m unittest scripts/install/merge-config_test.py

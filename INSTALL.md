@@ -74,7 +74,8 @@ Re-run the same install command from an updated clone or release. The script:
 
 - Updates the binary and runtime DLLs/so/dylib
 - **Overwrites** `.cursor/rules/semantic-search-zvec-go.mdc` and `.roo/rules/semantic-search-zvec-go.md` with the latest agent rule templates
-- **Merges** new keys from repo `config.yaml` into your `.mcp-semantic-search-zvec-go/config.yaml` (your `active_profile`, profiles, lists, and comments are preserved)
+- **Merges** new keys from repo `config.yaml` into your `.mcp-semantic-search-zvec-go/config.yaml` (your `active_profile`, profiles, lists, and comments are preserved), including `indexing.chunking` and provider-aware `max_input_tokens` (`onnx` → 256, `openai_compatible` → 512)
+- Prints: `WARNING: Chunking strategy updated. You must run MCP 'reindex' with force: true after starting the IDE.`
 - Does **not** overwrite `.env` or `data/index/`
 
 For config merge, install `ruamel.yaml` once from the clone:

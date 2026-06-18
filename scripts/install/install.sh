@@ -201,6 +201,7 @@ else
   printf '%s\n' "$BLOCK" > "$GITIGNORE"
 fi
 
+echo "WARNING: Chunking strategy updated. You must run MCP 'reindex' with force: true after starting the IDE."
 echo "Done. Restart Cursor. MCP server key: $SERVER_KEY"
 echo "Roo/Zoo Code: .roo/mcp.json and $ROO_RULE_REL updated — restart Roo Code if used."
 echo "Fill in $ENV_FILE for cloud embedding profiles (RouterAI, DashScope, etc.)."
