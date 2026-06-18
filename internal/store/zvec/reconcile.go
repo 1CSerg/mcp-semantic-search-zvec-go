@@ -12,14 +12,16 @@ import (
 
 // IndexIdentity describes the workspace owner recorded in index_meta.
 type IndexIdentity struct {
-	WorkspaceID   string
-	WorkspaceRoot string
-	Profile       string
-	Dimensions    int
+	WorkspaceID      string
+	WorkspaceRoot    string
+	Profile          string
+	Dimensions       int
+	ChunkingVersion  int
+	ChunkingStrategy string
 }
 
 // IndexIdentityMismatch reports whether on-disk index_meta does not match the current identity.
-func IndexIdentityMismatch(indexDir, workspaceID, profile string, dimensions int) (bool, *IndexMeta, error) {
+func IndexIdentityMismatch(indexDir string, identity IndexIdentity) (bool, *IndexMeta, error) {
 	if !IndexMetaPresent(indexDir) {
 		return false, nil, nil
 	}
@@ -27,7 +29,14 @@ func IndexIdentityMismatch(indexDir, workspaceID, profile string, dimensions int
 	if err != nil {
 		return false, nil, err
 	}
-	if err := ValidateIndexMeta(indexDir, workspaceID, profile, dimensions); err != nil {
+	if err := ValidateIndexMeta(
+		indexDir,
+		identity.WorkspaceID,
+		identity.Profile,
+		identity.Dimensions,
+		identity.ChunkingVersion,
+		identity.ChunkingStrategy,
+	); err != nil {
 		return true, meta, err
 	}
 	return false, meta, nil
@@ -63,16 +72,10 @@ func ResetIndexForIdentityChange(indexDir string, oldMeta *IndexMeta, store Stor
 // ReconcileIndex validates or resets index ownership before indexing.
 func ReconcileIndex(indexDir string, identity IndexIdentity, force bool, store Store) error {
 	if !IndexMetaPresent(indexDir) {
-		return EnsureIndexMeta(
-			indexDir,
-			identity.WorkspaceID,
-			identity.WorkspaceRoot,
-			identity.Profile,
-			identity.Dimensions,
-		)
+		return EnsureIndexMeta(indexDir, identity)
 	}
 
-	mismatch, meta, err := IndexIdentityMismatch(indexDir, identity.WorkspaceID, identity.Profile, identity.Dimensions)
+	mismatch, meta, err := IndexIdentityMismatch(indexDir, identity)
 	if err != nil && !mismatch {
 		return err
 	}
@@ -96,13 +99,7 @@ func ReconcileIndex(indexDir string, identity IndexIdentity, force bool, store S
 	// (possibly legacy/partial) index_meta so mixing-protection and root-move
 	// detection have complete data on subsequent runs.
 	if indexMetaIncomplete(meta) {
-		return EnsureIndexMeta(
-			indexDir,
-			identity.WorkspaceID,
-			identity.WorkspaceRoot,
-			identity.Profile,
-			identity.Dimensions,
-		)
+		return EnsureIndexMeta(indexDir, identity)
 	}
 	return nil
 }

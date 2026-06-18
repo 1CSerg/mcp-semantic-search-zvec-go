@@ -200,11 +200,15 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 	results := make([]SearchResultItem, 0, len(hits))
 	for _, h := range hits {
 		results = append(results, SearchResultItem{
-			StartLine: h.StartLine,
-			EndLine:   h.EndLine,
-			Path:      h.Path,
-			Score:     h.Score,
-			Snippet:   h.Snippet,
+			StartLine:     h.StartLine,
+			EndLine:       h.EndLine,
+			Path:          h.Path,
+			Score:         h.Score,
+			Snippet:       h.Snippet,
+			SymbolName:    h.SymbolName,
+			SymbolKind:    h.SymbolKind,
+			ParentScope:   h.ParentScope,
+			ChunkStrategy: h.ChunkStrategy,
 		})
 	}
 	totalMS := float64(time.Since(start).Milliseconds())
@@ -267,18 +271,23 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 	if profileErr == nil {
 		profileDims = profile.Dimensions
 	}
-	identityMismatch, _, identityErr := zvec.IndexIdentityMismatch(
-		p.Settings.IndexDir,
-		p.Settings.WorkspaceID,
-		p.Settings.App.ActiveProfile,
-		profileDims,
-	)
+	identity := zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       profileDims,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}
+	identityMismatch, _, identityErr := zvec.IndexIdentityMismatch(p.Settings.IndexDir, identity)
 	enrichIndexStatusDiagnostics(diag, p.Settings, filesFailed, docCount, chunks, zvecOpenOK, len(idx.SkippedPaths), identityMismatch)
 	payload := map[string]any{
 		"workspace_root":          root,
 		"index_dir":               statusRelativePath(root, p.Settings.IndexDir),
 		"config_path":             statusRelativePath(root, p.Settings.ConfigPath),
 		"server_version":          version.Version,
+		"chunking_strategy":       p.Settings.App.Indexing.Chunking.Strategy,
+		"chunking_version":        p.Settings.App.Indexing.Chunking.Version,
 		"zvec_go_version":         version.ZvecGoVersion,
 		"index_zvec_go_version":   p.indexZvecGoVersion(),
 		"indexed_files":           files,
@@ -298,6 +307,8 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 		payload["index_embedding_profile"] = meta.EmbeddingProfile
 		payload["index_embedding_dimensions"] = meta.EmbeddingDimensions
 		payload["index_collection_name"] = meta.CollectionName
+		payload["index_chunking_version"] = meta.ChunkingVersion
+		payload["index_chunking_strategy"] = meta.ChunkingStrategy
 	}
 	if identityMismatch {
 		payload["identity_mismatch"] = true
@@ -354,6 +365,14 @@ func (p *Phase1) Reindex(ctx context.Context, req ReindexRequest) (json.RawMessa
 			"progress": idx.ToIndexingMap(),
 		})
 	}
+	if err := p.reconcileIdentityBeforeReindex(req.Force); err != nil {
+		return marshal(map[string]any{
+			"started":  false,
+			"force":    req.Force,
+			"message":  err.Error(),
+			"progress": p.indexingProgress().ToIndexingMap(),
+		})
+	}
 	pgr, err := p.coordinator.Start(req.Force)
 	if err != nil {
 		return marshal(map[string]any{
@@ -399,7 +418,14 @@ func (p *Phase1) Ready(ctx context.Context) error {
 	if !zvec.IndexMetaPresent(p.Settings.IndexDir) {
 		return fmt.Errorf("index not built yet")
 	}
-	if err := zvec.ValidateIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.App.ActiveProfile, profile.Dimensions); err != nil {
+	if err := zvec.ValidateIndexMeta(
+		p.Settings.IndexDir,
+		p.Settings.WorkspaceID,
+		p.Settings.App.ActiveProfile,
+		profile.Dimensions,
+		p.Settings.App.Indexing.Chunking.Version,
+		p.Settings.App.Indexing.Chunking.Strategy,
+	); err != nil {
 		return err
 	}
 	if err := p.embed.HealthCheck(ctx); err != nil {
@@ -447,21 +473,52 @@ func (p *Phase1) PrepareStartup() {
 	p.StartAutoIndex()
 }
 
+func (p *Phase1) indexIdentity() (zvec.IndexIdentity, error) {
+	profile, err := p.Settings.ActiveProfile()
+	if err != nil {
+		return zvec.IndexIdentity{}, err
+	}
+	return zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       profile.Dimensions,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}, nil
+}
+
+func (p *Phase1) reconcileIdentityBeforeReindex(force bool) error {
+	identity, err := p.indexIdentity()
+	if err != nil {
+		return err
+	}
+	mismatch, meta, mismatchErr := zvec.IndexIdentityMismatch(p.Settings.IndexDir, identity)
+	if !mismatch {
+		return nil
+	}
+	if !force {
+		if mismatchErr != nil {
+			return mismatchErr
+		}
+		return errors.New("index identity mismatch — run reindex with force=true")
+	}
+	if err := zvec.ResetIndexForIdentityChange(p.Settings.IndexDir, meta, p.zvec, identity); err != nil {
+		return fmt.Errorf("reset index for identity change: %w", err)
+	}
+	return nil
+}
+
 func (p *Phase1) runIdentityMigrationIfNeeded() bool {
 	if p.coordinator == nil {
 		return false
 	}
-	profile, err := p.Settings.ActiveProfile()
+	identity, err := p.indexIdentity()
 	if err != nil {
 		slog.Warn("identity migration check skipped", "err", err)
 		return false
 	}
-	mismatch, meta, err := zvec.IndexIdentityMismatch(
-		p.Settings.IndexDir,
-		p.Settings.WorkspaceID,
-		p.Settings.App.ActiveProfile,
-		profile.Dimensions,
-	)
+	mismatch, meta, err := zvec.IndexIdentityMismatch(p.Settings.IndexDir, identity)
 	if err != nil && !mismatch {
 		slog.Warn("identity migration check failed", "err", err)
 		return false
@@ -475,6 +532,10 @@ func (p *Phase1) runIdentityMigrationIfNeeded() bool {
 			"workspace_id", p.Settings.WorkspaceID,
 			"workspace_root", p.Settings.WorkspaceRoot,
 		)
+		if err := p.reconcileIdentityBeforeReindex(true); err != nil {
+			slog.Warn("identity migration reset failed", "err", err)
+			return true
+		}
 		if _, err := p.coordinator.Start(true); err != nil {
 			slog.Warn("identity migration reindex failed to start", "err", err)
 		}
@@ -519,10 +580,12 @@ func (p *Phase1) runZvecGoMigrationIfNeeded() bool {
 		return false
 	}
 	identity := zvec.IndexIdentity{
-		WorkspaceID:   p.Settings.WorkspaceID,
-		WorkspaceRoot: p.Settings.WorkspaceRoot,
-		Profile:       p.Settings.App.ActiveProfile,
-		Dimensions:    profile.Dimensions,
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       profile.Dimensions,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
 	}
 
 	if err := zvec.ResetIndexForZvecMigration(p.Settings.IndexDir, meta, p.zvec, version.ZvecGoVersion, identity); err != nil {

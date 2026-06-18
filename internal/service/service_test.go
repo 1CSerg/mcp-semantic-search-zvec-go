@@ -13,21 +13,61 @@ import (
 
 func TestSearchResultItemJSONFieldOrder(t *testing.T) {
 	raw, err := json.Marshal(SearchResultItem{
-		StartLine: 12,
-		EndLine:   45,
-		Path:      "internal/auth/middleware.go",
-		Score:     0.87,
-		Snippet:   "...",
+		StartLine:     12,
+		EndLine:       45,
+		Path:          "internal/auth/middleware.go",
+		Score:         0.87,
+		Snippet:       "...",
+		SymbolName:    "Auth",
+		SymbolKind:    "function",
+		ParentScope:   "middleware",
+		ChunkStrategy: "line_window",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"start_line":12,"end_line":45,"path":"internal/auth/middleware.go","score":0.87,"snippet":"..."}`
+	want := `{"start_line":12,"end_line":45,"path":"internal/auth/middleware.go","score":0.87,"snippet":"...","symbol_name":"Auth","symbol_kind":"function","parent_scope":"middleware","chunk_strategy":"line_window"}`
 	if string(raw) != want {
 		t.Fatalf("got %s", raw)
 	}
 	if !strings.HasPrefix(string(raw), `{"start_line":`) {
 		t.Fatalf("start_line must be first: %s", raw)
+	}
+}
+
+func TestStubGetIndexStatusChunkingFields(t *testing.T) {
+	root := t.TempDir()
+	s := NewStub(&config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      filepath.Join(root, ".mcp-semantic-search-zvec-go", "data", "index"),
+		ConfigPath:    filepath.Join(root, ".mcp-semantic-search-zvec-go", "config.yaml"),
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Profiles: map[string]config.EmbeddingProfile{
+				"test": {Provider: "openai_compatible", Model: "test-model", Dimensions: 384},
+			},
+			Indexing: config.IndexingConfig{
+				Chunking: config.ChunkingConfig{
+					Strategy: "hybrid",
+					Version:  1,
+				},
+			},
+		},
+	})
+
+	raw, err := s.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatalf("GetIndexStatus: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["chunking_strategy"] != "hybrid" {
+		t.Fatalf("chunking_strategy=%v", payload["chunking_strategy"])
+	}
+	if payload["chunking_version"] != float64(1) {
+		t.Fatalf("chunking_version=%v", payload["chunking_version"])
 	}
 }
 
@@ -144,5 +184,11 @@ func TestStubContextCanceled(t *testing.T) {
 	}
 	if _, err := s.Reindex(ctx, ReindexRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Reindex err=%v", err)
+	}
+	if _, err := s.CheckUpdate(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CheckUpdate err=%v", err)
+	}
+	if err := s.Ready(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Ready err=%v", err)
 	}
 }

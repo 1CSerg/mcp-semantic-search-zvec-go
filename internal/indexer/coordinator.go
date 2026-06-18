@@ -225,10 +225,12 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	if err := zvec.ReconcileIndex(
 		c.Settings.IndexDir,
 		zvec.IndexIdentity{
-			WorkspaceID:   c.Settings.WorkspaceID,
-			WorkspaceRoot: c.Settings.WorkspaceRoot,
-			Profile:       c.Settings.App.ActiveProfile,
-			Dimensions:    c.Profile.Dimensions,
+			WorkspaceID:      c.Settings.WorkspaceID,
+			WorkspaceRoot:    c.Settings.WorkspaceRoot,
+			Profile:          c.Settings.App.ActiveProfile,
+			Dimensions:       c.Profile.Dimensions,
+			ChunkingVersion:  c.Settings.App.Indexing.Chunking.Version,
+			ChunkingStrategy: c.Settings.App.Indexing.Chunking.Strategy,
 		},
 		force,
 		c.Zvec,

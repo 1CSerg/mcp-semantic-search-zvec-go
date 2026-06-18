@@ -76,7 +76,11 @@ Response (success):
       "end_line": 45,
       "path": "internal/auth/middleware.go",
       "score": 0.87,
-      "snippet": "..."
+      "snippet": "...",
+      "symbol_name": "",
+      "symbol_kind": "",
+      "parent_scope": "",
+      "chunk_strategy": ""
     }
   ],
   "performance": { "total_ms": 42.1, "degraded": false }
@@ -118,7 +122,7 @@ In shared daemon mode, `workspace_id` is required (JSON body, query, or `X-Works
 
 Starts background indexing; returns initial progress.
 
-With `"force": true`, the server wipes the index and rebuilds from scratch. This is required after changing `WORKSPACE_ROOT` / project path, `active_profile`, or embedding dimensions when `index_meta.json` no longer matches (otherwise indexing fails with `index_owner_mismatch`).
+With `"force": true`, the server wipes the index and rebuilds from scratch. This is required after changing `WORKSPACE_ROOT` / project path, `active_profile`, embedding dimensions, or chunking settings (`chunking_version`, `chunking_strategy`) when `index_meta.json` no longer matches (otherwise indexing fails with `index_owner_mismatch`).
 
 ---
 
@@ -254,7 +258,7 @@ All tools return **JSON text** in tool result content.
 
 No arguments. Returns paths, counts, `indexing`, `file_watcher`, `search_performance`, `diagnostics`.
 
-Identity fields (when `index_meta.json` exists): `active_profile`, `index_embedding_profile`, `index_embedding_dimensions`, `index_collection_name`. When on-disk index metadata does not match the current profile/dimensions: `identity_mismatch: true` and `identity_mismatch_reason` (e.g. profile mismatch). `message` may summarize required action (`reindex` with `force: true`).
+Identity fields (when `index_meta.json` exists): `active_profile`, `index_embedding_profile`, `index_embedding_dimensions`, `index_collection_name`, `chunking_strategy`, `chunking_version`, `index_chunking_version`, `index_chunking_strategy`. When on-disk index metadata does not match the current profile/dimensions/chunking settings: `identity_mismatch: true` and `identity_mismatch_reason` (e.g. profile mismatch, `chunking_version mismatch`). `message` may summarize required action (`reindex` with `force: true`).
 
 When indexing finishes with per-file zvec/read errors, `indexing.state` is `idle` (not `error`) and `indexing.files_failed` shows how many files were skipped. Skipped paths (up to 20) appear in `indexing.failed_files`. Details are also in `diagnostics.log_file` (`index file skipped` in server.log). Via shared daemon proxy without `API_TOKEN`, `failed_files`, `current_file`, and path fields are redacted — see [Open daemon redaction](#open-daemon-redaction).
 

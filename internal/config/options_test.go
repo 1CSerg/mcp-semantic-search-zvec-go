@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,5 +98,75 @@ func TestParseDotEnvMap(t *testing.T) {
 	}
 	if m["KEY"] != "value" {
 		t.Fatalf("KEY=%q", m["KEY"])
+	}
+}
+
+func TestWarnPlaintextAPIKeys(t *testing.T) {
+	app := AppConfig{
+		Profiles: map[string]EmbeddingProfile{
+			"leaky": {Provider: "openai_compatible", APIKey: "hardcoded"},
+			"safe":  {Provider: "openai_compatible", APIKeyEnv: "OPENAI_API_KEY"},
+		},
+	}
+	warnPlaintextAPIKeys(&app, "/tmp/config.yaml")
+}
+
+func TestDotEnvCandidatePathsWithEnvPath(t *testing.T) {
+	paths := dotEnvCandidatePaths("/ws", "/ws/config.yaml", "/custom/.env")
+	if len(paths) != 3 || paths[0] != "/custom/.env" {
+		t.Fatalf("paths=%v", paths)
+	}
+}
+
+func TestCloneSecretsEmpty(t *testing.T) {
+	if cloneSecrets(nil) != nil {
+		t.Fatal("expected nil for nil input")
+	}
+	if cloneSecrets(map[string]string{}) != nil {
+		t.Fatal("expected nil for empty map")
+	}
+}
+
+func TestMergeDotEnvIntoMapParseError(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, ".env")
+	if err := os.WriteFile(bad, []byte("INVALID LINE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := mergeDotEnvIntoMap(map[string]string{}, []string{bad})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
+func TestApplyProfileSecretsSkipsPlaintextKey(t *testing.T) {
+	app := AppConfig{
+		Profiles: map[string]EmbeddingProfile{
+			"p": {APIKey: "set", APIKeyEnv: "OTHER"},
+		},
+	}
+	applyProfileSecrets(&app, map[string]string{"OTHER": "from-env"}, false)
+	if app.Profiles["p"].APIKey != "set" {
+		t.Fatal("should not overwrite plaintext api_key")
+	}
+}
+
+func TestLookupSecretFromMapAndEnv(t *testing.T) {
+	if got := lookupSecret(map[string]string{"K": "from-map"}, "K", false); got != "from-map" {
+		t.Fatalf("got=%q", got)
+	}
+	t.Setenv("ENV_KEY", "from-env")
+	if got := lookupSecret(nil, "ENV_KEY", true); got != "from-env" {
+		t.Fatalf("got=%q", got)
+	}
+	if got := lookupSecret(map[string]string{}, "MISSING", true); got != "" {
+		t.Fatalf("got=%q", got)
+	}
+}
+
+func TestLoadWorkspaceFromSpecRequiresID(t *testing.T) {
+	_, err := LoadWorkspaceFromSpec("", t.TempDir(), "", "", LoadOptions{})
+	if err == nil || !strings.Contains(err.Error(), "workspace id is required") {
+		t.Fatalf("err=%v", err)
 	}
 }

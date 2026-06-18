@@ -242,3 +242,11 @@ func TestJournalModeInvalidPath(t *testing.T) {
 		t.Fatal("expected open error")
 	}
 }
+
+func TestWalSkipReasonSyncedCloudPath(t *testing.T) {
+	t.Setenv("MANIFEST_WAL", "")
+	dir := filepath.Join(t.TempDir(), "YandexDisk", "project")
+	if reason := walSkipReason(filepath.Join(dir, "manifest.db")); reason != "synced_cloud_drive_path" {
+		t.Fatalf("reason=%q", reason)
+	}
+}

@@ -113,6 +113,9 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 	if opts.UseProcessEnv {
 		applyEnvOverrides(&app)
 	}
+	if err := validateProfiles(app); err != nil {
+		return nil, err
+	}
 	applyProfileSecrets(&app, secrets, opts.UseProcessEnv)
 
 	autoIndex := false

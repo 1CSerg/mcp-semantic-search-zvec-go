@@ -254,6 +254,22 @@ func TestRunRetryLoop(t *testing.T) {
 	}
 }
 
+func TestWatcherTriggerReindexRetryPendingWhileActive(t *testing.T) {
+	coord := &toggleCoordinator{running: true}
+	w := &Watcher{
+		settings:    &config.Settings{},
+		coordinator: coord,
+		stopCh:      make(chan struct{}),
+		retryActive: true,
+	}
+	w.triggerReindex(context.Background(), "main.go")
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.retryPending {
+		t.Fatal("expected retry pending")
+	}
+}
+
 func TestWatcherTriggerReindexWhileRunning(t *testing.T) {
 	coord := &delayedCoordinator{}
 	w := &Watcher{

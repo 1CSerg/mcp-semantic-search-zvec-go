@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -116,5 +117,68 @@ func TestCheckerEmptyRepo(t *testing.T) {
 	info := c.Check(context.Background(), "0.1.0")
 	if info.Message != "github repo not configured" {
 		t.Fatalf("message=%q", info.Message)
+	}
+}
+
+func TestCheckerCachesSuccess(t *testing.T) {
+	t.Setenv(envDisable, "false")
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte(`{"tag_name":"v0.2.0","html_url":"https://github.com/owner/repo/releases/tag/v0.2.0"}`))
+	}))
+	defer srv.Close()
+
+	checker := NewChecker("owner/repo")
+	checker.apiBase = srv.URL
+	checker.client = srv.Client()
+	checker.ttl = time.Hour
+
+	info1 := checker.Check(context.Background(), "0.1.0")
+	if !info1.UpdateAvailable {
+		t.Fatalf("info=%+v", info1)
+	}
+	checker.Check(context.Background(), "0.1.0")
+	if calls != 1 {
+		t.Fatalf("calls=%d want 1 (success cached)", calls)
+	}
+}
+
+func TestCheckerInvalidJSON(t *testing.T) {
+	t.Setenv(envDisable, "false")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`not json`))
+	}))
+	defer srv.Close()
+
+	checker := NewChecker("owner/repo")
+	checker.apiBase = srv.URL
+	checker.client = srv.Client()
+	info := checker.Check(context.Background(), "0.1.0")
+	if info.Message == "" || !strings.Contains(info.Message, "invalid JSON") {
+		t.Fatalf("message=%q", info.Message)
+	}
+}
+
+func TestCheckerEmptyReleaseTag(t *testing.T) {
+	t.Setenv(envDisable, "false")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"tag_name":"","name":"","html_url":""}`))
+	}))
+	defer srv.Close()
+
+	checker := NewChecker("owner/repo")
+	checker.apiBase = srv.URL
+	checker.client = srv.Client()
+	info := checker.Check(context.Background(), "0.1.0")
+	if info.Message != "update check failed: empty release tag" {
+		t.Fatalf("message=%q", info.Message)
+	}
+}
+
+func TestParseVersionPartsNonNumeric(t *testing.T) {
+	parts := parseVersionParts("1.x.0")
+	if len(parts) != 1 || parts[0] != 0 {
+		t.Fatalf("parts=%v", parts)
 	}
 }

@@ -12,7 +12,7 @@ import (
 
 func TestIndexIdentityMismatchAbsentMeta(t *testing.T) {
 	dir := t.TempDir()
-	mismatch, meta, err := IndexIdentityMismatch(dir, "ws1", "test", 3)
+	mismatch, meta, err := IndexIdentityMismatch(dir, testIdentity("ws1", "", "test", 3))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,10 +27,12 @@ func TestIndexIdentityMismatchMatch(t *testing.T) {
 		WorkspaceID:         "ws1",
 		EmbeddingProfile:    "test",
 		EmbeddingDimensions: 3,
+		ChunkingVersion:     1,
+		ChunkingStrategy:    "hybrid",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	mismatch, _, err := IndexIdentityMismatch(dir, "ws1", "test", 3)
+	mismatch, _, err := IndexIdentityMismatch(dir, testIdentity("ws1", "", "test", 3))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,12 +50,63 @@ func TestIndexIdentityMismatchWorkspaceID(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	mismatch, meta, err := IndexIdentityMismatch(dir, "ws-b", "test", 3)
+	mismatch, meta, err := IndexIdentityMismatch(dir, testIdentity("ws-b", "", "test", 3))
 	if err == nil || !mismatch {
 		t.Fatalf("mismatch=%v err=%v", mismatch, err)
 	}
 	if meta.WorkspaceID != "ws-a" {
 		t.Fatalf("meta=%+v", meta)
+	}
+	if !errors.Is(err, ErrOwnerMismatch) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestIndexIdentityMismatchChunkingVersionZeroVsConfigOne(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:         "ws1",
+		EmbeddingProfile:    "test",
+		EmbeddingDimensions: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := IndexIdentity{
+		WorkspaceID:      "ws1",
+		Profile:          "test",
+		Dimensions:       3,
+		ChunkingVersion:  1,
+		ChunkingStrategy: "hybrid",
+	}
+	mismatch, _, err := IndexIdentityMismatch(dir, identity)
+	if err == nil || !mismatch {
+		t.Fatalf("mismatch=%v err=%v", mismatch, err)
+	}
+	if !errors.Is(err, ErrOwnerMismatch) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestIndexIdentityMismatchChunkingStrategy(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:         "ws1",
+		EmbeddingProfile:    "test",
+		EmbeddingDimensions: 3,
+		ChunkingVersion:     1,
+		ChunkingStrategy:    "line_window",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mismatch, _, err := IndexIdentityMismatch(dir, IndexIdentity{
+		WorkspaceID:      "ws1",
+		Profile:          "test",
+		Dimensions:       3,
+		ChunkingVersion:  1,
+		ChunkingStrategy: "hybrid",
+	})
+	if err == nil || !mismatch {
+		t.Fatalf("mismatch=%v err=%v", mismatch, err)
 	}
 	if !errors.Is(err, ErrOwnerMismatch) {
 		t.Fatalf("err=%v", err)
@@ -280,10 +333,12 @@ func TestResetIndexForIdentityChangeNilOldMeta(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "ws")
 	identity := IndexIdentity{
-		WorkspaceID:   "ws1",
-		WorkspaceRoot: root,
-		Profile:       "test",
-		Dimensions:    3,
+		WorkspaceID:      "ws1",
+		WorkspaceRoot:    root,
+		Profile:          "test",
+		Dimensions:       3,
+		ChunkingVersion:  1,
+		ChunkingStrategy: "hybrid",
 	}
 	if err := ResetIndexForIdentityChange(dir, nil, nil, identity); err != nil {
 		t.Fatal(err)
@@ -292,7 +347,7 @@ func TestResetIndexForIdentityChangeNilOldMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.WorkspaceID != "ws1" {
+	if meta.WorkspaceID != "ws1" || meta.ChunkingVersion != 1 || meta.ChunkingStrategy != "hybrid" {
 		t.Fatalf("meta=%+v", meta)
 	}
 }
@@ -302,7 +357,7 @@ func TestIndexIdentityMismatchCorruptMeta(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "index_meta.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := IndexIdentityMismatch(dir, "ws1", "test", 3)
+	_, _, err := IndexIdentityMismatch(dir, testIdentity("ws1", "", "test", 3))
 	if err == nil {
 		t.Fatal("expected read error")
 	}
@@ -312,5 +367,76 @@ func TestRemoveCollectionDirEmptyName(t *testing.T) {
 	dir := t.TempDir()
 	if err := RemoveCollectionDir(dir, ""); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReconcileIndexBackfillsIncompleteMeta(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "ws")
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:      "ws1",
+		ChunkingVersion:  1,
+		ChunkingStrategy: "hybrid",
+		ZvecGoVersion:    version.ZvecGoVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	identity := IndexIdentity{
+		WorkspaceID:      "ws1",
+		WorkspaceRoot:    root,
+		Profile:          "test",
+		Dimensions:       3,
+		ChunkingVersion:  1,
+		ChunkingStrategy: "hybrid",
+	}
+	if err := ReconcileIndex(dir, identity, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.WorkspaceRoot != root ||
+		meta.EmbeddingProfile != "test" ||
+		meta.ChunkingVersion != 1 ||
+		meta.ChunkingStrategy != "hybrid" {
+		t.Fatalf("meta=%+v", meta)
+	}
+}
+
+func TestClearManifestMissingFile(t *testing.T) {
+	if err := clearManifest(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClearManifestClearsRows(t *testing.T) {
+	dir := t.TempDir()
+	manStore, err := manifest.Open(filepath.Join(dir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manStore.Upsert(manifest.FileEntry{
+		RelativePath: "a.go",
+		MtimeNs:      1,
+		Size:         1,
+		ChunkCount:   1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearManifest(dir); err != nil {
+		t.Fatal(err)
+	}
+	manStore, err = manifest.Open(filepath.Join(dir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manStore.Close()
+	files, _, err := manStore.Stats()
+	if err != nil || files != 0 {
+		t.Fatalf("files=%d err=%v", files, err)
 	}
 }

@@ -22,25 +22,33 @@ var ErrOwnerMismatch = errors.New("index_owner_mismatch")
 
 // Chunk is a searchable document slice stored in zvec.
 type Chunk struct {
-	DocID        string
-	RelativePath string
-	StartLine    int64
-	EndLine      int64
-	ChunkType    string
-	Name         string
-	Snippet      string
+	DocID         string
+	RelativePath  string
+	StartLine     int64
+	EndLine       int64
+	ChunkType     string
+	Name          string
+	Snippet       string
+	SymbolName    string
+	SymbolKind    string
+	ParentScope   string
+	ChunkStrategy string
 }
 
 // SearchHit is one query result.
 type SearchHit struct {
-	DocID     string
-	Path      string
-	StartLine int64
-	EndLine   int64
-	ChunkType string
-	Name      string
-	Snippet   string
-	Score     float64
+	DocID         string
+	Path          string
+	StartLine     int64
+	EndLine       int64
+	ChunkType     string
+	Name          string
+	Snippet       string
+	SymbolName    string
+	SymbolKind    string
+	ParentScope   string
+	ChunkStrategy string
+	Score         float64
 }
 
 // Store abstracts zvec collection operations.

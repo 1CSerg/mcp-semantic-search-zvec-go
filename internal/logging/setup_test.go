@@ -74,6 +74,8 @@ func TestParseLevel(t *testing.T) {
 		{"WARN", slog.LevelWarn},
 		{"error", slog.LevelError},
 		{"info", slog.LevelInfo},
+		{"unknown", slog.LevelInfo},
+		{"warning", slog.LevelWarn},
 	} {
 		if got := parseLevel(tc.in); got != tc.want {
 			t.Fatalf("parseLevel(%q)=%v want %v", tc.in, got, tc.want)

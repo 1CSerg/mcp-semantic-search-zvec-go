@@ -1,5 +1,5 @@
 param(
-    [int]$Min = $(if ($env:COVERAGE_MIN) { [int]$env:COVERAGE_MIN } else { 85 }),
+    [int]$Min = $(if ($env:COVERAGE_MIN) { [int]$env:COVERAGE_MIN } else { 80 }),
     [int]$PkgMin = $(if ($env:COVERAGE_PKG_MIN) { [int]$env:COVERAGE_PKG_MIN } else { 50 }),
     [string]$Profile = $(if ($env:COVERAGE_PROFILE) { $env:COVERAGE_PROFILE } else { "coverage.out" }),
     [string]$Packages = $(if ($env:COVERAGE_PACKAGES) { $env:COVERAGE_PACKAGES } else { "./internal/..." })

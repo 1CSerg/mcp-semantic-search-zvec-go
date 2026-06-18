@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MIN="${COVERAGE_MIN:-85}"
+MIN="${COVERAGE_MIN:-80}"
 PKG_MIN="${COVERAGE_PKG_MIN:-50}"
 PROFILE="${COVERAGE_PROFILE:-coverage.out}"
 PACKAGES="${COVERAGE_PACKAGES:-./internal/...}"

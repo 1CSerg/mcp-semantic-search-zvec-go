@@ -59,30 +59,54 @@ type AppConfig struct {
 }
 
 type EmbeddingProfile struct {
-	Description    string            `yaml:"description"`
-	Provider       string            `yaml:"provider"` // openai_compatible | onnx
-	Model          string            `yaml:"model"`
-	Dimensions     int               `yaml:"dimensions"`
-	ModelPath      string            `yaml:"model_path"`
-	BaseURL        string            `yaml:"base_url"`
-	APIKeyEnv      string            `yaml:"api_key_env"`
-	APIKey         string            `yaml:"api_key"`
-	BatchSize      int               `yaml:"batch_size"`
-	TimeoutSeconds float64           `yaml:"timeout_seconds"`
-	MaxRetries     int               `yaml:"max_retries"`
-	RetryBaseMS    int               `yaml:"retry_base_ms"`
-	ExtraHeaders   map[string]string `yaml:"extra_headers"`
+	Description      string            `yaml:"description"`
+	Provider         string            `yaml:"provider"` // openai_compatible | onnx
+	Model            string            `yaml:"model"`
+	Dimensions       int               `yaml:"dimensions"`
+	MaxInputTokens   int               `yaml:"max_input_tokens"`
+	EmbedBudgetRatio float64           `yaml:"embed_budget_ratio"`
+	ModelPath        string            `yaml:"model_path"`
+	BaseURL          string            `yaml:"base_url"`
+	APIKeyEnv        string            `yaml:"api_key_env"`
+	APIKey           string            `yaml:"api_key"`
+	BatchSize        int               `yaml:"batch_size"`
+	TimeoutSeconds   float64           `yaml:"timeout_seconds"`
+	MaxRetries       int               `yaml:"max_retries"`
+	RetryBaseMS      int               `yaml:"retry_base_ms"`
+	ExtraHeaders     map[string]string `yaml:"extra_headers"`
 }
 
 type IndexingConfig struct {
-	Extensions                []string `yaml:"extensions"`
-	SkipDirs                  []string `yaml:"skip_dirs"`
-	LockStaleSeconds          float64  `yaml:"lock_stale_seconds"`
-	StallSeconds              float64  `yaml:"stall_seconds"`
-	HeartbeatSeconds          float64  `yaml:"heartbeat_seconds"`
-	MaxFileBytes              int64    `yaml:"max_file_bytes"`
-	StreamChunkThresholdBytes int64    `yaml:"stream_chunk_threshold_bytes"`
-	MaxLineBytes              int64    `yaml:"max_line_bytes"`
+	Extensions                []string       `yaml:"extensions"`
+	SkipDirs                  []string       `yaml:"skip_dirs"`
+	LockStaleSeconds          float64        `yaml:"lock_stale_seconds"`
+	StallSeconds              float64        `yaml:"stall_seconds"`
+	HeartbeatSeconds          float64        `yaml:"heartbeat_seconds"`
+	MaxFileBytes              int64          `yaml:"max_file_bytes"`
+	StreamChunkThresholdBytes int64          `yaml:"stream_chunk_threshold_bytes"`
+	MaxLineBytes              int64          `yaml:"max_line_bytes"`
+	Chunking                  ChunkingConfig `yaml:"chunking"`
+}
+
+type ChunkingConfig struct {
+	Strategy          string                    `yaml:"strategy"` // hybrid | line_window
+	Version           int                       `yaml:"version"`
+	SizeMetric        string                    `yaml:"size_metric"` // tokens
+	MinChunkTokens    int                       `yaml:"min_chunk_tokens"`
+	ProseOverlapRatio float64                   `yaml:"prose_overlap_ratio"`
+	ContextPrefix     bool                      `yaml:"context_prefix"`
+	LineWindow        LineWindowConfig          `yaml:"line_window"`
+	Languages         map[string]LanguageConfig `yaml:"languages"`
+}
+
+type LineWindowConfig struct {
+	WindowLines  int `yaml:"window_lines"`
+	OverlapLines int `yaml:"overlap_lines"`
+}
+
+type LanguageConfig struct {
+	Enabled     bool `yaml:"enabled"`
+	IncludeSDBL bool `yaml:"include_sdbl,omitempty"`
 }
 
 type SearchConfig struct {
@@ -126,9 +150,6 @@ func LoadAppConfig(path string) (AppConfig, error) {
 		return AppConfig{}, msg
 	}
 	applyAppDefaults(&app)
-	if err := validateProfiles(app); err != nil {
-		return AppConfig{}, err
-	}
 	return app, nil
 }
 
@@ -137,8 +158,31 @@ func validateProfiles(app AppConfig) error {
 		if p.Dimensions <= 0 {
 			return fmt.Errorf("profile %q: dimensions must be positive", name)
 		}
+		if app.Indexing.Chunking.Strategy == "hybrid" && p.MaxInputTokens <= 0 {
+			return fmt.Errorf("profile %q: max_input_tokens must be positive when using hybrid chunking strategy", name)
+		}
 	}
 	return nil
+}
+
+func defaultMaxInputTokens(p EmbeddingProfile) int {
+	switch strings.ToLower(p.Provider) {
+	case "onnx":
+		return 256
+	case "openai", "openai_compatible":
+		return 512
+	default:
+		return 512
+	}
+}
+
+func defaultEmbedBudgetRatio(p EmbeddingProfile) float64 {
+	switch strings.ToLower(p.Provider) {
+	case "onnx":
+		return 0.90
+	default:
+		return 0.50
+	}
 }
 
 func applyAppDefaults(app *AppConfig) {
@@ -190,6 +234,36 @@ func applyAppDefaults(app *AppConfig) {
 	if app.FileWatcher.Backend == "" {
 		app.FileWatcher.Backend = "auto"
 	}
+	if app.Indexing.Chunking.Strategy == "" {
+		app.Indexing.Chunking.Strategy = "hybrid"
+	}
+	if app.Indexing.Chunking.Version == 0 {
+		app.Indexing.Chunking.Version = 1
+	}
+	if app.Indexing.Chunking.SizeMetric == "" {
+		app.Indexing.Chunking.SizeMetric = "tokens"
+	}
+	if app.Indexing.Chunking.MinChunkTokens == 0 {
+		app.Indexing.Chunking.MinChunkTokens = 10
+	}
+	if app.Indexing.Chunking.ProseOverlapRatio == 0 {
+		app.Indexing.Chunking.ProseOverlapRatio = 0.12
+	}
+	if app.Indexing.Chunking.LineWindow.WindowLines == 0 {
+		app.Indexing.Chunking.LineWindow.WindowLines = 40
+	}
+	if app.Indexing.Chunking.LineWindow.OverlapLines == 0 {
+		app.Indexing.Chunking.LineWindow.OverlapLines = 8
+	}
+	if app.Indexing.Chunking.Languages == nil {
+		app.Indexing.Chunking.Languages = map[string]LanguageConfig{
+			"go":         {Enabled: true},
+			"python":     {Enabled: true},
+			"javascript": {Enabled: true},
+			"typescript": {Enabled: true},
+			"bsl":        {Enabled: true, IncludeSDBL: true},
+		}
+	}
 	for name, p := range app.Profiles {
 		if p.BatchSize == 0 {
 			p.BatchSize = 32
@@ -202,6 +276,12 @@ func applyAppDefaults(app *AppConfig) {
 		}
 		if p.RetryBaseMS == 0 {
 			p.RetryBaseMS = DefaultEmbedRetryBaseMS
+		}
+		if p.EmbedBudgetRatio == 0 {
+			p.EmbedBudgetRatio = defaultEmbedBudgetRatio(p)
+		}
+		if p.MaxInputTokens == 0 {
+			p.MaxInputTokens = defaultMaxInputTokens(p)
 		}
 		app.Profiles[name] = p
 	}
@@ -322,6 +402,23 @@ func applyEnvOverrides(app *AppConfig) {
 	}
 	if v := os.Getenv("MCP_LOG_BACKUP_COUNT"); v != "" {
 		app.Logging.BackupCount = ParseIntEnv("MCP_LOG_BACKUP_COUNT", app.Logging.BackupCount)
+	}
+	if v := os.Getenv("CHUNKING_STRATEGY"); v != "" {
+		app.Indexing.Chunking.Strategy = v
+	}
+	if v := os.Getenv("CHUNKING_VERSION"); v != "" {
+		app.Indexing.Chunking.Version = ParseIntEnv("CHUNKING_VERSION", app.Indexing.Chunking.Version)
+	}
+	if v := os.Getenv("EMBED_MAX_INPUT_TOKENS"); v != "" {
+		n := ParseIntEnv("EMBED_MAX_INPUT_TOKENS", 0)
+		if n > 0 {
+			if name := app.ActiveProfile; name != "" {
+				if p, ok := app.Profiles[name]; ok {
+					p.MaxInputTokens = n
+					app.Profiles[name] = p
+				}
+			}
+		}
 	}
 }
 

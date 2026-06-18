@@ -67,7 +67,11 @@ profiles:
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadAppConfig(path)
+	_, err := LoadWithOptions(LoadOptions{
+		WorkspaceRoot: dir,
+		ConfigPath:    path,
+		UseProcessEnv: false,
+	})
 	if err == nil {
 		t.Fatal("expected dimensions validation error")
 	}
@@ -399,5 +403,151 @@ func TestParseIntEnv(t *testing.T) {
 	t.Setenv("TEST_INT", "nope")
 	if got := ParseIntEnv("TEST_INT", 7); got != 7 {
 		t.Fatalf("got %d", got)
+	}
+}
+
+func TestApplyAppDefaultsChunking(t *testing.T) {
+	app := AppConfig{
+		ActiveProfile: "onnx",
+		Profiles: map[string]EmbeddingProfile{
+			"onnx": {Provider: "onnx", Dimensions: 384},
+		},
+	}
+	applyAppDefaults(&app)
+	if app.Indexing.Chunking.Strategy != "hybrid" {
+		t.Fatalf("strategy=%q", app.Indexing.Chunking.Strategy)
+	}
+	if app.Indexing.Chunking.MinChunkTokens != 10 {
+		t.Fatalf("min_chunk_tokens=%d", app.Indexing.Chunking.MinChunkTokens)
+	}
+	if app.Indexing.Chunking.Version != 1 {
+		t.Fatalf("version=%d", app.Indexing.Chunking.Version)
+	}
+	if got := app.Profiles["onnx"].MaxInputTokens; got != 256 {
+		t.Fatalf("onnx max_input_tokens=%d want 256", got)
+	}
+	if got := app.Profiles["onnx"].EmbedBudgetRatio; got != 0.90 {
+		t.Fatalf("onnx embed_budget_ratio=%v want 0.90", got)
+	}
+}
+
+func TestChunkingEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestConfig(t, dir)
+	indexDir := filepath.Join(dir, "data", "index")
+
+	t.Setenv("WORKSPACE_ROOT", dir)
+	t.Setenv("CONFIG_PATH", path)
+	t.Setenv("INDEX_DIR", indexDir)
+	t.Setenv("CHUNKING_STRATEGY", "line_window")
+	t.Setenv("CHUNKING_VERSION", "2")
+	t.Setenv("EMBED_MAX_INPUT_TOKENS", "1024")
+
+	settings, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.App.Indexing.Chunking.Strategy != "line_window" {
+		t.Fatalf("strategy=%q", settings.App.Indexing.Chunking.Strategy)
+	}
+	if settings.App.Indexing.Chunking.Version != 2 {
+		t.Fatalf("version=%d", settings.App.Indexing.Chunking.Version)
+	}
+	if got := settings.App.Profiles["test"].MaxInputTokens; got != 1024 {
+		t.Fatalf("max_input_tokens=%d", got)
+	}
+}
+
+func TestApplyAppDefaultsOpenAIMaxInputTokens(t *testing.T) {
+	app := AppConfig{
+		ActiveProfile: "api",
+		Profiles: map[string]EmbeddingProfile{
+			"api": {Provider: "openai_compatible", Dimensions: 384},
+		},
+	}
+	applyAppDefaults(&app)
+	if got := app.Profiles["api"].MaxInputTokens; got != 512 {
+		t.Fatalf("max_input_tokens=%d want 512", got)
+	}
+	if got := app.Profiles["api"].EmbedBudgetRatio; got != 0.50 {
+		t.Fatalf("embed_budget_ratio=%v want 0.50", got)
+	}
+}
+
+func TestApplyAppDefaultsOpenAIProvider(t *testing.T) {
+	app := AppConfig{
+		ActiveProfile: "api",
+		Profiles: map[string]EmbeddingProfile{
+			"api": {Provider: "openai", Dimensions: 384},
+		},
+	}
+	applyAppDefaults(&app)
+	if got := app.Profiles["api"].MaxInputTokens; got != 512 {
+		t.Fatalf("max_input_tokens=%d want 512", got)
+	}
+}
+
+func TestApplyAppDefaultsUnknownProviderMaxInputTokens(t *testing.T) {
+	app := AppConfig{
+		ActiveProfile: "custom",
+		Profiles: map[string]EmbeddingProfile{
+			"custom": {Provider: "custom", Dimensions: 384},
+		},
+	}
+	applyAppDefaults(&app)
+	if got := app.Profiles["custom"].MaxInputTokens; got != 512 {
+		t.Fatalf("max_input_tokens=%d want 512", got)
+	}
+}
+
+func TestApplyEnvOverridesIgnoresInvalidValues(t *testing.T) {
+	app := AppConfig{
+		ActiveProfile: "test",
+		Profiles: map[string]EmbeddingProfile{
+			"test": {Provider: "openai_compatible", Dimensions: 384, MaxInputTokens: 512},
+		},
+		Search:   SearchConfig{SlowThresholdSeconds: 5.0, DegradeRatio: 2.0, StatsWindow: 100},
+		Indexing: IndexingConfig{StallSeconds: 30, MaxFileBytes: 1_000_000},
+		Logging:  LoggingConfig{MaxBytes: 1_000_000, BackupCount: 3},
+	}
+	t.Setenv("SEARCH_SLOW_THRESHOLD_SECONDS", "not-a-float")
+	t.Setenv("SEARCH_DEGRADE_RATIO", "-1")
+	t.Setenv("SEARCH_STATS_WINDOW", "nope")
+	t.Setenv("INDEXING_STALL_SECONDS", "bad")
+	t.Setenv("INDEXING_MAX_FILE_BYTES", "0")
+	t.Setenv("INDEXING_STREAM_CHUNK_THRESHOLD_BYTES", "x")
+	t.Setenv("INDEXING_MAX_LINE_BYTES", "0")
+	t.Setenv("FILE_WATCHER_POLL_INTERVAL_SECONDS", "-5")
+	t.Setenv("EMBED_MAX_INPUT_TOKENS", "nope")
+	applyEnvOverrides(&app)
+	if app.Search.SlowThresholdSeconds != 5.0 || app.Search.DegradeRatio != 2.0 {
+		t.Fatalf("search=%+v", app.Search)
+	}
+	if app.Search.StatsWindow != 100 {
+		t.Fatalf("stats_window=%d", app.Search.StatsWindow)
+	}
+	if app.Indexing.MaxFileBytes != 1_000_000 {
+		t.Fatalf("max_file_bytes=%d", app.Indexing.MaxFileBytes)
+	}
+	if app.Profiles["test"].MaxInputTokens != 512 {
+		t.Fatalf("max_input_tokens=%d", app.Profiles["test"].MaxInputTokens)
+	}
+}
+
+func TestValidateProfilesHybridRequiresMaxInputTokens(t *testing.T) {
+	app := AppConfig{
+		Indexing: IndexingConfig{
+			Chunking: ChunkingConfig{Strategy: "hybrid"},
+		},
+		Profiles: map[string]EmbeddingProfile{
+			"bad": {Provider: "openai_compatible", Dimensions: 384, MaxInputTokens: -1},
+		},
+	}
+	err := validateProfiles(app)
+	if err == nil {
+		t.Fatal("expected hybrid max_input_tokens validation error")
+	}
+	if !strings.Contains(err.Error(), "max_input_tokens must be positive") {
+		t.Fatalf("err=%v", err)
 	}
 }

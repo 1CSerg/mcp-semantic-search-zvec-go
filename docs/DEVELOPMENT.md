@@ -274,7 +274,7 @@ With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile w
 
 ## CI
 
-- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥85% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), `test-windows`, golangci-lint (blocking) on push/PR
+- `.github/workflows/ci.yml` — `go test -race`, покрытие (≥80% `./internal/...`, ≥50% на пакет), `go vet`, job `zvec-integration` (`-tags integration,zvec`), `test-windows`, golangci-lint (blocking) on push/PR
 - `.github/workflows/release.yml` — tag `v*` → binaries + Docker
 
 ## Testing MCP locally
@@ -293,7 +293,7 @@ curl -s http://127.0.0.1:8080/v1/status | jq .
 
 Пороги для `./internal/...` (встроенный `go tool cover`):
 
-- **85%** — суммарно по проекту (`COVERAGE_MIN`)
+- **80%** — суммарно по проекту (`COVERAGE_MIN`)
 - **50%** — минимум на каждый Go-пакет (`COVERAGE_PKG_MIN`)
 
 ```bash

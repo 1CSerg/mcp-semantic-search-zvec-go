@@ -130,6 +130,9 @@ profiles:
     provider: onnx
     model: paraphrase-multilingual-MiniLM-L12-v2
     dimensions: 384
+    # Лимит токенов для embed body (ONNX default 256; openai_compatible default 512).
+    # max_input_tokens: 256
+    # embed_budget_ratio: 0.90
     # Каталог с model_optimized.onnx относительно корня workspace.
     model_path: .mcp-semantic-search-zvec-go/models/paraphrase-multilingual-MiniLM-L12-v2
 
@@ -194,6 +197,25 @@ indexing:
   stream_chunk_threshold_bytes: 262144
   # Максимальная длина одной строки (байты); 0 — без лимита.
   max_line_bytes: 1048576
+  # Гибридный AST-чанкинг (Phase 1a: конфиг и identity; pipeline — Phase 1b+).
+  chunking:
+    # hybrid | line_window (line_window — legacy slideWindow)
+    strategy: hybrid
+    # Версия схемы чанкинга; mismatch с index_meta → reindex force
+    version: 1
+    size_metric: tokens
+    min_chunk_tokens: 10
+    prose_overlap_ratio: 0.12
+    context_prefix: false
+    line_window:
+      window_lines: 40
+      overlap_lines: 8
+    languages:
+      go: { enabled: true }
+      python: { enabled: true }
+      javascript: { enabled: true }
+      typescript: { enabled: true }
+      bsl: { enabled: true, include_sdbl: true }
 
 # Метрики и пороги «медленного» семантического поиска.
 search:

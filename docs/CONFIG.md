@@ -132,6 +132,33 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | `stream_chunk_threshold_bytes` | 262144 | 262144 | Above this size, use streaming line chunker |
 | `max_line_bytes` | 1048576 | 1048576 | Max single line length (bytes); `0` = no limit |
 
+### indexing.chunking
+
+| Key | Code fallback | Description |
+|-----|---------------|-------------|
+| `strategy` | `hybrid` | `hybrid` or `line_window` (legacy slideWindow) |
+| `version` | `1` | Chunking schema version stored in `index_meta.json`; mismatch triggers `identity_mismatch` |
+| `size_metric` | `tokens` | Chunk size unit |
+| `min_chunk_tokens` | `10` | Minimum chunk size (tokens) |
+| `prose_overlap_ratio` | `0.12` | Overlap ratio for prose regions |
+| `context_prefix` | `false` | Prefix parent scope to chunk text |
+| `line_window.window_lines` | `40` | Legacy line window size |
+| `line_window.overlap_lines` | `8` | Legacy line overlap |
+| `languages` | go, python, js/ts, bsl | Per-language AST chunking toggles (`bsl.include_sdbl`) |
+
+Env overrides: `CHUNKING_STRATEGY`, `CHUNKING_VERSION`.
+
+### profiles: embed budget
+
+| Key | ONNX default | openai_compatible default | Description |
+|-----|--------------|---------------------------|-------------|
+| `max_input_tokens` | **256** | 512 | Max tokens for chunk body before embedding |
+| `embed_budget_ratio` | 0.90 | 0.50 | Fraction of `max_input_tokens` used for chunk body |
+
+Env override for active profile: `EMBED_MAX_INPUT_TOKENS` (positive integer).
+
+When `indexing.chunking.strategy: hybrid`, each profile must have `max_input_tokens > 0` after defaults and env overrides.
+
 Env overrides: `INDEXING_STALL_SECONDS`, `INDEXING_MAX_FILE_BYTES`, `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES`, `INDEXING_MAX_LINE_BYTES`.
 
 ## search
@@ -196,6 +223,9 @@ Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:80
 | `INDEXING_MAX_FILE_BYTES` | from yaml (`2097152`) | Override `indexing.max_file_bytes` (positive integer) |
 | `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES` | from yaml (`262144`) | Override `indexing.stream_chunk_threshold_bytes` (positive integer) |
 | `INDEXING_MAX_LINE_BYTES` | from yaml (`1048576`) | Override `indexing.max_line_bytes` (positive integer) |
+| `CHUNKING_STRATEGY` | from yaml (`hybrid`) | Override `indexing.chunking.strategy` (`hybrid`, `line_window`) |
+| `CHUNKING_VERSION` | from yaml (`1`) | Override `indexing.chunking.version` (integer) |
+| `EMBED_MAX_INPUT_TOKENS` | from yaml / provider default | Override `max_input_tokens` on **active** profile (positive integer) |
 | `MANIFEST_WAL` | `auto` | SQLite manifest journal: `auto` (WAL off on cloud-sync paths), `on`, `off` |
 | `MCP_CRASH_REDACT_PATHS` | `true` | Redact absolute paths in `last_crash.json` stack |
 | `MCP_PROXY_LOG_DIR` | temp subdir | Crash report dir for `--stdio-proxy` |

@@ -188,6 +188,12 @@ func phase1Settings(t *testing.T, embedURL string) *config.Settings {
 					BaseURL:    embedURL,
 				},
 			},
+			Indexing: config.IndexingConfig{
+				Chunking: config.ChunkingConfig{
+					Strategy: "hybrid",
+					Version:  1,
+				},
+			},
 		},
 	}
 }
@@ -239,6 +245,12 @@ func TestPhase1GetIndexStatus(t *testing.T) {
 	}
 	if payload["index_dir"] != "index" {
 		t.Fatalf("index_dir=%v", payload["index_dir"])
+	}
+	if payload["chunking_strategy"] != "hybrid" {
+		t.Fatalf("chunking_strategy=%v", payload["chunking_strategy"])
+	}
+	if payload["chunking_version"] != float64(1) {
+		t.Fatalf("chunking_version=%v", payload["chunking_version"])
 	}
 }
 
@@ -382,7 +394,14 @@ func TestPhase1ReindexCheckUpdateReady(t *testing.T) {
 	if err := os.MkdirAll(p.Settings.IndexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
+	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       3,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Ready(context.Background()); err != nil {
@@ -431,7 +450,18 @@ func TestPhase1ManifestStats(t *testing.T) {
 	if files != 1 || chunks != 3 {
 		t.Fatalf("files=%d chunks=%d", files, chunks)
 	}
-	_ = context.Background()
+}
+
+func TestPhase1ManifestStatsMissingDB(t *testing.T) {
+	settings := phase1Settings(t, "http://127.0.0.1:9/v1")
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, chunks := p.manifestStats()
+	if files != 0 || chunks != 0 {
+		t.Fatalf("files=%d chunks=%d", files, chunks)
+	}
 }
 
 func TestPhase1GetIndexStatusWithManifest(t *testing.T) {
@@ -784,7 +814,14 @@ func TestReadyEmbeddingsUnreachable(t *testing.T) {
 	if err := os.MkdirAll(p.Settings.IndexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
+	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       3,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Ready(context.Background()); err == nil || !strings.Contains(err.Error(), "embeddings unreachable") {
@@ -802,7 +839,14 @@ func TestReadyMissingCollection(t *testing.T) {
 	if err := os.MkdirAll(p.Settings.IndexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
+	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       3,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	p.zvec = &mockZvecStore{openErr: zvec.ErrCollectionMissing}
@@ -865,6 +909,10 @@ func phase1MigrationSettings(t *testing.T, autoIndex bool) (*config.Settings, st
 				Extensions:       []string{".go"},
 				LockStaleSeconds: 300,
 				StallSeconds:     120,
+				Chunking: config.ChunkingConfig{
+					Strategy: "hybrid",
+					Version:  1,
+				},
 			},
 		},
 	}, indexDir
@@ -875,7 +923,14 @@ func TestPrepareStartupSkipsWhenVersionsMatch(t *testing.T) {
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{ZvecGoVersion: version.ZvecGoVersion}); err != nil {
+	if err := zvec.EnsureIndexMeta(indexDir, zvec.IndexIdentity{
+		WorkspaceID:      settings.WorkspaceID,
+		WorkspaceRoot:    settings.WorkspaceRoot,
+		Profile:          settings.App.ActiveProfile,
+		Dimensions:       3,
+		ChunkingVersion:  settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: settings.App.Indexing.Chunking.Strategy,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1065,6 +1120,181 @@ func TestPrepareStartupMigratesWithoutAutoIndex(t *testing.T) {
 	}
 	if p.startupMsg == "" {
 		t.Fatal("expected startup message")
+	}
+}
+
+func TestPrepareStartupChunkingMismatchAutoIndex(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, true)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         settings.WorkspaceID,
+		WorkspaceRoot:       settings.WorkspaceRoot,
+		EmbeddingProfile:    settings.App.ActiveProfile,
+		EmbeddingDimensions: 3,
+		CollectionName:      zvec.CollectionName(settings.WorkspaceRoot, settings.App.ActiveProfile, 3),
+		ZvecGoVersion:       version.ZvecGoVersion,
+		ChunkingVersion:     0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settings.WorkspaceRoot, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 3}
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	p.PrepareStartup()
+
+	t.Cleanup(func() { releasePhase1TestResources(t, p) })
+
+	waitCoordinatorIdle(t, p)
+	if !store.wasWipeCalled() {
+		t.Fatal("expected wipe during chunking identity migration")
+	}
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ChunkingVersion != settings.App.Indexing.Chunking.Version {
+		t.Fatalf("ChunkingVersion=%d want %d", meta.ChunkingVersion, settings.App.Indexing.Chunking.Version)
+	}
+	if meta.ChunkingStrategy != settings.App.Indexing.Chunking.Strategy {
+		t.Fatalf("ChunkingStrategy=%q want %q", meta.ChunkingStrategy, settings.App.Indexing.Chunking.Strategy)
+	}
+}
+
+func TestReindexChunkingMismatchWithoutForce(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3, BaseURL: "http://127.0.0.1:9/v1"},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         settings.WorkspaceID,
+		WorkspaceRoot:       settings.WorkspaceRoot,
+		EmbeddingProfile:    settings.App.ActiveProfile,
+		EmbeddingDimensions: 3,
+		CollectionName:      zvec.CollectionName(settings.WorkspaceRoot, settings.App.ActiveProfile, 3),
+		ZvecGoVersion:       version.ZvecGoVersion,
+		ChunkingVersion:     0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := settings.App.Profiles["test"]
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+
+	raw, err := p.Reindex(context.Background(), ReindexRequest{Force: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["started"] != false {
+		t.Fatalf("payload=%v", payload)
+	}
+	msg, _ := payload["message"].(string)
+	if !strings.Contains(msg, "chunking_version mismatch") {
+		t.Fatalf("message=%q", msg)
+	}
+	if coord.IsRunning() {
+		t.Fatal("expected no indexing without force")
+	}
+}
+
+func TestReindexChunkingMismatchWithForce(t *testing.T) {
+	settings, indexDir := phase1MigrationSettings(t, false)
+	settings.App.Profiles = map[string]config.EmbeddingProfile{
+		"test": {Provider: "openai_compatible", Model: "m", Dimensions: 3},
+	}
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.WriteIndexMeta(indexDir, zvec.IndexMeta{
+		WorkspaceID:         settings.WorkspaceID,
+		WorkspaceRoot:       settings.WorkspaceRoot,
+		EmbeddingProfile:    settings.App.ActiveProfile,
+		EmbeddingDimensions: 3,
+		CollectionName:      zvec.CollectionName(settings.WorkspaceRoot, settings.App.ActiveProfile, 3),
+		ZvecGoVersion:       version.ZvecGoVersion,
+		ChunkingVersion:     0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settings.WorkspaceRoot, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	profile := settings.App.Profiles["test"]
+	store := &mockZvecStore{}
+	zcfg := zvec.Config{
+		IndexDir:      indexDir,
+		WorkspaceRoot: settings.WorkspaceRoot,
+		ProfileName:   settings.App.ActiveProfile,
+		Dimensions:    profile.Dimensions,
+	}
+	coord := indexer.NewCoordinator(settings, profile, &phase1StubEmbedder{dims: 3}, store, zcfg)
+	p := &Phase1{
+		Settings:    settings,
+		zvec:        store,
+		zvecCfg:     zcfg,
+		coordinator: coord,
+	}
+	t.Cleanup(func() { releasePhase1TestResources(t, p) })
+
+	raw, err := p.Reindex(context.Background(), ReindexRequest{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["started"] != true {
+		t.Fatalf("payload=%v", payload)
+	}
+	waitCoordinatorIdle(t, p)
+	meta, err := zvec.ReadIndexMeta(indexDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.ChunkingVersion != settings.App.Indexing.Chunking.Version {
+		t.Fatalf("ChunkingVersion=%d want %d", meta.ChunkingVersion, settings.App.Indexing.Chunking.Version)
 	}
 }
 
@@ -1585,7 +1815,14 @@ func TestPhase1ReadyOpenZvecGenericError(t *testing.T) {
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := zvec.EnsureIndexMeta(indexDir, p.Settings.WorkspaceID, p.Settings.WorkspaceRoot, p.Settings.App.ActiveProfile, 3); err != nil {
+	if err := zvec.EnsureIndexMeta(indexDir, zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       3,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	p.zvec = &mockZvecStore{openErr: errors.New("zvec open failed")}

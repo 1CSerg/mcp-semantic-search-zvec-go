@@ -1,10 +1,12 @@
 package scan
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -184,8 +186,9 @@ func TestDiscoverWalkRecordsSkippedPaths(t *testing.T) {
 }
 
 func TestDiscoverEmptyRoot(t *testing.T) {
-	if _, err := Discover(Options{}); err == nil {
-		t.Fatal("expected error")
+	_, err := Discover(Options{})
+	if !errors.Is(err, os.ErrInvalid) {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -197,6 +200,9 @@ func TestRelForSkip(t *testing.T) {
 	}
 	if got := relForSkip(root, ""); got != "" {
 		t.Fatalf("relForSkip empty=%q", got)
+	}
+	if got := relForSkip(`C:\a`, `C:\b\c.go`); got == "" {
+		t.Fatal("expected non-empty fallback")
 	}
 }
 
@@ -243,5 +249,78 @@ func TestMatchesExtension(t *testing.T) {
 	}
 	if !matchesExtension("a.go", []string{}) {
 		t.Fatal("empty extensions should match all")
+	}
+	if !matchesExtension("main.go", []string{"go"}) {
+		t.Fatal("expected extension without dot prefix to match")
+	}
+}
+
+func TestDiscoverWalkSkipsVendorDir(t *testing.T) {
+	dir := t.TempDir()
+	vendor := filepath.Join(dir, "vendor")
+	if err := os.MkdirAll(vendor, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(vendor, "lib.go"), []byte("package lib"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := discoverWalk(dir, Options{
+		Extensions: []string{".go"},
+		SkipDirs:   []string{"vendor"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Files) != 1 || result.Files[0] != "main.go" {
+		t.Fatalf("files=%v", result.Files)
+	}
+}
+
+func TestDiscoverEmptyGitRepository(t *testing.T) {
+	dir := t.TempDir()
+	init := exec.Command("git", "init", dir)
+	init.Dir = dir
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	res, err := Discover(Options{Root: dir, Extensions: []string{".go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "empty_repository") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("warnings=%v", res.Warnings)
+	}
+}
+
+func TestDiscoverGitUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	gitDir := filepath.Join(dir, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Discover(Options{Root: dir, Extensions: []string{".go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "git_unavailable") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("warnings=%v", res.Warnings)
 	}
 }

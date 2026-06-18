@@ -9,13 +9,17 @@ import (
 )
 
 const (
-	fieldPath      = "path"
-	fieldStartLine = "start_line"
-	fieldEndLine   = "end_line"
-	fieldChunkType = "chunk_type"
-	fieldName      = "name"
-	fieldSnippet   = "snippet"
-	fieldEmbedding = "embedding"
+	fieldPath          = "path"
+	fieldStartLine     = "start_line"
+	fieldEndLine       = "end_line"
+	fieldChunkType     = "chunk_type"
+	fieldName          = "name"
+	fieldSnippet       = "snippet"
+	fieldSymbolName    = "symbol_name"
+	fieldSymbolKind    = "symbol_kind"
+	fieldParentScope   = "parent_scope"
+	fieldChunkStrategy = "chunk_strategy"
+	fieldEmbedding     = "embedding"
 )
 
 func buildSchema(collectionName string, dimensions int) (*zvec.CollectionSchema, error) {
@@ -59,6 +63,10 @@ func buildSchema(collectionName string, dimensions int) (*zvec.CollectionSchema,
 		{fieldChunkType, zvec.DataTypeString},
 		{fieldName, zvec.DataTypeString},
 		{fieldSnippet, zvec.DataTypeString},
+		{fieldSymbolName, zvec.DataTypeString},
+		{fieldSymbolKind, zvec.DataTypeString},
+		{fieldParentScope, zvec.DataTypeString},
+		{fieldChunkStrategy, zvec.DataTypeString},
 	}
 	for _, f := range scalarFields {
 		field := zvec.NewFieldSchema(f.name, f.dt, false, 0)
@@ -111,6 +119,22 @@ func chunkToDoc(chunk Chunk, vector []float32) (*zvec.Doc, error) {
 		doc.Destroy()
 		return nil, err
 	}
+	if err := doc.AddStringField(fieldSymbolName, chunk.SymbolName); err != nil {
+		doc.Destroy()
+		return nil, err
+	}
+	if err := doc.AddStringField(fieldSymbolKind, chunk.SymbolKind); err != nil {
+		doc.Destroy()
+		return nil, err
+	}
+	if err := doc.AddStringField(fieldParentScope, chunk.ParentScope); err != nil {
+		doc.Destroy()
+		return nil, err
+	}
+	if err := doc.AddStringField(fieldChunkStrategy, chunk.ChunkStrategy); err != nil {
+		doc.Destroy()
+		return nil, err
+	}
 	return doc, nil
 }
 
@@ -136,6 +160,18 @@ func docToSearchHit(doc *zvec.Doc) SearchHit {
 	}
 	if v, err := doc.GetStringField(fieldSnippet); err == nil {
 		hit.Snippet = v
+	}
+	if v, err := doc.GetStringField(fieldSymbolName); err == nil {
+		hit.SymbolName = v
+	}
+	if v, err := doc.GetStringField(fieldSymbolKind); err == nil {
+		hit.SymbolKind = v
+	}
+	if v, err := doc.GetStringField(fieldParentScope); err == nil {
+		hit.ParentScope = v
+	}
+	if v, err := doc.GetStringField(fieldChunkStrategy); err == nil {
+		hit.ChunkStrategy = v
 	}
 	return hit
 }

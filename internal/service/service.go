@@ -27,11 +27,15 @@ type SearchRequest struct {
 
 // SearchResultItem is one ranked chunk in semantic_search results.
 type SearchResultItem struct {
-	StartLine int64   `json:"start_line"`
-	EndLine   int64   `json:"end_line"`
-	Path      string  `json:"path"`
-	Score     float64 `json:"score"`
-	Snippet   string  `json:"snippet"`
+	StartLine     int64   `json:"start_line"`
+	EndLine       int64   `json:"end_line"`
+	Path          string  `json:"path"`
+	Score         float64 `json:"score"`
+	Snippet       string  `json:"snippet"`
+	SymbolName    string  `json:"symbol_name"`
+	SymbolKind    string  `json:"symbol_kind"`
+	ParentScope   string  `json:"parent_scope"`
+	ChunkStrategy string  `json:"chunk_strategy"`
 }
 
 // ReindexRequest triggers background indexing.
@@ -90,6 +94,8 @@ func (s *Stub) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 		"index_dir":               statusRelativePath(root, s.Settings.IndexDir),
 		"config_path":             statusRelativePath(root, s.Settings.ConfigPath),
 		"server_version":          version.Version,
+		"chunking_strategy":       s.Settings.App.Indexing.Chunking.Strategy,
+		"chunking_version":        s.Settings.App.Indexing.Chunking.Version,
 		"indexed_files":           0,
 		"indexed_chunks_manifest": 0,
 		"zvec_doc_count":          0,

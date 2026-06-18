@@ -89,12 +89,37 @@ func TestLoadDotEnvCandidates(t *testing.T) {
 	}
 }
 
+func TestLoadDotEnvCandidatesWithEnvPath(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, "custom.env")
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(envPath, []byte("HTTP_ADDR=:7777\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("x: 1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ENV_PATH", envPath)
+	t.Setenv("HTTP_ADDR", "")
+
+	if err := loadDotEnvCandidates(dir, configPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("HTTP_ADDR"); got != ":7777" {
+		t.Fatalf("HTTP_ADDR = %q, want :7777", got)
+	}
+}
+
 func TestIsSecretEnvKey(t *testing.T) {
 	secrets := []string{"API_TOKEN", "OPENAI_API_KEY", "DB_PASSWORD", "MY_SECRET", "X_CREDENTIAL"}
 	for _, k := range secrets {
 		if !isSecretEnvKey(k) {
 			t.Fatalf("expected %q to be secret", k)
 		}
+	}
+	if isSecretEnvKey("HTTP_ADDR") {
+		t.Fatal("HTTP_ADDR should not be secret")
 	}
 }
 
@@ -129,5 +154,56 @@ func TestParseDotEnvMergesSkipsEmpty(t *testing.T) {
 	}
 	if got["HTTP_ADDR"] != ":8081" {
 		t.Fatalf("ParseDotEnv merge = %v", got)
+	}
+}
+
+func TestParseDotEnvEmptyPathSkipped(t *testing.T) {
+	got, err := ParseDotEnv("", filepath.Join(t.TempDir(), "missing.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got=%v", got)
+	}
+}
+
+func TestParseDotEnvFileTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	data := make([]byte, maxDotEnvFileSize+1)
+	for i := range data {
+		data[i] = 'x'
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseDotEnvFile(path); err == nil {
+		t.Fatal("expected file too large error")
+	}
+}
+
+func TestParseDotEnvEmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseDotEnv(path); err == nil {
+		t.Fatal("expected empty key error")
+	}
+}
+
+func TestParseDotEnvSingleQuoted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("HTTP_ADDR=':8080'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseDotEnv(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["HTTP_ADDR"] != ":8080" {
+		t.Fatalf("HTTP_ADDR=%q", got["HTTP_ADDR"])
 	}
 }

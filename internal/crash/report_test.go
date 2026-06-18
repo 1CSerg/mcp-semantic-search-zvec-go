@@ -121,6 +121,14 @@ func TestDaemonLogDir(t *testing.T) {
 	}
 }
 
+func TestDaemonLogDirDefault(t *testing.T) {
+	t.Setenv("MCP_DAEMON_LOG_DIR", "")
+	t.Setenv("LOG_DIR", "")
+	if got := DaemonLogDir(); got != filepath.Join(".", "logs") {
+		t.Fatalf("got=%q", got)
+	}
+}
+
 func TestRedactPath(t *testing.T) {
 	if got := RedactPath(""); got != "" {
 		t.Fatalf("empty path: got=%q", got)

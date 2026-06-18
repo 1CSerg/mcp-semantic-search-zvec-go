@@ -33,10 +33,12 @@ func (s *wipeTrackingStore) WipeCollection() error {
 
 func testMigrationIdentity() IndexIdentity {
 	return IndexIdentity{
-		WorkspaceID:   "ws1",
-		WorkspaceRoot: "/proj",
-		Profile:       "smoke",
-		Dimensions:    128,
+		WorkspaceID:      "ws1",
+		WorkspaceRoot:    "/proj",
+		Profile:          "smoke",
+		Dimensions:       128,
+		ChunkingVersion:  1,
+		ChunkingStrategy: "hybrid",
 	}
 }
 
@@ -200,7 +202,9 @@ func TestResetIndexForZvecMigration(t *testing.T) {
 	if updated.ZvecGoVersion != want.ZvecGoVersion ||
 		updated.WorkspaceID != want.WorkspaceID ||
 		updated.WorkspaceRoot != want.WorkspaceRoot ||
-		updated.CollectionName != want.CollectionName {
+		updated.CollectionName != want.CollectionName ||
+		updated.ChunkingVersion != want.ChunkingVersion ||
+		updated.ChunkingStrategy != want.ChunkingStrategy {
 		t.Fatalf("meta=%+v want=%+v", updated, want)
 	}
 }

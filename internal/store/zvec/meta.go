@@ -17,6 +17,8 @@ type IndexMeta struct {
 	EmbeddingProfile     string `json:"embedding_profile"`
 	EmbeddingDimensions  int    `json:"embedding_dimensions"`
 	CollectionName       string `json:"collection_name"`
+	ChunkingVersion      int    `json:"chunking_version"`
+	ChunkingStrategy     string `json:"chunking_strategy"`
 	ZvecGoVersion        string `json:"zvec_go_version,omitempty"`
 	CreatedAt            string `json:"created_at"`
 	UpdatedAt            string `json:"updated_at"`
@@ -61,8 +63,8 @@ func WriteIndexMeta(indexDir string, meta IndexMeta) error {
 	return nil
 }
 
-// ValidateIndexMeta checks owner/profile/dimensions match.
-func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions int) error {
+// ValidateIndexMeta checks owner/profile/dimensions/chunking match.
+func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions, chunkingVersion int, chunkingStrategy string) error {
 	if !IndexMetaPresent(indexDir) {
 		return nil
 	}
@@ -79,6 +81,12 @@ func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions int) er
 	if meta.EmbeddingDimensions > 0 && dimensions > 0 && meta.EmbeddingDimensions != dimensions {
 		return fmt.Errorf("index dimensions mismatch: %d vs %d", meta.EmbeddingDimensions, dimensions)
 	}
+	if chunkingVersion > 0 && meta.ChunkingVersion != chunkingVersion {
+		return fmt.Errorf("%w: chunking_version mismatch: %d vs %d", ErrOwnerMismatch, meta.ChunkingVersion, chunkingVersion)
+	}
+	if chunkingStrategy != "" && meta.ChunkingStrategy != chunkingStrategy {
+		return fmt.Errorf("%w: chunking_strategy mismatch: %q vs %q", ErrOwnerMismatch, meta.ChunkingStrategy, chunkingStrategy)
+	}
 	return nil
 }
 
@@ -91,6 +99,8 @@ func indexMetaFromIdentity(identity IndexIdentity, zvecGoVersion string) IndexMe
 		EmbeddingProfile:     identity.Profile,
 		EmbeddingDimensions:  identity.Dimensions,
 		CollectionName:       collectionName,
+		ChunkingVersion:      identity.ChunkingVersion,
+		ChunkingStrategy:     identity.ChunkingStrategy,
 		ZvecGoVersion:        zvecGoVersion,
 	}
 }
@@ -106,33 +116,30 @@ func indexMetaIncomplete(meta *IndexMeta) bool {
 }
 
 // EnsureIndexMeta creates, validates, or backfills index_meta.json.
-func EnsureIndexMeta(indexDir, workspaceID, workspaceRoot, profile string, dimensions int) error {
-	if err := ValidateIndexMeta(indexDir, workspaceID, profile, dimensions); err != nil {
-		return err
-	}
+func EnsureIndexMeta(indexDir string, identity IndexIdentity) error {
 	if !IndexMetaPresent(indexDir) {
-		return WriteIndexMeta(indexDir, indexMetaFromIdentity(IndexIdentity{
-			WorkspaceID:   workspaceID,
-			WorkspaceRoot: workspaceRoot,
-			Profile:       profile,
-			Dimensions:    dimensions,
-		}, version.ZvecGoVersion))
+		return WriteIndexMeta(indexDir, indexMetaFromIdentity(identity, version.ZvecGoVersion))
 	}
 	meta, err := ReadIndexMeta(indexDir)
 	if err != nil {
 		return fmt.Errorf("read index_meta: %w", err)
 	}
-	if !indexMetaIncomplete(meta) {
-		return nil
+	if indexMetaIncomplete(meta) {
+		zvecGoVersion := meta.ZvecGoVersion
+		if zvecGoVersion == "" {
+			zvecGoVersion = version.ZvecGoVersion
+		}
+		return WriteIndexMeta(indexDir, indexMetaFromIdentity(identity, zvecGoVersion))
 	}
-	zvecGoVersion := meta.ZvecGoVersion
-	if zvecGoVersion == "" {
-		zvecGoVersion = version.ZvecGoVersion
+	if err := ValidateIndexMeta(
+		indexDir,
+		identity.WorkspaceID,
+		identity.Profile,
+		identity.Dimensions,
+		identity.ChunkingVersion,
+		identity.ChunkingStrategy,
+	); err != nil {
+		return err
 	}
-	return WriteIndexMeta(indexDir, indexMetaFromIdentity(IndexIdentity{
-		WorkspaceID:   workspaceID,
-		WorkspaceRoot: workspaceRoot,
-		Profile:       profile,
-		Dimensions:    dimensions,
-	}, zvecGoVersion))
+	return nil
 }

@@ -544,3 +544,23 @@ func TestRegistryReleaseDoubleRelease(t *testing.T) {
 		t.Fatalf("refs=%d want 0 after double release", refs)
 	}
 }
+
+func TestRegistryCloseHandleLockedHelpers(t *testing.T) {
+	r := NewRegistry(Config{}, t.Context())
+	defer r.Close()
+
+	r.closeHandleLocked("missing")
+
+	r.mu.Lock()
+	r.open["ws"] = &workspaceHandle{refs: 1}
+	r.mu.Unlock()
+	r.closeHandleLocked("ws")
+	r.mu.Lock()
+	if _, ok := r.open["ws"]; !ok {
+		r.mu.Unlock()
+		t.Fatal("handle should remain while refs > 0")
+	}
+	r.mu.Unlock()
+
+	r.discardHandle(nil)
+}
