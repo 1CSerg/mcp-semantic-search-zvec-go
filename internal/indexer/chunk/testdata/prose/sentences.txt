@@ -1,0 +1,5 @@
+This is a very long English sentence that should exceed a small paragraph budget when combined with the next one; it keeps going with more words to force sentence-level splitting.
+
+Это длинное русское предложение, которое также должно участвовать в разбиении по границам предложений вместе с English text.
+
+Short line.

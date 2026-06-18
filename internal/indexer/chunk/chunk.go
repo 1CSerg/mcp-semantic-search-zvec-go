@@ -133,7 +133,7 @@ func DocID(relativePath string, startLine, endLine int64, symbolName string) str
 func chunkTypeForPath(rel string) string {
 	ext := strings.ToLower(filepath.Ext(rel))
 	switch ext {
-	case ".md", ".markdown":
+	case ".md", ".markdown", ".mdc", ".txt":
 		return "markdown"
 	case ".yaml", ".yml", ".json", ".toml":
 		return "config"

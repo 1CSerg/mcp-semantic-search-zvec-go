@@ -6,10 +6,10 @@ import (
 	"sync"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
+	tree_sitter_bsl "github.com/tree-sitter/tree-sitter-bsl/bindings/go"
 	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
 	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
 	tree_sitter_python "github.com/tree-sitter/tree-sitter-python/bindings/go"
-	tree_sitter_bsl "github.com/tree-sitter/tree-sitter-bsl/bindings/go"
 	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 

@@ -1,0 +1,38 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 1,
+    "symbol_name": "",
+    "symbol_kind": "paragraph",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 99
+  },
+  {
+    "start_line": 1,
+    "end_line": 1,
+    "symbol_name": "",
+    "symbol_kind": "paragraph",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 83
+  },
+  {
+    "start_line": 3,
+    "end_line": 3,
+    "symbol_name": "",
+    "symbol_kind": "paragraph",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 99
+  },
+  {
+    "start_line": 3,
+    "end_line": 5,
+    "symbol_name": "",
+    "symbol_kind": "paragraph",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 55
+  }
+]

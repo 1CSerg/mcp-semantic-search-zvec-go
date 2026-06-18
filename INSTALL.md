@@ -97,7 +97,7 @@ If merge dependencies are missing and `config.yaml` already exists, install **pr
 
 After moving the project to a new path, call MCP `reindex` with `force: true`, use the Windows GUI force rebuild action, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
 
-**Hybrid chunking upgrade:** after updating to a server with hybrid chunking config (or switching to a `treesitter` build), run MCP `reindex` with `force: true` so `symbol_name`, `parent_scope`, `chunk_strategy`, and `chunking_version` in `index_meta.json` match the new pipeline. Shipped install binary (`-tags "zvec,onnx"`) still indexes all extensions via `line_window`; AST fields appear only after reindex with a `treesitter` binary.
+**Hybrid chunking upgrade:** after updating to a server with hybrid chunking config (or switching to a `treesitter` build), run MCP `reindex` with `force: true` so `symbol_name`, `parent_scope`, `chunk_strategy`, and `chunking_version` in `index_meta.json` match the new pipeline. Shipped install binary (`-tags "zvec,onnx"`) indexes `.md`, `.markdown`, `.mdc`, `.txt` via the prose chunker; code extensions via `line_window`; AST fields on code appear only after reindex with a `treesitter` binary.
 
 ## Configure secrets
 
@@ -259,7 +259,7 @@ Plain `go build` without tags produces a **stub** binary (no zvec/ONNX — seman
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
 make fetch-zvec-libs
-make build-zvec    # -tags "zvec,onnx" — line_window for all files
+make build-zvec    # -tags "zvec,onnx" — prose for .md/.txt; line_window for code without treesitter
 ```
 
 For **AST hybrid chunking** on enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, **1C** `.bsl`/`.os` via tree-sitter-bsl; `.dcs` SDBL query blocks when `languages.bsl.include_sdbl: true` — heuristic, not tree-sitter), build locally with `-tags "zvec,onnx,treesitter"` — not included in current Release/install builds.

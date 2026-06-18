@@ -1,0 +1,12 @@
+---
+description: Test cursor rule
+globs: "*.go"
+---
+
+# Agent Rule
+
+Use semantic search first.
+
+When the user sends `<user_query>`, follow instructions.
+
+Plain text tail.

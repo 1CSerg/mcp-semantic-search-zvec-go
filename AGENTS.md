@@ -43,7 +43,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 - `limit` (integer, default 10) — число результатов; опционально `path_glob`.
 - Пример: `{"query": "authentication middleware", "limit": 15}`.
 
-**Поля результатов** (после hybrid reindex; в legacy-индексе могут быть пустыми): `symbol_name`, `symbol_kind`, `parent_scope`, `chunk_strategy` — см. [docs/API.md](docs/API.md#post-v1search). `snippet` — исходный код без embed-префикса.
+**Поля результатов** (после hybrid reindex; в legacy-индексе могут быть пустыми): `symbol_name`, `symbol_kind`, `parent_scope`, `chunk_strategy` — см. [docs/API.md](docs/API.md#post-v1search). Prose (`.md`, `.markdown`, `.mdc`, `.txt`): `chunk_strategy: prose`, `symbol_kind` e.g. `section`/`paragraph` — без `treesitter`. `snippet` — исходный код без embed-префикса.
 
 ## HTTP API
 
@@ -75,7 +75,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | Empty search, indexing idle | `reindex`; check `index_status` |
 | `embedding failed: dimension mismatch: got N want M` | Check `dimensions` in the active profile matches the model (MRL models need server v0.1.8+ which sends `dimensions` to the API); run `reindex` with `force: true` after fixing |
 | `index_status.message`: workspace path changed (misleading) | Check `identity_mismatch_reason` — often profile/dimensions/**chunking_version** changed, not path; `reindex` with `force: true` |
-| Hybrid chunking: пустые `symbol_*` / `chunk_strategy` в поиске | Shipped binary без `treesitter` индексирует **все** расширения через `line_window`; для AST-полей — `treesitter`-сборка + `reindex` `force: true`. Смена `chunking.strategy` / `chunking.version` / `languages.*` — тоже `reindex` `force: true` |
+| Hybrid chunking: пустые `symbol_*` / `chunk_strategy` в поиске | Shipped binary без `treesitter`: код → `line_window`; `.md`/`.markdown`/`.mdc`/`.txt` → prose (`chunk_strategy: prose`). Для AST-полей на коде — `treesitter`-сборка + `reindex` `force: true`. Смена `chunking.strategy` / `chunking.version` / `languages.*` / `prose_overlap_ratio` — тоже `reindex` `force: true` |
 | 1C BSL: нет `procedure`/`function` в поиске; `.dcs` только `line_window` | Нужен бинарник `-tags "zvec,onnx,treesitter"`, `languages.bsl.enabled: true`; для SDBL-запросов — `include_sdbl: true` (эвристика, не tree-sitter). После смены — `reindex` `force: true` |
 | `identity_mismatch` / `chunking_version mismatch` | MCP `reindex` with `force: true`. Native `AUTO_INDEX_ON_START=true` — на следующем старте; shared daemon — вручную |
 | `zvec_open_ok: false`, LOCK error, `zvec_doc_count: 0` | Duplicate `--stdio` processes — restart Cursor; check `index_status.diagnostics`; re-run install; `reindex` with `force: true` if needed |

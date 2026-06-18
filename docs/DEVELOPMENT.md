@@ -10,7 +10,7 @@
 
 ## Clone and build
 
-Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"` — то же, что GitHub Release и install). Для **AST hybrid chunking** (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) нужна отдельная сборка `-tags "zvec,onnx,treesitter"` (см. [tree-sitter](#tree-sitter-hybrid-ast-chunking)); без `treesitter` даже при `strategy: hybrid` все файлы идут через `line_window`.
+Первый `go build` без тегов — **stub** (unit tests, health/status; без zvec и ONNX). Для семантического поиска: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"` — то же, что GitHub Release и install). Для **AST hybrid chunking** (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) нужна отдельная сборка `-tags "zvec,onnx,treesitter"` (см. [tree-sitter](#tree-sitter-hybrid-ast-chunking)); без `treesitter` при `strategy: hybrid` кодовые расширения идут через `line_window`, а `.md`/`.markdown`/`.mdc`/`.txt` — через **prose** chunker.
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
@@ -83,6 +83,7 @@ internal/
   embeddings/                       # openai_compatible, onnx
   indexer/                          # scan, chunk, coordinator
     chunk/                          # ChunkRouter, line_window, ProcessBatches
+      prose/                        # Markdown/plain prose chunker (Phase 1e)
       ast/                          # cAST engine, tree-sitter (build tag treesitter)
   watcher/                          # fsnotify + polling
   logging/                          # file log rotation
@@ -106,7 +107,7 @@ Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go)
 | Command | Tags | Result |
 |---------|------|--------|
 | `go test ./...` | default (`!zvec`) | Stub store, no native deps |
-| `make build-zvec` | `zvec,onnx` | **Shipped** production binary (Release, install scripts): zvec + ONNX; hybrid config without AST |
+| `make build-zvec` | `zvec,onnx` | **Shipped** production binary (Release, install scripts): zvec + ONNX; hybrid prose + `line_window` fallback for code without AST |
 | `go build -tags "zvec,onnx,treesitter"` | `zvec,onnx,treesitter` | Full hybrid: enabled languages → AST (go, python, javascript, typescript/tsx, bsl) |
 | `go test -tags "zvec,treesitter" ./internal/indexer/chunk/...` | `zvec,treesitter` | AST chunking tests (CGO + tree-sitter) |
 | `make test-integration` | `integration,zvec` | Spike gate tests |
@@ -127,8 +128,8 @@ AST chunking uses [go-tree-sitter](https://github.com/tree-sitter/go-tree-sitter
 | Build | Tags | Behavior |
 |-------|------|----------|
 | Stub | (none) | No zvec, no AST; `ast.ChunkLanguage` returns `ErrNotImplemented` |
-| Shipped / Release / install | `zvec,onnx` or `zvec,!treesitter` | All files use `line_window` (router falls back when AST unavailable) |
-| Full hybrid (local/CI) | `zvec,onnx,treesitter` | Hybrid: enabled languages (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) → AST cAST; `.dcs` query blocks when `bsl.include_sdbl`; others → `line_window` |
+| Shipped / Release / install | `zvec,onnx` or `zvec,!treesitter` | Prose extensions (`.md`, `.markdown`, `.mdc`, `.txt`) → prose chunker; code extensions → `line_window` when AST unavailable |
+| Full hybrid (local/CI) | `zvec,onnx,treesitter` | Prose extensions → prose; enabled code langs (`.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.bsl`, `.os`) → AST cAST; `.dcs` query blocks when `bsl.include_sdbl`; others → `line_window` |
 
 Verify CGO + grammar linkage (spike gate):
 
@@ -296,7 +297,7 @@ Collection name: `ws_<sha256(workspace:profile:dims)[:16]>`. Fields:
 | `path` | string |
 | `start_line` | int64 |
 | `end_line` | int64 |
-| `chunk_type` | string | `code` (default) or `query` for SDBL query text (heuristic chunker — not tree-sitter) |
+| `chunk_type` | string | `code` (default AST/line_window), **`markdown`** for prose (`.md`, `.markdown`, `.mdc`, `.txt`), or **`query`** for SDBL query text (heuristic chunker — not tree-sitter) |
 | `name` | string |
 | `snippet` | string |
 | `symbol_name` | string |
@@ -305,7 +306,7 @@ Collection name: `ws_<sha256(workspace:profile:dims)[:16]>`. Fields:
 | `chunk_strategy` | string |
 | `embedding` | vector fp32, N = profile dimensions |
 
-Hybrid AST chunks populate `symbol_*`, `parent_scope`, and `chunk_strategy` (`ast`, `partial`, or `line_window`). SDBL query chunks (`.dcs` `<query>` blocks, embedded BSL strings) set `chunk_type: query` and `symbol_kind: query` via the **heuristic** SDBL chunker — BSL itself uses **tree-sitter-bsl**. Legacy indexes may leave the four symbol fields empty until `reindex` with `force: true`.
+Hybrid AST chunks populate `symbol_*`, `parent_scope`, and `chunk_strategy` (`ast`, `partial`, or `line_window`). **Prose** chunks (`.md`, `.markdown`, `.mdc`, `.txt`) set `chunk_type: markdown`, `chunk_strategy: prose` or `partial`, `symbol_kind` e.g. `section`, `paragraph` — works without `treesitter`. SDBL query chunks (`.dcs` `<query>` blocks, embedded BSL strings) set `chunk_type: query` and `symbol_kind: query` via the **heuristic** SDBL chunker — BSL itself uses **tree-sitter-bsl**. Legacy indexes may leave symbol fields empty until `reindex` with `force: true`.
 
 ## Cross-compile
 

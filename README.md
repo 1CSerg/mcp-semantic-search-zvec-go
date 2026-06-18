@@ -10,7 +10,7 @@
 
 ## Quick start (разработка)
 
-Первый `go build` без тегов — **stub** (без zvec/ONNX, поиск не работает). Для production-поведения как в Release/install: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"`). AST-разбиение по функциям/классам/методам для `.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, **1C** `.bsl`/`.os` (tree-sitter-bsl) и SDBL-запросов в `.dcs`/встроенных строках (эвристика) — только бинарник с `-tags "zvec,onnx,treesitter"`; см. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+Первый `go build` без тегов — **stub** (без zvec/ONNX, поиск не работает). Для production-поведения как в Release/install: `make fetch-zvec-libs && make build-zvec` (`-tags "zvec,onnx"`). При `strategy: hybrid` shipped-бинарник индексирует `.md`/`.markdown`/`.mdc`/`.txt` через **prose** chunker; AST-разбиение по функциям/классам/методам для `.go`, `.py`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, **1C** `.bsl`/`.os` (tree-sitter-bsl) и SDBL-запросов в `.dcs`/встроенных строках (эвристика) — только бинарник с `-tags "zvec,onnx,treesitter"`; см. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ```bash
 git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
@@ -51,7 +51,7 @@ curl http://127.0.0.1:8080/health
 
 ## Статус
 
-**v0.1.8** — MRL `dimensions` в embed API, interrupted indexing resume в GUI, shared-daemon registry lifecycle и open-daemon path redaction, `indexing.failed_files` / `diagnostics.log_file`. **Hybrid chunking:** shipped Release/install — `-tags "zvec,onnx"` (все расширения через `line_window`); полный AST hybrid (Phase 1b Go + **Phase 1c** Python/JS/TS + **Phase 1d** 1C BSL/SDBL) — `-tags "zvec,onnx,treesitter"`. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
+**v0.1.8** — MRL `dimensions` в embed API, interrupted indexing resume в GUI, shared-daemon registry lifecycle и open-daemon path redaction, `indexing.failed_files` / `diagnostics.log_file`. **Hybrid chunking:** shipped Release/install — `-tags "zvec,onnx"` (prose для `.md`/`.txt`; код без `treesitter` → `line_window`); полный AST hybrid (Phase 1b Go + **Phase 1c** Python/JS/TS + **Phase 1d** 1C BSL/SDBL + **Phase 1e** prose Markdown) — `-tags "zvec,onnx,treesitter"`. **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
 
 ## Лицензия
 

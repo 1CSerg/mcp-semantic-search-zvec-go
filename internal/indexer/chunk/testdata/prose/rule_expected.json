@@ -1,0 +1,20 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 4,
+    "symbol_name": "",
+    "symbol_kind": "section",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 51
+  },
+  {
+    "start_line": 6,
+    "end_line": 12,
+    "symbol_name": "Agent Rule",
+    "symbol_kind": "section",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 116
+  }
+]

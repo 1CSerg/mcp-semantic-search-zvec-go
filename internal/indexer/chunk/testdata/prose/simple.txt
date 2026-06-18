@@ -1,0 +1,5 @@
+First paragraph with English text about indexing.
+
+Second paragraph continues the topic with more detail.
+
+Third paragraph adds overlap testing with alpha beta gamma delta.

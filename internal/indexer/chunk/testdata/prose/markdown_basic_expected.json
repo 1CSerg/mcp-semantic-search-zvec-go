@@ -1,0 +1,29 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 3,
+    "symbol_name": "Main Title",
+    "symbol_kind": "section",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 51
+  },
+  {
+    "start_line": 5,
+    "end_line": 7,
+    "symbol_name": "Section Two",
+    "symbol_kind": "section",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 70
+  },
+  {
+    "start_line": 9,
+    "end_line": 11,
+    "symbol_name": "Subsection",
+    "symbol_kind": "section",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 36
+  }
+]

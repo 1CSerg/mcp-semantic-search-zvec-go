@@ -14,12 +14,13 @@ type Options struct {
 	StreamThresholdBytes int64
 	MaxLineBytes         int64
 
-	ChunkingStrategy string
-	MinChunkTokens   int
-	ContextPrefix    bool
-	MaxInputTokens   int
-	EmbedBudgetRatio float64
-	Languages        map[string]config.LanguageConfig
+	ChunkingStrategy  string
+	MinChunkTokens    int
+	ProseOverlapRatio float64
+	ContextPrefix     bool
+	MaxInputTokens    int
+	EmbedBudgetRatio  float64
+	Languages         map[string]config.LanguageConfig
 }
 
 // OptionsFromConfig builds chunk.Options from indexing config and the active embedding profile.
@@ -43,6 +44,7 @@ func OptionsFromConfig(idx config.IndexingConfig, profile config.EmbeddingProfil
 		MaxLineBytes:         idx.MaxLineBytes,
 		ChunkingStrategy:     idx.Chunking.Strategy,
 		MinChunkTokens:       idx.Chunking.MinChunkTokens,
+		ProseOverlapRatio:    idx.Chunking.ProseOverlapRatio,
 		ContextPrefix:        idx.Chunking.ContextPrefix,
 		MaxInputTokens:       profile.MaxInputTokens,
 		EmbedBudgetRatio:     profile.EmbedBudgetRatio,

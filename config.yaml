@@ -198,8 +198,8 @@ indexing:
   stream_chunk_threshold_bytes: 262144
   # Максимальная длина одной строки (байты); 0 — без лимита.
   max_line_bytes: 1048576
-  # Гибридный AST-чанкинг (Phase 1b: Go; Phase 1c: python/javascript/typescript; bsl — Phase 1d).
-  # Shipped install binary (-tags zvec,onnx): все расширения через line_window; AST нужен treesitter-сборка.
+  # Гибридный AST-чанкинг (Phase 1b: Go; Phase 1c: python/javascript/typescript; Phase 1d: bsl; Phase 1e: prose .md/.txt).
+  # Shipped install binary (-tags zvec,onnx): .md/.markdown/.mdc/.txt → prose; код без treesitter → line_window.
   chunking:
     # hybrid | line_window (line_window — legacy slideWindow)
     strategy: hybrid
@@ -207,7 +207,7 @@ indexing:
     version: 1
     size_metric: tokens
     min_chunk_tokens: 10
-    prose_overlap_ratio: 0.12
+    prose_overlap_ratio: 0.12  # overlap между соседними prose-чанками (Phase 1e)
     context_prefix: false
     line_window:
       window_lines: 40

@@ -1,0 +1,92 @@
+[
+  {
+    "start_line": 1,
+    "end_line": 3,
+    "symbol_name": "Code Examples",
+    "symbol_kind": "section",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 36
+  },
+  {
+    "start_line": 5,
+    "end_line": 9,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 49
+  },
+  {
+    "start_line": 11,
+    "end_line": 11,
+    "symbol_name": "",
+    "symbol_kind": "paragraph",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 38
+  },
+  {
+    "start_line": 13,
+    "end_line": 17,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "partial",
+    "chunk_type": "markdown",
+    "token_count": 31
+  },
+  {
+    "start_line": 17,
+    "end_line": 21,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "partial",
+    "chunk_type": "markdown",
+    "token_count": 29
+  },
+  {
+    "start_line": 21,
+    "end_line": 25,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "partial",
+    "chunk_type": "markdown",
+    "token_count": 32
+  },
+  {
+    "start_line": 25,
+    "end_line": 29,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "partial",
+    "chunk_type": "markdown",
+    "token_count": 34
+  },
+  {
+    "start_line": 29,
+    "end_line": 33,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "partial",
+    "chunk_type": "markdown",
+    "token_count": 34
+  },
+  {
+    "start_line": 33,
+    "end_line": 34,
+    "symbol_name": "",
+    "symbol_kind": "code_block",
+    "chunk_strategy": "partial",
+    "chunk_type": "markdown",
+    "token_count": 10
+  },
+  {
+    "start_line": 36,
+    "end_line": 36,
+    "symbol_name": "",
+    "symbol_kind": "paragraph",
+    "chunk_strategy": "prose",
+    "chunk_type": "markdown",
+    "token_count": 17
+  }
+]

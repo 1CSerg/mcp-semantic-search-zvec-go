@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/prose"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
@@ -77,9 +78,14 @@ func ProcessBatches(root, relativePath string, opts Options, counter token.Token
 	emit := func(ch *zvec.Chunk) error { return coll.add(ch) }
 	router := NewChunkRouter()
 
-	useStreaming := info.Size() > threshold && !hybridASTPath(relativePath, opts)
+	useStreaming := info.Size() > threshold && !hybridASTPath(relativePath, opts) && !hybridProsePath(relativePath, opts)
 	if useStreaming {
 		if err := streamChunkBatched(abs, relativePath, opts, coll); err != nil {
+			return coll.totalChunks(), err
+		}
+	} else if info.Size() > threshold && hybridProsePath(relativePath, opts) {
+		proseEmit := func(ch *zvec.Chunk) error { return emit(ch) }
+		if err := prose.StreamBatched(abs, relativePath, proseConfig(opts), counter, proseEmit); err != nil {
 			return coll.totalChunks(), err
 		}
 	} else {

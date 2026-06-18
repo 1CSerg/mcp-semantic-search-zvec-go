@@ -26,6 +26,12 @@ func TestChunkTypeForPath(t *testing.T) {
 	if chunkTypeForPath("a.md") != "markdown" {
 		t.Fatal("md")
 	}
+	if chunkTypeForPath("a.mdc") != "markdown" {
+		t.Fatal("mdc")
+	}
+	if chunkTypeForPath("a.txt") != "markdown" {
+		t.Fatal("txt")
+	}
 	if chunkTypeForPath("a.go") != "code" {
 		t.Fatal("go")
 	}

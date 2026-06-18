@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/ast"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/prose"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
@@ -38,6 +39,10 @@ func (r *ChunkRouter) ChunkFile(relativePath string, content []byte, opts Option
 	content = prepareContent(content)
 	if opts.ChunkingStrategy == "line_window" {
 		return FileChunksEmit(relativePath, content, opts, emit)
+	}
+	if prose.IsProsePath(relativePath) && proseStrategy(opts) {
+		proseEmit := func(ch *zvec.Chunk) error { return emit(ch) }
+		return prose.ChunkFile(relativePath, content, proseConfig(opts), counter, proseEmit)
 	}
 	ext := strings.ToLower(filepath.Ext(relativePath))
 	if ext == ".dcs" && opts.bslIncludeSDBL() {
@@ -121,6 +126,27 @@ func emitDCSQueryLineWindowFallback(relativePath string, q ast.DCSQuery, parentS
 		}
 		return emit(ch)
 	})
+}
+
+func proseStrategy(opts Options) bool {
+	s := strings.ToLower(opts.ChunkingStrategy)
+	return s == "hybrid" || s == "prose"
+}
+
+func proseConfig(opts Options) prose.Config {
+	return prose.ConfigFromOptions(
+		opts.MaxInputTokens,
+		opts.EmbedBudgetRatio,
+		opts.ProseOverlapRatio,
+		opts.ContextPrefix,
+		opts.MinChunkTokens,
+		opts.WindowLines,
+		opts.OverlapLines,
+	)
+}
+
+func hybridProsePath(relativePath string, opts Options) bool {
+	return prose.IsProsePath(relativePath) && proseStrategy(opts)
 }
 
 func shouldFallbackToLineWindow(err error) bool {

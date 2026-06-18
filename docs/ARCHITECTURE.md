@@ -79,7 +79,7 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 | `internal/transport/http` | REST v1, `/health`, `/ready` |
 | `internal/service` | Core API |
 | `internal/indexer` | Scan, chunk, background jobs |
-| `internal/indexer/chunk` | `ChunkRouter`, `line_window`, `ProcessBatches`; `ast/` (build tag `treesitter`) |
+| `internal/indexer/chunk` | `ChunkRouter`, `line_window`, `ProcessBatches`; `prose/`; `ast/` (build tag `treesitter`) |
 | `internal/embeddings` | `openai_compatible`, `onnx` |
 | `internal/store/zvec` | zvec-go wrapper |
 | `internal/store/manifest` | SQLite per-file manifest |
@@ -138,6 +138,7 @@ When `indexing.chunking.strategy` is `hybrid` (default), file splitting goes thr
 ```mermaid
 flowchart LR
   File[File bytes] --> Router[ChunkRouter]
+  Router -->|".md .markdown .mdc .txt" + hybrid/prose strategy| Prose[prose chunker]
   Router -->|".go .py .js .jsx .mjs .cjs .ts .tsx .bsl .os" + lang enabled + treesitter build| AST[cAST / tree-sitter]
   Router -->|".dcs" + bsl.include_sdbl| DCS[DCS query regex extract]
   DCS --> SDBL[heuristic SDBL chunker]
@@ -145,9 +146,11 @@ flowchart LR
   AST -->|embedded BSL query strings + include_sdbl| SDBL
   AST -->|oversized leaf / parse errors| LW
   SDBL -->|oversized query| LW
+  Prose -->|oversized segment| LW
   Router --> Emit[emit callback]
   LW --> Emit
   SDBL --> Emit
+  Prose --> Emit
   Emit --> Batch[batchCollector.add]
   Batch --> Emb[Embeddings]
   Emb --> Zvec[zvec UpsertChunks]
@@ -156,11 +159,12 @@ flowchart LR
 1. **`Coordinator.indexFile`** loads the active embedding profile (`max_input_tokens`, `embed_budget_ratio`), builds a `TokenCounter`, and passes `chunk.Options` into **`ProcessBatches`**.
 2. **`ChunkRouter.ChunkFile`** chooses the strategy:
    - `strategy: line_window` → `line_window` for every file.
+   - `hybrid` or `prose` + **prose extension** (`.md`, `.markdown`, `.mdc`, `.txt`) → **`prose.ChunkFile`** / **`prose.StreamBatched`** (no tree-sitter; works in shipped binary). Sets `chunk_strategy: prose` or `partial`, `chunk_type: markdown`, `symbol_kind` e.g. `section`, `paragraph`.
    - `hybrid` + AST extension + matching `languages.*.enabled` → **`ast.ChunkLanguage`** when the binary includes build tag **`treesitter`**; otherwise transparent fallback to `line_window` (`ErrNotImplemented`).
    - **1C BSL** (`.bsl`, `.os`) with `languages.bsl.enabled` → **`tree-sitter-bsl`** AST (procedures, functions, regions, module vars). With `languages.bsl.include_sdbl`, embedded query strings in BSL are stripped (`|` prefixes, quotes) and passed to the **heuristic SDBL chunker** (not tree-sitter).
    - **`.dcs`** (Data Composition Schema): when `include_sdbl: true`, the router regex-extracts `<query>...</query>` blocks → heuristic SDBL chunker (`chunk_type: query`); remaining XML → `line_window`. Without `include_sdbl`, `.dcs` is `line_window` only.
    - Extensions without a registered grammar (e.g. `.mdo`) → `line_window`.
-3. **Streaming vs whole-file read:** files larger than `stream_chunk_threshold_bytes` normally use streaming `line_window`. **Exception:** any hybrid AST path (`hybridASTPath`) — including `.bsl`, `.os`, and `.dcs` when `languages.bsl.include_sdbl` — always reads the file whole (up to `max_file_bytes`) so tree-sitter (BSL) or DCS query extraction can run in memory.
+3. **Streaming vs whole-file read:** files larger than `stream_chunk_threshold_bytes` normally use streaming `line_window`. **Exceptions:** (1) hybrid AST paths (`hybridASTPath`) — including `.bsl`, `.os`, and `.dcs` when `languages.bsl.include_sdbl` — read the file whole (up to `max_file_bytes`) for tree-sitter or DCS query extraction; (2) **prose paths** (`hybridProsePath`) — large `.md`/`.txt` files use `prose.StreamBatched`, not line streaming.
 
 **ExtToLang / parser mapping** (`internal/indexer/chunk/router.go`):
 
@@ -183,7 +187,7 @@ Config key `languages.typescript.enabled` also enables `.jsx` and `.tsx` (router
 6. **Partial fallback:** oversized AST nodes split via `line_window` inside the parent scope; `chunk_strategy: partial`.
 7. **Identity:** `index_meta.json` stores `chunking_version` / `chunking_strategy`; mismatch → `identity_mismatch` → `reindex` with `force: true`.
 
-Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`, so step 2 always falls back to `line_window` for all extensions. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
+Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`: prose extensions still use the prose chunker; code extensions fall back to `line_window`. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
 
 ## Resilience
 
