@@ -9,6 +9,7 @@ Purpose-based layout for install, dependency fetch, contributor tooling, phase g
 | **fetch/** | One-time native deps (zvec, ONNX runtime, model bundle, tree-sitter verify) | `fetch-zvec-libs.*`, `fetch-onnx-runtime.*`, `fetch-onnx-model.*`, `fetch-tree-sitter-grammars.*` |
 | **dev/** | Contributors: hooks, coverage, Windows zvec build | `setup-git-hooks.*`, `check-coverage.*`, `git-add.sh`, `build-zvec-windows.ps1`, `build-release.*` |
 | **smoke/** | Phase gate tests (`make smoke-phaseN`) | `run-phase1.*` … `run-phase5.*`, `run-phase5-docker.*`, `run-mcp-staging-multi-windows.ps1`, fixtures |
+| **realworld/** | Manual E2E harness (`make test-realworld`) — **not CI** | `setup-harness.*`, `run-all.*`; fixtures in `tests/realworld/` |
 | **spike/** | Docker zvec integration (optional manual check) | `run-docker.sh`, `run-docker-inner.sh` |
 | **lib/** | Shared shell helpers | `normalize-eol.sh` |
 
@@ -31,6 +32,10 @@ bash scripts/fetch/fetch-tree-sitter-grammars.sh
 # Phase gate smokes (Linux/macOS)
 make smoke-phase1   # … through smoke-phase5
 
+# Realworld manual E2E (not CI; ONNX offline)
+make test-realworld
+make test-realworld-lmstudio   # needs LM Studio on :1234
+
 # Coverage gate
 make test-cover-check
 ```
@@ -46,7 +51,20 @@ make test-cover-check
 .\scripts\smoke\run-mcp-staging-multi-windows.ps1
 .\scripts\smoke\run-phase5-docker.ps1
 .\scripts\dev\check-coverage.ps1
+.\scripts\realworld\run-all.ps1 -Profile onnx
 ```
+
+## Realworld harness
+
+Extended manual E2E tests with a full multi-language corpus, MCP stdio subprocess, chunking assertions, and install-layout smoke. **Not** run in CI or pre-commit.
+
+```bash
+make test-realworld              # ONNX local_multilingual
+make test-realworld-lmstudio     # lmstudio_qwen (skips if LM Studio down)
+bash scripts/realworld/run-all.sh --profile onnx --run TestHTTP
+```
+
+Prerequisites: same as `make build-zvec` (CGO, zvec libs, ONNX runtime; ONNX model fetched by `setup-harness`). Runtime tree: `.realworld/` (gitignored). See [tests/realworld/README.md](../tests/realworld/README.md).
 
 ## fetch-tree-sitter-grammars
 

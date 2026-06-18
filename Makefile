@@ -1,4 +1,4 @@
-.PHONY: build build-zvec build-release fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4 smoke-phase5 smoke-phase5-docker smoke-staging-multi-windows
+.PHONY: build build-zvec build-release fetch-zvec-libs fetch-onnx-model fetch-onnx-runtime test test-integration test-cover test-cover-check test-realworld test-realworld-lmstudio lint fmt clean run-http run-stdio setup-hooks seed-index copy-zvec-runtime smoke-phase1 smoke-phase2 smoke-phase3 smoke-phase4 smoke-phase5 smoke-phase5-docker smoke-staging-multi-windows
 
 BINARY := mcp-semantic-search-zvec-go
 CMD := ./cmd/mcp-semantic-search-zvec-go
@@ -91,6 +91,12 @@ test-cover:
 
 test-cover-check:
 	COVERAGE_MIN=$(COVERAGE_MIN) COVERAGE_PKG_MIN=$(COVERAGE_PKG_MIN) COVERAGE_PACKAGES="$(COVERAGE_PACKAGES)" bash scripts/dev/check-coverage.sh
+
+test-realworld: build-zvec
+	bash scripts/realworld/run-all.sh --profile onnx
+
+test-realworld-lmstudio: build-zvec
+	bash scripts/realworld/run-all.sh --profile lmstudio
 
 lint:
 	@which golangci-lint >/dev/null 2>&1 || (echo "install golangci-lint for lint target" && exit 1)

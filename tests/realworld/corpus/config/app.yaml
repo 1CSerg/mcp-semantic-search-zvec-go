@@ -1,0 +1,6 @@
+# REALWORLD_YAML_CONFIG application settings for line_window chunking.
+app:
+  name: realworld-corpus
+  log_level: info
+server:
+  port: 8080

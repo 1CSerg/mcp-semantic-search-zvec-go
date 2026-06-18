@@ -46,6 +46,9 @@ Thumbs.db
 # BEGIN mcp-semantic-search-zvec-go
 .mcp-semantic-search-zvec-go/
 # END mcp-semantic-search-zvec-go
+
+# Realworld manual E2E harness runtime (see tests/realworld/README.md)
+.realworld/
 /cover
 /docs/issue/*
 /docs/todo/*

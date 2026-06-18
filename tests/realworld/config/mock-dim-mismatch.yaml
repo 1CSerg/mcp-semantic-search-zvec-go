@@ -1,0 +1,30 @@
+# Realworld harness — dimension mismatch (E2): profile expects 384, mock returns 128.
+active_profile: mock_mismatch
+
+profiles:
+  mock_mismatch:
+    description: Mock embed with wrong dimensions
+    provider: openai_compatible
+    model: mock-embed
+    base_url: http://127.0.0.1:MOCK_PORT/v1
+    dimensions: 384
+    batch_size: 4
+    timeout_seconds: 10
+
+indexing:
+  extensions: [".go", ".md"]
+  skip_dirs: [".git", ".deps", ".realworld", ".mcp-semantic-search-zvec-go"]
+  chunking:
+    strategy: hybrid
+    version: 1
+    languages:
+      go: { enabled: true }
+
+file_watcher:
+  enabled: false
+
+logging:
+  level: info
+
+server:
+  http_addr: "127.0.0.1:8080"

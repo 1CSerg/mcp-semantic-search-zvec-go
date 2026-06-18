@@ -1,0 +1,6 @@
+Realworld corpus notes
+======================
+
+REALWORLD_TXT_PARAGRAPH — plain-text documentation used to verify prose chunking without markdown structure.
+
+Additional paragraphs may follow for overlap testing in future scenarios.

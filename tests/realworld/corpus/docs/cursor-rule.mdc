@@ -1,0 +1,9 @@
+---
+description: Realworld corpus cursor rule fixture
+---
+
+# Semantic search rule
+
+REALWORLD_MDC_RULE — agent guidance for exploring this test corpus via MCP semantic search.
+
+Use natural-language queries against authentication and handler modules.

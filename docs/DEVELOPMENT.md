@@ -376,6 +376,20 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 
 Использование MCP в **целевом проекте пользователя** (install, tools, troubleshooting): [AGENTS.md](../AGENTS.md).
 
+## Realworld harness (manual E2E)
+
+Расширенные E2E-сценарии «как в проде» — **не** входят в `go test ./...`, CI и pre-commit.
+
+```bash
+make test-realworld              # ONNX offline (local_multilingual)
+make test-realworld-lmstudio     # lmstudio_qwen; skip если LM Studio недоступен
+bash scripts/realworld/run-all.sh --profile onnx --run TestChunking
+```
+
+Windows: `.\scripts\realworld\run-all.ps1 -Profile onnx`
+
+Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model подтягивается `setup-harness`. Ephemeral install tree: `.realworld/` (gitignored). Корпус: `tests/realworld/corpus/`. Подробнее: [tests/realworld/README.md](../tests/realworld/README.md).
+
 ## Versions
 
 ### MCP server

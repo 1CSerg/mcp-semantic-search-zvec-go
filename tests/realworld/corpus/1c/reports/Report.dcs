@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DataCompositionSchema>
+  <name>RealworldReport</name>
+  <query>ВЫБРАТЬ
+    Номенклатура.Наименование,
+    СУММА(Остатки.Количество) КАК Остаток
+  ИЗ
+    РегистрНакопления.ОстаткиНаСкладах КАК Остатки
+  ГДЕ
+    Остатки.Количество &gt; 0
+  -- REALWORLD_SDBL_SELECT inventory balance query
+  СГРУППИРОВАТЬ ПО
+    Номенклатура.Наименование</query>
+  <field name="Ref"/>
+</DataCompositionSchema>

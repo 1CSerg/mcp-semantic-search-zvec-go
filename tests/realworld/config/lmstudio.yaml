@@ -1,0 +1,73 @@
+# Realworld harness — LM Studio lmstudio_qwen profile.
+active_profile: lmstudio_qwen
+
+profiles:
+  lmstudio_qwen:
+    description: LM Studio — text-embedding-qwen3-embedding-0.6b
+    provider: openai_compatible
+    model: text-embedding-qwen3-embedding-0.6b
+    base_url: http://127.0.0.1:1234/v1
+    dimensions: 1024
+    max_input_tokens: 512
+    embed_budget_ratio: 0.50
+    batch_size: 10
+    timeout_seconds: 200
+
+indexing:
+  extensions:
+    - .py
+    - .go
+    - .js
+    - .jsx
+    - .mjs
+    - .cjs
+    - .ts
+    - .tsx
+    - .md
+    - .markdown
+    - .mdc
+    - .txt
+    - .yaml
+    - .yml
+    - .sql
+    - .sh
+    - .java
+    - .bsl
+    - .os
+    - .dcs
+  skip_dirs:
+    - .git
+    - .deps
+    - node_modules
+    - vendor
+    - .realworld
+    - .mcp-semantic-search-zvec-go
+  chunking:
+    strategy: hybrid
+    version: 1
+    size_metric: tokens
+    min_chunk_tokens: 10
+    prose_overlap_ratio: 0.12
+    context_prefix: false
+    line_window:
+      window_lines: 40
+      overlap_lines: 8
+    languages:
+      go: { enabled: true }
+      python: { enabled: true }
+      javascript: { enabled: true }
+      typescript: { enabled: true }
+      bsl: { enabled: true, include_sdbl: true }
+
+search:
+  slow_threshold_seconds: 30.0
+
+file_watcher:
+  enabled: false
+  backend: polling
+
+logging:
+  level: info
+
+server:
+  http_addr: "127.0.0.1:8080"

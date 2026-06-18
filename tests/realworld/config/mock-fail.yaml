@@ -1,0 +1,30 @@
+# Realworld harness — mock embedding server unreachable (E1).
+active_profile: mock_fail
+
+profiles:
+  mock_fail:
+    description: Unreachable embedding API for failure scenarios
+    provider: openai_compatible
+    model: mock-embed
+    base_url: http://127.0.0.1:19998/v1
+    dimensions: 128
+    batch_size: 4
+    timeout_seconds: 5
+
+indexing:
+  extensions: [".go", ".md"]
+  skip_dirs: [".git", ".deps", ".realworld", ".mcp-semantic-search-zvec-go"]
+  chunking:
+    strategy: hybrid
+    version: 1
+    languages:
+      go: { enabled: true }
+
+file_watcher:
+  enabled: false
+
+logging:
+  level: info
+
+server:
+  http_addr: "127.0.0.1:8080"
