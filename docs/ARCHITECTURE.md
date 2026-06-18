@@ -66,9 +66,11 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 
 ### Registry lifecycle
 
-`internal/daemon.WorkspaceRegistry` lazy-opens workspaces on first request (cold-open). Concurrent opens for the same `workspace_id` share one two-phase init (`config` → `phase1` service). `BorrowService` tracks in-flight HTTP handlers; LRU eviction waits until `refs` drain.
+`internal/daemon.WorkspaceRegistry` lazy-opens workspaces on first request (cold-open). Concurrent opens for the same `workspace_id` share one two-phase init (`config` → `phase1` service). `BorrowService` tracks in-flight HTTP handlers.
 
-`Close()` sets `closing`, cancels the registry context, drains borrows and cold-opens (default 30 s), then closes idle handles and shuts down the zvec runtime. While closing, new `BorrowService` calls return `ErrRegistryClosing` → HTTP **503** `registry is closing`.
+When `max_open_workspaces` is exceeded, LRU evicts idle handles from the map, then **`discardHandle` runs asynchronously** (cancel workspace ctx → `Phase1.Close()`). A `discards` counter tracks in-flight evictions.
+
+`Close()` sets `closing`, cancels the registry context, drains borrows, cold-opens, and **async evictions** (`discards`) (default 30 s), then closes remaining idle handles and shuts down the zvec runtime. While closing, new `BorrowService` calls return `ErrRegistryClosing` → HTTP **503** `registry is closing`.
 
 ## Package layout
 
@@ -203,7 +205,9 @@ Shipped Release/install binary uses `-tags "zvec,onnx"` without `treesitter`: pr
 | Partial search during write | `indexing` metadata in search response; `/ready` stays not-ready until idle |
 | `/health` vs `/ready` | Liveness vs embeddings+index loaded |
 | Polling file watcher | Windows Docker bind-mount compatibility |
-| Request context | MCP/HTTP pass `ctx` to sync service calls (search, status, ready); embeddings honor cancel |
+| Request context | MCP/HTTP pass `ctx` to sync service calls (search, status, ready); embeddings honor cancel; search uses **non-blocking context cancellation** — client returns on cancel/timeout while the zvec goroutine finishes in the background (`searchWG`) |
+| Panic recovery | Search, background indexing, and workspace init catch panics to prevent process crash |
+| Crash-safe deletion rows | Reindex/purge deletes zvec chunks before SQLite manifest rows so a crash cannot orphan vectors with no manifest trail |
 | Indexing lifecycle | Background `Coordinator.run` uses process/workspace ctx; stops on shutdown/eviction, not on reindex client disconnect |
 
 ## Security

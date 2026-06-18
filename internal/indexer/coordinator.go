@@ -205,10 +205,11 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 			} else {
 				c.curProgress = FinishIdle(c.curProgress, finishFiles, finishChunks)
 			}
-			if err := c.progress.Save(c.curProgress); err != nil {
+			finalProgress := c.curProgress
+			c.mu.Unlock()
+			if err := c.progress.Save(finalProgress); err != nil {
 				slog.Warn("persist final indexing progress failed", "err", err)
 			}
-			c.mu.Unlock()
 			c.zvecCloseMu.Unlock()
 		}()
 
@@ -338,13 +339,13 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 			if _, ok := discovered[e.RelativePath]; ok {
 				continue
 			}
-			if err := manStore.Delete(e.RelativePath); err != nil {
-				return 0, 0, 0, err
-			}
 			if len(e.DocIDs) > 0 {
 				if err := c.Zvec.DeleteByIDs(e.DocIDs); err != nil && !isZvecUnavailable(err) {
 					return 0, 0, 0, err
 				}
+			}
+			if err := manStore.Delete(e.RelativePath); err != nil {
+				return 0, 0, 0, err
 			}
 		}
 	}
@@ -556,10 +557,11 @@ func staleDocIDs(oldIDs, newIDs []string) []string {
 
 func (c *Coordinator) updateProgress(fn func(*Progress)) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	fn(&c.curProgress)
 	c.curProgress.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := c.progress.Save(c.curProgress); err != nil {
+	p := c.curProgress
+	c.mu.Unlock()
+	if err := c.progress.Save(p); err != nil {
 		slog.Warn("persist indexing progress failed", "err", err)
 	}
 }

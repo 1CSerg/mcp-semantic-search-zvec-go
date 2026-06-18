@@ -64,7 +64,7 @@ Windows: no CLI flags → desktop GUI. Linux/macOS: no CLI flags → `--stdio` (
 
 GUI mode reuses the per-project service layer but does not start auto-indexing or the file watcher in the GUI process for a **new** empty index. The Windows GUI is localized in Russian. When Cursor already runs `--stdio` for the same workspace, the GUI finds the live MCP process (`FindStdioForWorkspace`, then `LiveHolder`), shows a warning with that PID instead of competing with the MCP process, and offers a button to terminate the competing process; after termination, the GUI starts an incremental reindex automatically. Stale PIDs in `stdio.lock` are not shown after reclaim.
 
-If indexing was **interrupted** (GUI closed mid-run), the next GUI start reclaims orphan zvec `LOCK` files, migrates `progress.json` from `context canceled` to idle interrupted state, and automatically runs incremental `reindex` to continue (manifest skips already indexed files). Shutdown waits for the background indexer before closing zvec to avoid orphan locks.
+If indexing was **interrupted** (GUI closed mid-run), the next GUI start reclaims orphan zvec `LOCK` files, migrates `progress.json` from `context canceled` to idle interrupted state, and automatically runs incremental `reindex` to continue (manifest skips already indexed files). Shutdown waits for the background indexer **and in-flight searches** before closing zvec to avoid orphan locks.
 
 Full flag table: [API.md](API.md#cli-flags).
 

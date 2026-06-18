@@ -1984,19 +1984,25 @@ func TestSemanticSearchContextCancelDuringZvec(t *testing.T) {
 
 	select {
 	case err := <-done:
-		t.Fatal("search returned before zvec finished:", err)
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("err=%v want context.Canceled", err)
+		}
 	case <-time.After(200 * time.Millisecond):
+		t.Fatal("search did not return promptly after cancel")
 	}
 
 	close(store.allowSearch)
 
 	select {
 	case err := <-done:
-		if err == nil || !errors.Is(err, context.Canceled) {
-			t.Fatalf("err=%v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("search did not return after zvec finished")
+		t.Fatalf("unexpected second result from done: %v", err)
+	default:
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	if err := p.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown after cancel: %v", err)
 	}
 }
 

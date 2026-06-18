@@ -638,15 +638,19 @@ func (p *Phase1) Shutdown(ctx context.Context) error {
 				indexIdle = false
 			}
 		}
-		if waitErr := p.waitSearches(ctx); waitErr != nil && err == nil {
-			err = waitErr
+		searchesIdle := true
+		if waitErr := p.waitSearches(ctx); waitErr != nil {
+			if err == nil {
+				err = waitErr
+			}
+			searchesIdle = false
 		}
 
-		closeZvec := indexIdle
-		if !closeZvec && p.coordinator != nil && p.coordinator.TryLockZvecForClose() {
+		closeZvec := indexIdle && searchesIdle
+		if !closeZvec && searchesIdle && p.coordinator != nil && p.coordinator.TryLockZvecForClose() {
 			closeZvec = true
 			defer p.coordinator.UnlockZvecForClose()
-		} else if !closeZvec && p.coordinator == nil && !p.isIndexingRunning() {
+		} else if !closeZvec && searchesIdle && p.coordinator == nil && !p.isIndexingRunning() {
 			closeZvec = true
 		}
 		if closeZvec && p.zvec != nil {
@@ -733,18 +737,21 @@ func (p *Phase1) zvecSearchWithContext(ctx context.Context, vector []float32, li
 		err  error
 	}
 	ch := make(chan result, 1)
+	p.searchWG.Add(1)
 	go func() {
-		hits, err := p.zvec.Search(vector, limit, pathGlob)
-		ch <- result{hits: hits, err: err}
+		defer p.searchWG.Done()
+		var res result
+		defer func() {
+			if r := recover(); r != nil {
+				res.err = fmt.Errorf("search panic: %v", r)
+				slog.Error("zvec search panic", "panic", r)
+			}
+			ch <- res
+		}()
+		res.hits, res.err = p.zvec.Search(vector, limit, pathGlob)
 	}()
 	select {
 	case <-ctx.Done():
-		// Wait for the zvec goroutine so searchWG is not released before Search
-		// finishes (Shutdown must not close the collection mid-query).
-		res := <-ch
-		if res.err != nil {
-			slog.Debug("zvec search finished after client cancel", "err", res.err)
-		}
 		return nil, ctx.Err()
 	case res := <-ch:
 		return res.hits, res.err

@@ -57,6 +57,7 @@ type Registry struct {
 	open              map[string]*workspaceHandle
 	opening           map[string]*openWait
 	closing           bool
+	discards          int
 	closeDrainTimeout time.Duration
 }
 
@@ -138,27 +139,43 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 			continue
 		}
 
-		if err := r.reserveOpenSlotLocked(*spec); err != nil {
+		evicted, err := r.reserveOpenSlotLocked(*spec)
+		if err != nil {
 			r.mu.Unlock()
 			return nil, nil, err
 		}
 		wait := &openWait{done: make(chan struct{})}
 		r.opening[workspaceID] = wait
 		r.mu.Unlock()
+		if evicted != nil {
+			r.beginDiscard()
+			go r.discardHandle(evicted)
+		}
 
-		h, err := r.initWorkspace(*spec)
+		var h *workspaceHandle
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					err = fmt.Errorf("workspace init panic: %v", rec)
+					slog.Error("workspace init panic", "workspace_id", workspaceID, "panic", rec)
+				}
+			}()
+			h, err = r.initWorkspace(*spec)
+		}()
 		r.mu.Lock()
 		delete(r.opening, workspaceID)
 		if r.closing {
-			wait.err = ErrRegistryClosing
+			if err != nil {
+				wait.err = err
+			} else {
+				wait.err = ErrRegistryClosing
+			}
 			close(wait.done)
 			if err == nil && h != nil {
+				r.beginDiscard()
 				r.mu.Unlock()
 				r.discardHandle(h)
 			} else {
-				if err != nil {
-					wait.err = err
-				}
 				r.mu.Unlock()
 			}
 			return nil, nil, wait.err
@@ -177,20 +194,22 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 	}
 }
 
-func (r *Registry) reserveOpenSlotLocked(spec WorkspaceSpec) error {
+func (r *Registry) reserveOpenSlotLocked(spec WorkspaceSpec) (*workspaceHandle, error) {
 	if _, ok := r.open[spec.ID]; ok {
-		return nil
+		return nil, nil
 	}
 	if _, ok := r.opening[spec.ID]; ok {
-		return nil
+		return nil, nil
 	}
 	occupied := len(r.open) + len(r.opening)
 	if occupied >= r.cfg.MaxOpenWorkspaces {
-		if !r.evictOldestIdleLocked() {
-			return fmt.Errorf("max open workspaces (%d) reached and all are in use", r.cfg.MaxOpenWorkspaces)
+		evicted := r.evictOldestIdleLocked()
+		if evicted == nil {
+			return nil, fmt.Errorf("max open workspaces (%d) reached and all are in use", r.cfg.MaxOpenWorkspaces)
 		}
+		return evicted, nil
 	}
-	return nil
+	return nil, nil
 }
 
 func (r *Registry) initWorkspace(spec WorkspaceSpec) (*workspaceHandle, error) {
@@ -249,10 +268,13 @@ func (r *Registry) releaseFunc(workspaceID string) func() {
 			return
 		}
 		h.refs--
+		if h.refs == 0 {
+			h.lastUsed = time.Now()
+		}
 	}
 }
 
-func (r *Registry) evictOldestIdleLocked() bool {
+func (r *Registry) evictOldestIdleLocked() *workspaceHandle {
 	var oldestID string
 	var oldestTime time.Time
 	first := true
@@ -267,27 +289,29 @@ func (r *Registry) evictOldestIdleLocked() bool {
 		}
 	}
 	if oldestID == "" {
-		return false
+		return nil
 	}
-	r.forceCloseHandleLocked(oldestID)
-	return true
+	h := r.open[oldestID]
+	delete(r.open, oldestID)
+	slog.Info("workspace evicted", "workspace_id", oldestID)
+	return h
 }
 
-func (r *Registry) closeHandleLocked(id string) {
-	h, ok := r.open[id]
-	if !ok {
-		return
-	}
-	if h.refs > 0 {
-		return
-	}
-	r.forceCloseHandleLocked(id)
+func (r *Registry) beginDiscard() {
+	r.mu.Lock()
+	r.discards++
+	r.mu.Unlock()
 }
 
 func (r *Registry) discardHandle(h *workspaceHandle) {
 	if h == nil {
 		return
 	}
+	defer func() {
+		r.mu.Lock()
+		r.discards--
+		r.mu.Unlock()
+	}()
 	if h.cancel != nil {
 		h.cancel()
 	}
@@ -296,23 +320,6 @@ func (r *Registry) discardHandle(h *workspaceHandle) {
 			slog.Warn("workspace discard", "err", err)
 		}
 	}
-}
-
-func (r *Registry) forceCloseHandleLocked(id string) {
-	h, ok := r.open[id]
-	if !ok {
-		return
-	}
-	if h.cancel != nil {
-		h.cancel()
-	}
-	if h.phase1 != nil {
-		if err := h.phase1.Close(); err != nil {
-			slog.Warn("workspace close", "workspace_id", id, "err", err)
-		}
-	}
-	delete(r.open, id)
-	slog.Info("workspace evicted", "workspace_id", id)
 }
 
 // Close shuts down all open workspace handles after in-flight borrows and cold-opens drain.
@@ -335,32 +342,58 @@ func (r *Registry) Close() {
 	deadline := time.Now().Add(drainTimeout)
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
+	var doneCh <-chan struct{}
+	if r.rootCtx != nil {
+		doneCh = r.rootCtx.Done()
+	}
 	rootCanceled := false
-	for r.hasBusyHandles() || r.hasOpening() {
+	for r.hasBusyHandles() || r.hasOpening() || r.hasDiscards() {
 		if time.Now().After(deadline) {
 			slog.Warn("registry close: timeout waiting for borrows and cold-open to drain")
 			break
 		}
 		select {
-		case <-r.rootCtx.Done():
-			if !rootCanceled {
-				slog.Warn("registry close: root context canceled while borrows remain, waiting for drain")
-				rootCanceled = true
+		case <-doneCh:
+			if doneCh != nil {
+				if !rootCanceled {
+					slog.Warn("registry close: root context canceled while borrows remain, waiting for drain")
+					rootCanceled = true
+				}
+				doneCh = nil
 			}
 		case <-tick.C:
 		}
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	type closeItem struct {
+		id string
+		h  *workspaceHandle
+	}
+	var toClose []closeItem
 	for id, h := range r.open {
 		if h != nil && h.refs > 0 {
 			slog.Warn("registry close: skipping workspace with in-flight borrows", "workspace_id", id, "refs", h.refs)
 			continue
 		}
-		r.forceCloseHandleLocked(id)
+		toClose = append(toClose, closeItem{id: id, h: h})
+		delete(r.open, id)
 	}
-	if r.hasBusyHandlesLocked() || len(r.opening) > 0 {
+	skipRuntime := r.hasBusyHandlesLocked() || len(r.opening) > 0 || r.discards > 0
+	r.mu.Unlock()
+
+	for _, item := range toClose {
+		if item.h.cancel != nil {
+			item.h.cancel()
+		}
+		if item.h.phase1 != nil {
+			if err := item.h.phase1.Close(); err != nil {
+				slog.Warn("workspace close", "workspace_id", item.id, "err", err)
+			}
+		}
+		slog.Info("workspace evicted", "workspace_id", item.id)
+	}
+	if skipRuntime {
 		slog.Warn("registry close: skipping zvec runtime shutdown while borrows or cold-open remain")
 		return
 	}
@@ -386,6 +419,12 @@ func (r *Registry) hasOpening() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.opening) > 0
+}
+
+func (r *Registry) hasDiscards() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.discards > 0
 }
 
 // Config returns the daemon configuration.
