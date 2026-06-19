@@ -1,0 +1,31 @@
+# Realworld harness — missing api_key_env value (E5).
+active_profile: mock_api_key
+
+profiles:
+  mock_api_key:
+    description: OpenAI-compatible profile requiring api_key_env
+    provider: openai_compatible
+    model: mock-embed
+    base_url: http://127.0.0.1:MOCK_PORT/v1
+    api_key_env: REALWORLD_TEST_API_KEY
+    dimensions: 128
+    batch_size: 4
+    timeout_seconds: 10
+
+indexing:
+  extensions: [".go"]
+  skip_dirs: [".git", ".deps", ".realworld", ".mcp-semantic-search-zvec-go"]
+  chunking:
+    strategy: hybrid
+    version: 1
+    languages:
+      go: { enabled: true }
+
+file_watcher:
+  enabled: false
+
+logging:
+  level: info
+
+server:
+  http_addr: "127.0.0.1:8080"

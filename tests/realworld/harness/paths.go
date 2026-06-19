@@ -78,6 +78,12 @@ func ConfigTemplate(repo, profile string) string {
 		return filepath.Join(repo, filepath.FromSlash(ConfigRel), "mock-fail.yaml")
 	case "mock-dim-mismatch":
 		return filepath.Join(repo, filepath.FromSlash(ConfigRel), "mock-dim-mismatch.yaml")
+	case "mock-retry":
+		return filepath.Join(repo, filepath.FromSlash(ConfigRel), "mock-retry.yaml")
+	case "mock-api-key":
+		return filepath.Join(repo, filepath.FromSlash(ConfigRel), "mock-api-key.yaml")
+	case "daemon-workspace":
+		return filepath.Join(repo, filepath.FromSlash(ConfigRel), "daemon-workspace.yaml")
 	default:
 		return filepath.Join(repo, filepath.FromSlash(ConfigRel), "onnx.yaml")
 	}

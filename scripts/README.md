@@ -9,7 +9,7 @@ Purpose-based layout for install, dependency fetch, contributor tooling, phase g
 | **fetch/** | One-time native deps (zvec, ONNX runtime, model bundle, tree-sitter verify) | `fetch-zvec-libs.*`, `fetch-onnx-runtime.*`, `fetch-onnx-model.*`, `fetch-tree-sitter-grammars.*` |
 | **dev/** | Contributors: hooks, coverage, Windows zvec build | `setup-git-hooks.*`, `check-coverage.*`, `git-add.sh`, `build-zvec-windows.ps1`, `build-release.*` |
 | **smoke/** | Phase gate tests (`make smoke-phaseN`) | `run-phase1.*` … `run-phase5.*`, `run-phase5-docker.*`, `run-mcp-staging-multi-windows.ps1`, fixtures |
-| **realworld/** | Manual E2E harness (`make test-realworld`) — **not CI** | `setup-harness.*`, `run-all.*`; fixtures in `tests/realworld/` |
+| **realworld/** | Manual E2E harness (`make test-realworld`) — **not CI** | `setup-harness.*`, `run-all.*`, `run-docker.*`; fixtures in `tests/realworld/` |
 | **spike/** | Docker zvec integration (optional manual check) | `run-docker.sh`, `run-docker-inner.sh` |
 | **lib/** | Shared shell helpers | `normalize-eol.sh` |
 
@@ -52,6 +52,7 @@ make test-cover-check
 .\scripts\smoke\run-phase5-docker.ps1
 .\scripts\dev\check-coverage.ps1
 .\scripts\realworld\run-all.ps1 -Profile onnx
+.\scripts\realworld\run-all.ps1 -Profile onnx -Docker
 ```
 
 ## Realworld harness
@@ -62,9 +63,11 @@ Extended manual E2E tests with a full multi-language corpus, MCP stdio subproces
 make test-realworld              # ONNX local_multilingual
 make test-realworld-lmstudio     # lmstudio_qwen (skips if LM Studio down)
 bash scripts/realworld/run-all.sh --profile onnx --run TestHTTP
+bash scripts/realworld/run-all.sh --profile onnx --docker   # + Docker D1/D2
+bash scripts/realworld/run-docker.sh                        # Docker only
 ```
 
-Prerequisites: same as `make build-zvec` (CGO, zvec libs, ONNX runtime; ONNX model fetched by `setup-harness`). Runtime tree: `.realworld/` (gitignored). See [tests/realworld/README.md](../tests/realworld/README.md).
+Prerequisites: same as `make build-zvec` (CGO, zvec libs, ONNX runtime; ONNX model fetched by `setup-harness`). Runtime tree: `.realworld/` (gitignored). Wave 2 adds daemon/proxy, auth, concurrency, lifecycle, Docker smoke. Manual: T6 GUI, CLI5, D3 Docker+LM Studio. See [tests/realworld/README.md](../tests/realworld/README.md).
 
 ## fetch-tree-sitter-grammars
 

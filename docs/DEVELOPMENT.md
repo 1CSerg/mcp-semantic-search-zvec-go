@@ -384,11 +384,12 @@ HTML-отчёт: `go tool cover -html=coverage.out -o coverage.html`
 make test-realworld              # ONNX offline (local_multilingual)
 make test-realworld-lmstudio     # lmstudio_qwen; skip если LM Studio недоступен
 bash scripts/realworld/run-all.sh --profile onnx --run TestChunking
+bash scripts/realworld/run-all.sh --profile onnx --docker   # + Docker D1/D2 smoke
 ```
 
-Windows: `.\scripts\realworld\run-all.ps1 -Profile onnx`
+Windows: `.\scripts\realworld\run-all.ps1 -Profile onnx` (флаг `-Docker` для контейнерного smoke).
 
-Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model подтягивается `setup-harness`. Ephemeral install tree: `.realworld/` (gitignored). Корпус: `tests/realworld/corpus/`. Подробнее: [tests/realworld/README.md](../tests/realworld/README.md).
+Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model подтягивается `setup-harness`. Ephemeral install tree: `.realworld/` (gitignored). Корпус: `tests/realworld/corpus/`. Wave 2: daemon/proxy, auth, concurrency, incremental lifecycle, search edge cases, CLI flags, Cyrillic paths (Windows), optional Docker. Manual-only: GUI duplicate stdio (T6), no-flags default (CLI5), Docker→LM Studio (D3). Подробнее: [tests/realworld/README.md](../tests/realworld/README.md).
 
 ## Versions
 

@@ -99,13 +99,20 @@ func replaceEnvKey(env []string, key, value string) []string {
 // StartHTTPServer spawns --http and waits for /health.
 func StartHTTPServer(t *testing.T, repo string, port int, extraEnv ...string) *ServerProcess {
 	t.Helper()
+	return StartHTTPServerWithArgs(t, repo, port, nil, extraEnv...)
+}
+
+// StartHTTPServerWithArgs spawns --http with extra CLI flags before --http/--http-addr.
+func StartHTTPServerWithArgs(t *testing.T, repo string, port int, extraArgs []string, extraEnv ...string) *ServerProcess {
+	t.Helper()
 	if port == 0 {
 		port = defaultHTTPPort
 	}
 	bin := BinPath(repo)
 	binDir := BinDir(repo)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	cmd := exec.Command(bin, "--http", "--http-addr", addr)
+	args := append(append([]string{}, extraArgs...), "--http", "--http-addr", addr)
+	cmd := exec.Command(bin, args...)
 	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Dir = binDir
@@ -119,6 +126,11 @@ func StartHTTPServer(t *testing.T, repo string, port int, extraEnv ...string) *S
 	t.Cleanup(func() { killProcess(t, proc.Cmd) })
 	waitHTTPHealth(t, base)
 	return proc
+}
+
+// StartHTTPServerWithEnv starts HTTP with a full custom env slice.
+func StartHTTPServerWithEnv(t *testing.T, repo string, port int, env []string) *ServerProcess {
+	return startHTTPServerWithEnv(t, repo, port, env)
 }
 
 // StartHTTPServerWithConfig starts HTTP using an alternate config file.
@@ -159,12 +171,28 @@ func startHTTPServerWithEnv(t *testing.T, repo string, port int, env []string) *
 // StartMCPServer spawns --stdio and returns an MCP client session.
 func StartMCPServer(t *testing.T, repo string) *mcp.ClientSession {
 	t.Helper()
+	session, cmd := startMCPServerSession(t, repo, nil)
+	t.Cleanup(func() { killProcess(t, cmd) })
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// StartMCPServerSessionNoCleanup connects MCP to --stdio without killing the process on cleanup.
+func StartMCPServerSessionNoCleanup(t *testing.T, repo string, extraEnv ...string) (*mcp.ClientSession, *exec.Cmd) {
+	t.Helper()
+	session, cmd := startMCPServerSession(t, repo, extraEnv)
+	t.Cleanup(func() { _ = session.Close() })
+	return session, cmd
+}
+
+func startMCPServerSession(t *testing.T, repo string, extraEnv []string) (*mcp.ClientSession, *exec.Cmd) {
+	t.Helper()
 	bin := BinPath(repo)
 	binDir := BinDir(repo)
 	cmd := exec.Command(bin, "--stdio")
 	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Dir = binDir
-	t.Cleanup(func() { killProcess(t, cmd) })
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "realworld-test", Version: "0"}, nil)
 	transport := &mcp.CommandTransport{Command: cmd}
@@ -174,8 +202,7 @@ func StartMCPServer(t *testing.T, repo string) *mcp.ClientSession {
 	if err != nil {
 		t.Fatalf("mcp connect: %v", err)
 	}
-	t.Cleanup(func() { _ = session.Close() })
-	return session
+	return session, cmd
 }
 
 func waitHTTPHealth(t *testing.T, base string) {
@@ -266,11 +293,19 @@ func AssertSearchHit(t *testing.T, httpBase, query, pathSuffix, wantSymbol, want
 
 // StartMockEmbed runs tests/realworld/mock/embed.go on the given port.
 func StartMockEmbed(t *testing.T, repo string, port, dims int, fail bool) *exec.Cmd {
+	return StartMockEmbedFailCount(t, repo, port, dims, fail, 0)
+}
+
+// StartMockEmbedFailCount starts mock embed; failCount>0 returns 503 for first N embedding requests (E4).
+func StartMockEmbedFailCount(t *testing.T, repo string, port, dims int, fail bool, failCount int) *exec.Cmd {
 	t.Helper()
 	mockSrc := filepath.Join(repo, "tests", "realworld", "mock", "embed.go")
 	args := []string{"run", mockSrc, "-port", fmt.Sprintf("%d", port), "-dims", fmt.Sprintf("%d", dims)}
 	if fail {
 		args = append(args, "-fail")
+	}
+	if failCount > 0 {
+		args = append(args, "-fail-count", fmt.Sprintf("%d", failCount))
 	}
 	cmd := exec.Command("go", args...)
 	cmd.Dir = repo
@@ -320,7 +355,49 @@ func WriteTempConfig(t *testing.T, repo, profile string, mockPort int) string {
 	return dst
 }
 
-// AssertNoLeftovers checks no orphan lock files after scenarios in the harness index dir.
+// WriteDetectableMockConfig writes a mock-embed config with a unique active_profile marker.
+func WriteDetectableMockConfig(t *testing.T, repo, activeProfile string, mockPort int) string {
+	t.Helper()
+	src := ConfigTemplate(repo, "daemon-workspace")
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read config template: %v", err)
+	}
+	text := strings.ReplaceAll(string(data), "MOCK_PORT", fmt.Sprintf("%d", mockPort))
+	text = strings.Replace(text, "active_profile: daemon_smoke", "active_profile: "+activeProfile, 1)
+	text = strings.Replace(text, "daemon_smoke:", activeProfile+":", 1)
+	dir := filepath.Join(RealworldRoot(repo), "tmp-config")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir tmp-config: %v", err)
+	}
+	dst := filepath.Join(dir, activeProfile+".yaml")
+	if err := os.WriteFile(dst, []byte(text), 0o644); err != nil {
+		t.Fatalf("write detectable config: %v", err)
+	}
+	return dst
+}
+
+// AssertJSONExcludesSubstring fails when marshaled JSON contains substr.
+func AssertJSONExcludesSubstring(t *testing.T, label string, v any, substr string) {
+	t.Helper()
+	if substr == "" {
+		return
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", label, err)
+	}
+	body := string(raw)
+	if strings.Contains(body, substr) {
+		t.Fatalf("%s JSON contains forbidden substring %q: %s", label, substr, body)
+	}
+	slash := filepath.ToSlash(substr)
+	if slash != substr && strings.Contains(body, slash) {
+		t.Fatalf("%s JSON contains forbidden substring %q: %s", label, slash, body)
+	}
+}
+
+// AssertNoLeftovers checks no orphan locks, listening harness ports, or stray MCP processes.
 func AssertNoLeftovers(t *testing.T, repo string) {
 	t.Helper()
 	indexDir := IndexDir(repo)
@@ -330,6 +407,42 @@ func AssertNoLeftovers(t *testing.T, repo string) {
 			t.Errorf("leftover lock file: %s", p)
 		}
 	}
+	// Common realworld test ports should not remain bound after cleanup.
+	for _, port := range []int{19301, 19302, 19400, daemonHTTPPort} {
+		if IsPortListening("127.0.0.1", port) {
+			t.Errorf("port %d still listening after scenario cleanup", port)
+		}
+	}
+	for port := 19320; port <= 19396; port++ {
+		if IsPortListening("127.0.0.1", port) {
+			t.Errorf("port %d still listening after scenario cleanup", port)
+		}
+	}
+	binName := filepath.Base(BinPath(repo))
+	if stray := findStrayProcesses(binName); len(stray) > 0 {
+		t.Errorf("stray %s processes after cleanup: %v", binName, stray)
+	}
+}
+
+func findStrayProcesses(binName string) []int {
+	if runtime.GOOS == "windows" {
+		return nil // Avoid flaky tasklist parsing; port checks cover most cases.
+	}
+	out, err := exec.Command("pgrep", "-f", binName).Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(line, "%d", &pid); err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func killProcess(t *testing.T, cmd *exec.Cmd) {
@@ -370,6 +483,12 @@ func GetJSON(t *testing.T, url string) map[string]any {
 }
 
 func postJSON(t *testing.T, url string, body map[string]any) map[string]any {
+	t.Helper()
+	return PostJSON(t, url, body)
+}
+
+// PostJSON performs POST and unmarshals a JSON object (fails on HTTP >= 400).
+func PostJSON(t *testing.T, url string, body map[string]any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(body)
 	if err != nil {

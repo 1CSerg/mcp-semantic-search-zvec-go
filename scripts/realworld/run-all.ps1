@@ -3,7 +3,8 @@ param(
     [ValidateSet("onnx", "lmstudio")]
     [string]$Profile = "onnx",
     [switch]$KeepIndex,
-    [string]$Run = ""
+    [string]$Run = "",
+    [switch]$Docker
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +42,7 @@ if (-not (Test-Path (Join-Path $RepoRoot ".deps\onnxruntime.env"))) {
 $env:CGO_ENABLED = "1"
 if ($env:ZVEC_LIB_DIR) { $env:Path = "$($env:ZVEC_LIB_DIR);$($env:ORT_LIB_DIR);" + $env:Path }
 $env:REALWORLD_REPO_ROOT = $RepoRoot
+$env:REALWORLD_PROFILE = $Profile
 
 $testArgs = @("-tags", "realworld,zvec", "-count=1", "-timeout", "30m", "-v", "./tests/realworld/...")
 if ($Run) { $testArgs = @("-run", $Run) + $testArgs }
@@ -48,6 +50,9 @@ if ($Run) { $testArgs = @("-run", $Run) + $testArgs }
 Push-Location $RepoRoot
 try {
     go test @testArgs
+    if ($Docker) {
+        & (Join-Path $ScriptDir "run-docker.ps1")
+    }
 } finally {
     Pop-Location
 }

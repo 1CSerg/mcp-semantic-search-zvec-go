@@ -1,0 +1,31 @@
+# Realworld harness — transient 503 then success (E4): max_retries + mock -fail-count.
+active_profile: mock_retry
+
+profiles:
+  mock_retry:
+    description: Mock embed with transient failures
+    provider: openai_compatible
+    model: mock-embed
+    base_url: http://127.0.0.1:MOCK_PORT/v1
+    dimensions: 128
+    batch_size: 4
+    timeout_seconds: 10
+    max_retries: 3
+
+indexing:
+  extensions: [".go", ".md"]
+  skip_dirs: [".git", ".deps", ".realworld", ".mcp-semantic-search-zvec-go"]
+  chunking:
+    strategy: hybrid
+    version: 1
+    languages:
+      go: { enabled: true }
+
+file_watcher:
+  enabled: false
+
+logging:
+  level: info
+
+server:
+  http_addr: "127.0.0.1:8080"

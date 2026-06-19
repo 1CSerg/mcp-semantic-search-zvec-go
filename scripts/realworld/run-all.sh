@@ -7,10 +7,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROFILE="onnx"
 KEEP_INDEX=0
 GO_RUN=""
+RUN_DOCKER=0
 EXTRA_ARGS=()
 
 usage() {
-  echo "Usage: $0 [--profile onnx|lmstudio] [--keep-index] [--run TestName]"
+  echo "Usage: $0 [--profile onnx|lmstudio] [--keep-index] [--run TestName] [--docker]"
   exit 1
 }
 
@@ -19,6 +20,7 @@ while [[ $# -gt 0 ]]; do
     --profile) PROFILE="$2"; shift 2 ;;
     --keep-index) KEEP_INDEX=1; shift ;;
     --run) GO_RUN="$2"; shift 2 ;;
+    --docker) RUN_DOCKER=1; shift ;;
     -h|--help) usage ;;
     *) EXTRA_ARGS+=("$1"); shift ;;
   esac
@@ -47,9 +49,14 @@ fi
 export CGO_ENABLED=1
 export LD_LIBRARY_PATH="${ZVEC_LIB_DIR:-}:${ORT_LIB_DIR:-}:${LD_LIBRARY_PATH:-}"
 export REALWORLD_REPO_ROOT="$REPO_ROOT"
+export REALWORLD_PROFILE="$PROFILE"
 
 TEST_ARGS=(-tags "realworld,zvec" -count=1 -timeout 30m -v ./tests/realworld/...)
 [[ -n "$GO_RUN" ]] && TEST_ARGS=(-run "$GO_RUN" "${TEST_ARGS[@]}")
 
 cd "$REPO_ROOT"
 go test "${TEST_ARGS[@]}"
+
+if [[ "$RUN_DOCKER" -eq 1 ]]; then
+  bash "$SCRIPT_DIR/run-docker.sh"
+fi

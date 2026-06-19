@@ -1,0 +1,40 @@
+# Per-workspace config for daemon/proxy realworld scenarios (mock embeddings).
+active_profile: daemon_smoke
+
+profiles:
+  daemon_smoke:
+    description: Mock OpenAI-compatible embeddings for daemon realworld tests
+    provider: openai_compatible
+    model: mock-embed
+    base_url: http://127.0.0.1:MOCK_PORT/v1
+    dimensions: 128
+    batch_size: 32
+    timeout_seconds: 10
+
+indexing:
+  extensions:
+    - .go
+    - .py
+    - .js
+    - .md
+  skip_dirs:
+    - .git
+    - .deps
+    - .realworld
+    - .mcp-semantic-search-zvec-go
+  chunking:
+    strategy: hybrid
+    version: 1
+    languages:
+      go: { enabled: true }
+      python: { enabled: true }
+      javascript: { enabled: true }
+
+file_watcher:
+  enabled: false
+
+logging:
+  level: info
+
+server:
+  http_addr: "127.0.0.1:8080"

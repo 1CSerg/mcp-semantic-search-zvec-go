@@ -76,3 +76,49 @@ func TestEmbedDimensionMismatch(t *testing.T) {
 		t.Fatalf("expected dimension mismatch error, status=%s", raw)
 	}
 }
+
+func TestEmbedTransientRetrySuccess(t *testing.T) {
+	repo := harness.RequireHarness(t)
+	defer harness.AssertNoLeftovers(t, repo)
+
+	const mockPort = 19996
+	harness.StartMockEmbedFailCount(t, repo, mockPort, 128, false, 2)
+	cfg := harness.WriteTempConfig(t, repo, "mock-retry", mockPort)
+	idx := embedIndexDir(t, repo, "embed-retry")
+	srv := harness.StartHTTPServerWithConfigIndex(t, repo, cfg, idx, 19322)
+	harness.ForceReindex(t, srv.HTTPBase)
+	status := harness.WaitIndexIdle(t, srv.HTTPBase)
+	if n, ok := status["zvec_doc_count"].(float64); !ok || n < 1 {
+		t.Fatalf("retry reindex should succeed, status=%v", status)
+	}
+}
+
+func TestEmbedMissingAPIKeyEnv(t *testing.T) {
+	repo := harness.RequireHarness(t)
+	defer harness.AssertNoLeftovers(t, repo)
+
+	const mockPort = 19995
+	harness.StartMockEmbed(t, repo, mockPort, 128, false)
+	cfg := harness.WriteTempConfig(t, repo, "mock-api-key", mockPort)
+	idx := embedIndexDir(t, repo, "embed-api-key")
+	// Ensure REALWORLD_TEST_API_KEY is unset in .env
+	harness.WithEnvFile(t, repo, map[string]string{})
+	srv := harness.StartHTTPServerWithConfigIndex(t, repo, cfg, idx, 19323)
+	harness.ForceReindex(t, srv.HTTPBase)
+
+	deadline := time.Now().Add(2 * time.Minute)
+	var last map[string]any
+	for time.Now().Before(deadline) {
+		last = harness.GetJSON(t, srv.HTTPBase+"/v1/status")
+		idx, _ := last["indexing"].(map[string]any)
+		if idx != nil && idx["state"] == "error" {
+			break
+		}
+		time.Sleep(800 * time.Millisecond)
+	}
+	raw, _ := json.Marshal(last)
+	msg := strings.ToLower(string(raw))
+	if !strings.Contains(msg, "api") && !strings.Contains(msg, "key") && !strings.Contains(msg, "REALWORLD_TEST_API_KEY") {
+		t.Fatalf("expected missing api_key_env error, status=%s", raw)
+	}
+}
