@@ -3,6 +3,7 @@
 package scenarios
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -51,7 +52,8 @@ func TestCLIHTTPAddrOverride(t *testing.T) {
 
 	const port = 19370
 	const configDefaultPort = 8080
-	srv := harness.StartHTTPServerWithArgs(t, repo, port, nil)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	srv := harness.StartHTTPServerWithArgs(t, repo, port, []string{"--http", "--http-addr", addr})
 	harness.GetJSON(t, srv.HTTPBase+"/health")
 	if !harness.IsPortListening("127.0.0.1", port) {
 		t.Fatalf("server not listening on --http-addr port %d", port)

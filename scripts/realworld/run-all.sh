@@ -30,13 +30,6 @@ SETUP_ARGS=(--profile "$PROFILE")
 [[ "$KEEP_INDEX" -eq 1 ]] && SETUP_ARGS+=(--keep-index)
 bash "$SCRIPT_DIR/setup-harness.sh" "${SETUP_ARGS[@]}"
 
-if [[ "$PROFILE" == "lmstudio" ]]; then
-  if ! curl -sf "http://127.0.0.1:1234/v1/models" >/dev/null 2>&1; then
-    echo "SKIP: LM Studio not reachable at http://127.0.0.1:1234 — start LM Studio and load text-embedding-qwen3-embedding-0.6b"
-    exit 0
-  fi
-fi
-
 ZVEC_ENV="$REPO_ROOT/.deps/zvec-lib.env"
 if [[ ! -f "$ZVEC_ENV" ]]; then
   bash "$REPO_ROOT/scripts/fetch/fetch-zvec-libs.sh" > "$ZVEC_ENV"

@@ -15,15 +15,6 @@ $setupArgs = @("-Profile", $Profile)
 if ($KeepIndex) { $setupArgs += "-KeepIndex" }
 & (Join-Path $ScriptDir "setup-harness.ps1") @setupArgs
 
-if ($Profile -eq "lmstudio") {
-    try {
-        Invoke-RestMethod -Uri "http://127.0.0.1:1234/v1/models" -TimeoutSec 3 | Out-Null
-    } catch {
-        Write-Host "SKIP: LM Studio not reachable at http://127.0.0.1:1234"
-        exit 0
-    }
-}
-
 $zvecEnv = Join-Path $RepoRoot ".deps\zvec-lib.env"
 if (-not (Test-Path $zvecEnv)) {
     & "$RepoRoot\scripts\fetch\fetch-zvec-libs.ps1" | Out-Null

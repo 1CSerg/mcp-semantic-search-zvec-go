@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +22,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const defaultHTTPPort = 19301
+const (
+	defaultHTTPPort = 19301
+	mockFailPort    = 19998 // mock-fail.yaml default embed port
+	mockAPIKeyPort  = 19995
+	mockRetryPort   = 19996
+	mockDimPort     = 19997
+)
 
 // ServerProcess wraps a spawned MCP binary subprocess.
 type ServerProcess struct {
@@ -103,6 +111,7 @@ func StartHTTPServer(t *testing.T, repo string, port int, extraEnv ...string) *S
 }
 
 // StartHTTPServerWithArgs spawns --http with extra CLI flags before --http/--http-addr.
+// When extraArgs already includes --http or --http-addr, those flags are not duplicated.
 func StartHTTPServerWithArgs(t *testing.T, repo string, port int, extraArgs []string, extraEnv ...string) *ServerProcess {
 	t.Helper()
 	if port == 0 {
@@ -111,7 +120,13 @@ func StartHTTPServerWithArgs(t *testing.T, repo string, port int, extraArgs []st
 	bin := BinPath(repo)
 	binDir := BinDir(repo)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	args := append(append([]string{}, extraArgs...), "--http", "--http-addr", addr)
+	args := buildHTTPServerArgs(extraArgs, addr)
+	if resolved := addrFromHTTPArgs(args, addr); resolved != addr {
+		addr = resolved
+	}
+	if p := portFromHTTPArgs(args); p > 0 {
+		port = p
+	}
 	cmd := exec.Command(bin, args...)
 	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
 	cmd.Env = append(cmd.Env, extraEnv...)
@@ -408,7 +423,10 @@ func AssertNoLeftovers(t *testing.T, repo string) {
 		}
 	}
 	// Common realworld test ports should not remain bound after cleanup.
-	for _, port := range []int{19301, 19302, 19400, daemonHTTPPort} {
+	for _, port := range []int{
+		19301, 19302, 19400, daemonHTTPPort,
+		daemonMockPort, mockFailPort, mockAPIKeyPort, mockRetryPort, mockDimPort,
+	} {
 		if IsPortListening("127.0.0.1", port) {
 			t.Errorf("port %d still listening after scenario cleanup", port)
 		}
@@ -418,22 +436,158 @@ func AssertNoLeftovers(t *testing.T, repo string) {
 			t.Errorf("port %d still listening after scenario cleanup", port)
 		}
 	}
-	binName := filepath.Base(BinPath(repo))
-	if stray := findStrayProcesses(binName); len(stray) > 0 {
-		t.Errorf("stray %s processes after cleanup: %v", binName, stray)
+	if stray := findStrayProcesses(repo); len(stray) > 0 {
+		t.Errorf("stray harness MCP processes after cleanup: %v", stray)
 	}
 }
 
-func findStrayProcesses(binName string) []int {
+func findStrayProcesses(repo string) []int {
 	if runtime.GOOS == "windows" {
-		return nil // Avoid flaky tasklist parsing; port checks cover most cases.
+		return findStrayProcessesWindows(repo)
 	}
-	out, err := exec.Command("pgrep", "-f", binName).Output()
+	out, err := exec.Command("pgrep", "-f", "mcp-semantic-search-zvec-go").Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, pid := range parsePIDLines(string(out)) {
+		cmdOut, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+		if err != nil {
+			continue
+		}
+		if isHarnessMCPProcess(strings.TrimSpace(string(cmdOut)), repo) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func findStrayProcessesWindows(repo string) []int {
+	script := `Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -ieq 'mcp-semantic-search-zvec-go.exe' } | ForEach-Object { "$($_.ProcessId)` + "`t" + `$($_.ExecutablePath)` + "`t" + `$($_.CommandLine)" }`
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
 	if err != nil {
 		return nil
 	}
 	var pids []int
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) < 1 {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		if err != nil || pid <= 0 {
+			continue
+		}
+		var cmdline strings.Builder
+		if len(fields) >= 2 {
+			cmdline.WriteString(strings.TrimSpace(fields[1]))
+		}
+		if len(fields) >= 3 {
+			if cmdline.Len() > 0 {
+				cmdline.WriteByte(' ')
+			}
+			cmdline.WriteString(strings.TrimSpace(fields[2]))
+		}
+		if isHarnessMCPProcess(cmdline.String(), repo) {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func isHarnessMCPProcess(cmdline, repo string) bool {
+	if !strings.Contains(cmdline, "mcp-semantic-search-zvec-go") {
+		return false
+	}
+	for _, marker := range harnessPathMarkers(repo) {
+		if strings.Contains(cmdline, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func harnessPathMarkers(repo string) []string {
+	paths := []string{
+		RealworldRoot(repo),
+		BinPath(repo),
+		IndexDir(repo),
+		CorpusDir(repo),
+	}
+	seen := make(map[string]struct{})
+	var markers []string
+	for _, p := range paths {
+		p = filepath.Clean(p)
+		for _, variant := range []string{p, filepath.ToSlash(p)} {
+			if variant == "" {
+				continue
+			}
+			if _, ok := seen[variant]; ok {
+				continue
+			}
+			seen[variant] = struct{}{}
+			markers = append(markers, variant)
+		}
+	}
+	return markers
+}
+
+func buildHTTPServerArgs(extraArgs []string, defaultAddr string) []string {
+	args := append([]string{}, extraArgs...)
+	hasHTTP := false
+	hasAddr := false
+	for i, a := range args {
+		switch a {
+		case "--http":
+			hasHTTP = true
+		case "--http-addr":
+			if i+1 < len(args) && args[i+1] != "" {
+				hasAddr = true
+			}
+		}
+	}
+	if !hasHTTP {
+		args = append(args, "--http")
+	}
+	if !hasAddr {
+		args = append(args, "--http-addr", defaultAddr)
+	}
+	return args
+}
+
+func portFromHTTPArgs(args []string) int {
+	for i, a := range args {
+		if a != "--http-addr" || i+1 >= len(args) {
+			continue
+		}
+		_, portStr, err := net.SplitHostPort(args[i+1])
+		if err != nil {
+			continue
+		}
+		port, err := strconv.Atoi(portStr)
+		if err == nil && port > 0 {
+			return port
+		}
+	}
+	return 0
+}
+
+func addrFromHTTPArgs(args []string, defaultAddr string) string {
+	for i, a := range args {
+		if a == "--http-addr" && i+1 < len(args) && args[i+1] != "" {
+			return args[i+1]
+		}
+	}
+	return defaultAddr
+}
+
+func parsePIDLines(out string) []int {
+	var pids []int
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		if line == "" {
 			continue
 		}

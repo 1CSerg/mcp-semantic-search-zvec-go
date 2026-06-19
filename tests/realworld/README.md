@@ -6,7 +6,7 @@ Manual-only end-to-end tests for the shipped binary (`zvec,onnx,treesitter`). **
 
 ```bash
 make test-realworld
-# LM Studio tier (skips if server down):
+# LM Studio tier (individual tests t.Skip when server down; run-all does not exit early):
 make test-realworld-lmstudio
 # Include Docker smoke after Go scenarios:
 bash scripts/realworld/run-all.sh --profile onnx --docker
@@ -84,7 +84,7 @@ Runtime env (set by harness helpers):
 ## Profiles
 
 - **onnx** (default): `local_multilingual` offline ONNX; requires `make fetch-onnx-model`.
-- **lmstudio**: `lmstudio_qwen`; preflight checks `http://127.0.0.1:1234/v1/models`; sets `REALWORLD_PROFILE=lmstudio`.
+- **lmstudio**: `lmstudio_qwen`; sets `REALWORLD_PROFILE=lmstudio`. `run-all` does not exit early when LM Studio is down; `TestLMStudioDownSkip` skips when the server is not on `:1234`. Ranking and reindex scenarios need LM Studio running — otherwise they fail.
 
 Mock configs (isolated `tmp-index`): `mock-fail`, `mock-dim-mismatch`, `mock-retry`, `mock-api-key`.
 
@@ -137,6 +137,6 @@ Document-only; optional follow-up automation.
 | Tests skipped: harness not ready | Run `scripts/realworld/setup-harness` |
 | Empty search after reindex | Check `.realworld/logs/`; verify ONNX model path |
 | LOCK / duplicate stdio | Ensure no stray MCP processes; restart IDE |
-| LM Studio suite skipped | Start LM Studio on `:1234` with embedding model loaded |
+| LM Studio tests skipped (not failed) | Expected when server down; `TestLMStudioDownSkip` passes. Start LM Studio on `:1234` for ranking tests |
 | Watcher incremental flaky | `FILE_WATCHER_BACKEND=polling` (harness sets this for I2/I3) |
 | Docker build slow | Use `--docker` only when needed; image caches layers |
