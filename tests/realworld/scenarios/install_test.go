@@ -101,6 +101,39 @@ func assertInstallLayout(t *testing.T, target string) {
 		t.Fatalf("cursor rule missing managedBy marker")
 	}
 
+	binDir := filepath.Join(installDir, "bin")
+	switch runtime.GOOS {
+	case "windows":
+		for _, lib := range []string{"zvec_c_api.dll", "onnxruntime.dll"} {
+			if _, err := os.Stat(filepath.Join(binDir, lib)); err != nil {
+				t.Fatalf("missing runtime lib: %s", filepath.Join(binDir, lib))
+			}
+		}
+	case "linux":
+		if _, err := os.Stat(filepath.Join(binDir, "libzvec_c_api.so")); err != nil {
+			t.Fatalf("missing runtime lib: %s", filepath.Join(binDir, "libzvec_c_api.so"))
+		}
+	}
+
+	rooMcpJSON := filepath.Join(target, ".roo", "mcp.json")
+	rooData, err := os.ReadFile(rooMcpJSON)
+	if err != nil {
+		t.Fatalf("read .roo/mcp.json: %v", err)
+	}
+	rooText := string(rooData)
+	if !strings.Contains(rooText, "semantic-search-zvec-go") {
+		t.Fatalf(".roo/mcp.json missing server key: %s", rooText)
+	}
+
+	rooRulePath := filepath.Join(target, ".roo", "rules", "semantic-search-zvec-go.md")
+	rooRule, err := os.ReadFile(rooRulePath)
+	if err != nil {
+		t.Fatalf("read roo rule: %v", err)
+	}
+	if !strings.Contains(string(rooRule), "managedBy: mcp-semantic-search-zvec-go") {
+		t.Fatalf("roo rule missing managedBy marker")
+	}
+
 	envPath := filepath.Join(installDir, ".env")
 	if _, err := os.Stat(envPath); err != nil {
 		t.Fatalf("missing .env: %s", envPath)

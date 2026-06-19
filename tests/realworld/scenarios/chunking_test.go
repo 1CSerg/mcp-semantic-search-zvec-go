@@ -100,6 +100,7 @@ func TestChunkingLineWindow(t *testing.T) {
 		{"REALWORLD_SQL_SCHEMA", "schema.sql", "REALWORLD_SQL_SCHEMA"},
 		{"REALWORLD_SH_DEPLOY", "deploy.sh", "REALWORLD_SH_DEPLOY"},
 		{"REALWORLD_JAVA_APP", "App.java", "REALWORLD_JAVA_APP"},
+		{"REALWORLD_YAML_CONFIG", "app.yaml", "REALWORLD_YAML_CONFIG"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			hit := harness.AssertSearchHit(t, base, tc.query, tc.path, "", "line_window")

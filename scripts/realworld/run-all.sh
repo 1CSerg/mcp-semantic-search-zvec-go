@@ -36,8 +36,28 @@ if [[ ! -f "$ZVEC_ENV" ]]; then
 fi
 # shellcheck disable=SC1091
 . "$ZVEC_ENV"
-# shellcheck disable=SC1091
-. "$REPO_ROOT/.deps/onnxruntime.env" 2>/dev/null || true
+if [[ -z "${ZVEC_LIB_DIR:-}" ]]; then
+  echo "run-all.sh: ZVEC_LIB_DIR is not set after sourcing $ZVEC_ENV" >&2
+  exit 1
+fi
+if [[ ! -d "$ZVEC_LIB_DIR" ]]; then
+  echo "run-all.sh: ZVEC_LIB_DIR does not exist: $ZVEC_LIB_DIR" >&2
+  exit 1
+fi
+
+ORT_ENV="$REPO_ROOT/.deps/onnxruntime.env"
+if [[ -f "$ORT_ENV" ]]; then
+  # shellcheck disable=SC1091
+  . "$ORT_ENV"
+  if [[ -z "${ORT_LIB_DIR:-}" ]]; then
+    echo "run-all.sh: ORT_LIB_DIR is not set after sourcing $ORT_ENV" >&2
+    exit 1
+  fi
+  if [[ ! -d "$ORT_LIB_DIR" ]]; then
+    echo "run-all.sh: ORT_LIB_DIR does not exist: $ORT_LIB_DIR" >&2
+    exit 1
+  fi
+fi
 
 export CGO_ENABLED=1
 export LD_LIBRARY_PATH="${ZVEC_LIB_DIR:-}:${ORT_LIB_DIR:-}:${LD_LIBRARY_PATH:-}"

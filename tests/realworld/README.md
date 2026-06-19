@@ -48,7 +48,7 @@ Runtime env (set by harness helpers):
 | T2 | `TestMCPStdioTransport` | `--stdio` subprocess: `index_status`, `reindex`, `semantic_search` |
 | T7 | `TestInstallLayoutSmoke` | Install script: binary, launcher (Windows), `mcp.json`, managed Cursor rule, `.env` |
 | I1 | (in T1/chunking) | Full `reindex force:true` over corpus |
-| S1–S4 | `TestChunking*` | AST, prose, SDBL, line_window |
+| S1–S4 | `TestChunking*` | AST, prose, SDBL, line_window (`schema.sql`, `deploy.sh`, `App.java`, `app.yaml`) |
 | E1–E2 | `TestEmbedServerDown`, `TestEmbedDimensionMismatch` | Embedding failures |
 
 ### Wave 2
