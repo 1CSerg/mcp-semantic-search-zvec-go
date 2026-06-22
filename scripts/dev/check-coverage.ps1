@@ -6,32 +6,43 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$output = go test -coverprofile="$Profile" $Packages.Split(" ") 2>&1
-$output | ForEach-Object { Write-Host $_ }
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 
-$lines = go tool cover -func="$Profile"
-$totalLine = $lines | Select-String "^total:"
-if (-not $totalLine) {
-    Write-Error "could not parse coverage total from $Profile"
-}
-$total = [double]($totalLine -replace ".*\s+(\d+\.?\d*)%.*", '$1')
-Write-Host ("coverage: {0}% (project minimum {1}%, packages: {2})" -f $total, $Min, $Packages)
+$failed = $false
+try {
+    $output = go test -coverprofile="$Profile" $Packages.Split(" ") 2>&1
+    $output | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) { throw "go test failed with exit code $LASTEXITCODE" }
 
-$pkgFailed = $false
-$output | Select-String "coverage: \d+\.?\d*% of statements" | ForEach-Object {
-    if ($_.Line -match "coverage: ([\d.]+)%") {
-        $pct = [double]$matches[1]
-        $pkg = ($_.Line -split "\s+")[1]
-        Write-Host ("  package {0}: {1}% (module minimum {2}%)" -f $pkg, $pct, $PkgMin)
-        if ($pct -lt $PkgMin) {
-            Write-Error ("package {0}: {1}% is below module minimum {2}%" -f $pkg, $pct, $PkgMin)
-            $pkgFailed = $true
+    $lines = go tool cover -func="$Profile"
+    $totalLine = $lines | Select-String "^total:"
+    if (-not $totalLine) {
+        throw "could not parse coverage total from $Profile"
+    }
+    $total = [double]($totalLine -replace ".*\s+(\d+\.?\d*)%.*", '$1')
+    Write-Host ("coverage: {0}% (project minimum {1}%, packages: {2})" -f $total, $Min, $Packages)
+
+    $pkgFailed = $false
+    $output | Select-String "coverage: \d+\.?\d*% of statements" | ForEach-Object {
+        if ($_.Line -match "coverage: ([\d.]+)%") {
+            $pct = [double]$matches[1]
+            $pkg = ($_.Line -split "\s+")[1]
+            Write-Host ("  package {0}: {1}% (module minimum {2}%)" -f $pkg, $pct, $PkgMin)
+            if ($pct -lt $PkgMin) {
+                Write-Error ("package {0}: {1}% is below module minimum {2}%" -f $pkg, $pct, $PkgMin)
+                $pkgFailed = $true
+            }
         }
     }
-}
-if ($pkgFailed) { exit 1 }
+    if ($pkgFailed) { throw "one or more packages below module minimum" }
 
-if ($total -lt $Min) {
-    Write-Error ("coverage {0}% is below project minimum {1}%" -f $total, $Min)
+    if ($total -lt $Min) {
+        throw ("coverage {0}% is below project minimum {1}%" -f $total, $Min)
+    }
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

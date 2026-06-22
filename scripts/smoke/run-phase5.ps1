@@ -1,5 +1,6 @@
 # Phase 5 gate smoke: shared daemon with 3 workspaces + MCP proxy test.
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-phase5"
@@ -60,6 +61,7 @@ function New-Workspace($id, $keyword) {
 }
 
 $script:SmokeProcs = @()
+$failed = $false
 try {
     Get-Process mcp-semantic-search-zvec-go -ErrorAction SilentlyContinue | Stop-Process -Force
     if (Test-Path $SmokeRoot) { Remove-Item -Recurse -Force $SmokeRoot }
@@ -160,7 +162,12 @@ workspaces:
     Pop-Location
 
     Write-Host "PASS Phase 5 smoke: daemon with 3 workspaces, search isolation, concurrent status, MCP proxy test"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     Stop-SmokeProcs
     Get-Job -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

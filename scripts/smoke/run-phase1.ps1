@@ -1,5 +1,6 @@
 # Phase 1 gate smoke: seed-index -> HTTP /v1/search with ranked results.
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeIndex = Join-Path $env:TEMP "mcp-zvec-smoke-index"
@@ -16,6 +17,7 @@ function Stop-SmokeProcs {
 }
 
 $script:SmokeProcs = @()
+$failed = $false
 try {
     Get-Process -Name "mcp-semantic-search-zvec-go" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
@@ -78,7 +80,12 @@ try {
 
     Write-Host "PASS Phase 1 smoke: $($results.Count) results, top score=$($results[0].score)"
     Write-Host "  path=$($results[0].path) snippet=$($results[0].snippet)"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     Stop-SmokeProcs
     Pop-Location -ErrorAction SilentlyContinue
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

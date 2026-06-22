@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $Image = "mcp-realworld-smoke:local"
@@ -15,6 +16,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     exit 0
 }
 
+$failed = $false
 try {
     if (Test-Path $IndexVol) { Remove-Item -Recurse -Force $IndexVol }
     New-Item -ItemType Directory -Path $IndexVol | Out-Null
@@ -58,6 +60,11 @@ try {
         throw "search miss in container"
     }
     Write-Host "PASS realworld Docker smoke (D1/D2)"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     docker rm -f mcp-realworld-smoke 2>$null | Out-Null
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

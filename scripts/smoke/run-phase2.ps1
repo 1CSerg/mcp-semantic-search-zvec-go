@@ -1,5 +1,6 @@
 # Phase 2 gate smoke: empty project -> reindex -> HTTP search.
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-phase2"
@@ -17,6 +18,7 @@ function Stop-SmokeProcs {
 }
 
 $script:SmokeProcs = @()
+$failed = $false
 try {
     Get-Process -Name "mcp-semantic-search-zvec-go" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
@@ -91,6 +93,11 @@ try {
 
     Write-Host "PASS Phase 2 smoke: reindex + search ($($results.Count) results)"
     Write-Host "  path=$($results[0].path)"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     Stop-SmokeProcs
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

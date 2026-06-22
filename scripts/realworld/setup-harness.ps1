@@ -6,6 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $Realworld = Join-Path $RepoRoot ".realworld"
@@ -40,6 +41,9 @@ function Copy-RuntimeLibs {
     }
 }
 
+$failed = $false
+try {
+
 Write-Host "==> build-zvec"
 & "$RepoRoot\scripts\dev\build-zvec-windows.ps1" | Out-Null
 
@@ -67,3 +71,11 @@ Write-Host "  WORKSPACE_ROOT=$(Join-Path $RepoRoot 'tests\realworld\corpus')"
 Write-Host "  INDEX_DIR=$IndexDir"
 Write-Host "  CONFIG_PATH=$(Join-Path $Realworld 'config.yaml')"
 Write-Host "  BIN=$(Join-Path $BinDir $BinName)"
+
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
+}
+if ($failed) { exit 1 }

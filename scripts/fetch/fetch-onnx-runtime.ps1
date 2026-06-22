@@ -1,7 +1,12 @@
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Invoke-RemoteFile.ps1')
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Version = if ($env:ONNXRUNTIME_VERSION) { $env:ONNXRUNTIME_VERSION } else { "1.26.0" }
 $Dest = Join-Path $RepoRoot ".deps\onnxruntime"
+
+$failed = $false
+try {
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
 $Archive = "onnxruntime-win-x64-$Version.zip"
@@ -11,7 +16,7 @@ $Tmp = Join-Path $Dest $Archive
 
 if (-not (Test-Path $Tmp)) {
     Write-Host "Downloading $Url..."
-    Invoke-WebRequest -Uri $Url -OutFile $Tmp -UseBasicParsing
+    Invoke-RemoteFile -Uri $Url -OutFile $Tmp
 }
 
 $Extract = Join-Path $Dest "extract-$Version"
@@ -35,3 +40,11 @@ $env:ORT_LIB_DIR = $OrtLibDir
 $env:ONNXRUNTIME_SHARED_LIBRARY_PATH = Join-Path $OrtLibDir $LibName
 Write-Host "ORT_LIB_DIR=$OrtLibDir"
 Write-Host "ONNXRUNTIME_SHARED_LIBRARY_PATH=$($env:ONNXRUNTIME_SHARED_LIBRARY_PATH)"
+
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
+}
+if ($failed) { exit 1 }

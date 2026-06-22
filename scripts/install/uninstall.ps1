@@ -4,9 +4,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 if ((Split-Path -Leaf $PSScriptRoot) -eq '.mcp-semantic-search-zvec-go') {
+    . (Join-Path $PSScriptRoot 'bin\Stay-OpenOnError.ps1')
     $InstallDir = $PSScriptRoot
     $TargetRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 } else {
+    . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
     $TargetRoot = (Get-Location).Path
     $InstallDir = Join-Path $TargetRoot ".mcp-semantic-search-zvec-go"
 }
@@ -314,6 +316,9 @@ if (Test-Path $manifestPath) {
     } catch { }
 }
 
+$failed = $false
+try {
+
 Invoke-UninstallStep "stop MCP processes" {
     Stop-McpProcesses -Workspace $TargetRoot -InstallDir $InstallDir
 }
@@ -354,8 +359,16 @@ if ($script:StepErrors.Count -gt 0) {
     foreach ($err in $script:StepErrors) {
         Write-Warning $err
     }
-    exit 1
+    $failed = $true
+} else {
+    Write-Host "Uninstalled $ServerKey. Restart Cursor."
 }
 
-Write-Host "Uninstalled $ServerKey. Restart Cursor."
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
+}
+if ($failed) { exit 1 }
 exit 0

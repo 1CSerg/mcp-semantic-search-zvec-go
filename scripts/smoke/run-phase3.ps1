@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-phase3"
@@ -44,6 +45,7 @@ function Wait-IndexingIdle($port) {
 }
 
 $script:SmokeProcs = @()
+$failed = $false
 try {
     if (Test-Path $SmokeRoot) { Remove-Item -Recurse -Force $SmokeRoot }
     New-Item -ItemType Directory -Force -Path (Join-Path $SmokeRoot "pkg") | Out-Null
@@ -118,6 +120,11 @@ try {
     if (-not $resp.performance) { throw "missing search performance metrics" }
 
     Write-Host "PASS Phase 3 smoke: $Reconnects reconnects + watcher + /ready"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     Stop-SmokeProcs
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

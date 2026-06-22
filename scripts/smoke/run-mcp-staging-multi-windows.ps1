@@ -1,5 +1,6 @@
 # Smoke: two Windows project-local installs (native per-project) run in parallel with isolated workspaces.
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-staging-multi"
@@ -161,6 +162,7 @@ func Handler() {}
 }
 
 $script:SmokeProcs = @()
+$failed = $false
 try {
     Get-Process mcp-semantic-search-zvec-go -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process -Name "go" -ErrorAction SilentlyContinue | Where-Object {
@@ -308,6 +310,11 @@ try {
     Assert-CursorRuleRemoved -Root $rootA
 
     Write-Host "PASS project-local multi-windows smoke: two installs, parallel HTTP, workspace isolation, stdio uninstall"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     Stop-SmokeProcs
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

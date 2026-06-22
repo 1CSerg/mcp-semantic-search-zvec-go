@@ -11,7 +11,7 @@ Purpose-based layout for install, dependency fetch, contributor tooling, phase g
 | **smoke/** | Phase gate tests (`make smoke-phaseN`) | `run-phase1.*` … `run-phase5.*`, `run-phase5-docker.*`, `run-mcp-staging-multi-windows.ps1`, fixtures |
 | **realworld/** | Manual E2E harness (`make test-realworld`) — **not CI** | `setup-harness.*`, `run-all.*`, `run-docker.*`; fixtures in `tests/realworld/` |
 | **spike/** | Docker zvec integration (optional manual check) | `run-docker.sh`, `run-docker-inner.sh` |
-| **lib/** | Shared shell helpers | `normalize-eol.sh` |
+| **lib/** | Shared shell helpers | `normalize-eol.sh`, `Stay-OpenOnError.ps1` (Windows: pause console on error), `Invoke-RemoteFile.ps1` (IWR + `curl.exe --ssl-no-revoke` fallback) |
 
 ## Common entry points
 
@@ -54,6 +54,8 @@ make test-cover-check
 .\scripts\realworld\run-all.ps1 -Profile onnx
 .\scripts\realworld\run-all.ps1 -Profile onnx -Docker
 ```
+
+Interactive Windows scripts pause on error (`Нажмите Enter для закрытия`) unless `STAY_OPEN_DISABLE=true`, `STAY_OPEN_SUPPRESS=1` (child scripts), or running in CI. Installed launchers ship `Stay-OpenOnError.ps1` in project `bin/`.
 
 ## Realworld harness
 

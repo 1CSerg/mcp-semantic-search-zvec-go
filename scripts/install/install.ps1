@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $InstallDir = Join-Path $TargetRoot ".mcp-semantic-search-zvec-go"
 $BinDir = Join-Path $InstallDir "bin"
@@ -96,7 +97,7 @@ function Build-WindowsMcpEnv {
 function Install-WindowsLaunchers {
     param([string]$DestBinDir)
     $srcDir = Join-Path $Templates "bin"
-    foreach ($name in @("run-mcp-stdio.ps1", "run-mcp-proxy.ps1", "run-mcp-stdio.cmd")) {
+    foreach ($name in @("run-mcp-stdio.ps1", "run-mcp-proxy.ps1", "run-mcp-stdio.cmd", "Stay-OpenOnError.ps1")) {
         $src = Join-Path $srcDir $name
         if (-not (Test-Path $src)) {
             throw "launcher template not found: $src"
@@ -323,6 +324,9 @@ function Install-ConfigYaml {
     Write-Host "Created config.yaml (Python merge unavailable)"
 }
 
+$failed = $false
+try {
+
 $version = Get-VersionFromRepo
 Write-Host "Installing mcp-semantic-search-zvec-go v$version into $InstallDir"
 
@@ -456,3 +460,11 @@ Write-Host "Done. Restart Cursor. MCP server key: $ServerKey"
 Write-Host "Roo/Zoo Code: .roo/mcp.json and $RooRuleRelPath updated — restart Roo Code if used."
 Write-Host "Fill in $envFile for cloud embedding profiles (RouterAI, DashScope, etc.)."
 Write-Host "For offline ONNX: set active_profile: local_multilingual and run reindex with force=true."
+
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
+}
+if ($failed) { exit 1 }

@@ -1,5 +1,6 @@
 # Phase 4 gate smoke: local ONNX profile without external embedding API.
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-phase4"
@@ -42,6 +43,7 @@ function Wait-IndexingIdle($port) {
 }
 
 $script:SmokeProcs = @()
+$failed = $false
 try {
     Get-Process mcp-semantic-search-zvec-go -ErrorAction SilentlyContinue | Stop-Process -Force
     if (Test-Path $SmokeRoot) { Remove-Item -Recurse -Force $SmokeRoot }
@@ -102,6 +104,11 @@ try {
     if (-not $resp.performance) { throw "missing search performance metrics" }
 
     Write-Host "PASS Phase 4 smoke: local_multilingual reindex + search without external API"
+} catch {
+    $failed = $true
+    Write-Error $_
 } finally {
     Stop-SmokeProcs
+    if ($failed) { Wait-IfInteractiveOnError }
 }
+if ($failed) { exit 1 }

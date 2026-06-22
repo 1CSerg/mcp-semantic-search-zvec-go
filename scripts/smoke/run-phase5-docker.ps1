@@ -1,5 +1,6 @@
 # Phase 5 Docker smoke: shared daemon container with 2 workspaces + isolation checks.
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 $SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-phase5-docker"
@@ -218,6 +219,7 @@ workspaces:
         Invoke-Docker -Quiet compose -f $ComposeFile --project-name $ComposeProject down -v | Out-Null
     }
     Remove-Item Env:HTTP_PORT, Env:WS_ALPHA_ROOT, Env:WS_ALPHA_INDEX, Env:WS_BETA_ROOT, Env:WS_BETA_INDEX, Env:DAEMON_CONFIG_PATH -ErrorAction SilentlyContinue
+    if ($failed) { Wait-IfInteractiveOnError }
 }
 
 if ($failed) { exit 1 }

@@ -3,6 +3,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Invoke-RemoteFile.ps1')
 $ModelURL = if ($env:ONNX_MODEL_URL) { $env:ONNX_MODEL_URL } else {
     "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main/onnx/model.onnx"
 }
@@ -19,16 +21,26 @@ function Verify-Sha256 {
     }
 }
 
+$failed = $false
+try {
 New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
 $modelPath = Join-Path $DestDir "model_optimized.onnx"
 $tokenizerPath = Join-Path $DestDir "tokenizer.json"
 
 Write-Host "Downloading model_optimized.onnx..."
-Invoke-WebRequest -Uri $ModelURL -OutFile $modelPath -UseBasicParsing
+Invoke-RemoteFile -Uri $ModelURL -OutFile $modelPath
 Write-Host "Downloading tokenizer.json..."
-Invoke-WebRequest -Uri $TokenizerURL -OutFile $tokenizerPath -UseBasicParsing
+Invoke-RemoteFile -Uri $TokenizerURL -OutFile $tokenizerPath
 
 Verify-Sha256 $modelPath $env:ONNX_MODEL_SHA256
 Verify-Sha256 $tokenizerPath $env:ONNX_TOKENIZER_SHA256
 
 Write-Host "ONNX model bundle ready at $DestDir"
+
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
+}
+if ($failed) { exit 1 }

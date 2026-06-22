@@ -8,12 +8,27 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
 
-$setupArgs = @("-Profile", $Profile)
-if ($KeepIndex) { $setupArgs += "-KeepIndex" }
-& (Join-Path $ScriptDir "setup-harness.ps1") @setupArgs
+$failed = $false
+try {
+
+$setupArgs = @{ Profile = $Profile }
+if ($KeepIndex) { $setupArgs['KeepIndex'] = $true }
+$prevStayOpenSuppress = $env:STAY_OPEN_SUPPRESS
+$env:STAY_OPEN_SUPPRESS = '1'
+try {
+    & (Join-Path $ScriptDir "setup-harness.ps1") @setupArgs
+    if ($LASTEXITCODE -ne 0) { throw "setup-harness.ps1 failed with exit code $LASTEXITCODE" }
+} finally {
+    if ($null -eq $prevStayOpenSuppress) {
+        Remove-Item Env:STAY_OPEN_SUPPRESS -ErrorAction SilentlyContinue
+    } else {
+        $env:STAY_OPEN_SUPPRESS = $prevStayOpenSuppress
+    }
+}
 
 $zvecEnv = Join-Path $RepoRoot ".deps\zvec-lib.env"
 if (-not (Test-Path $zvecEnv)) {
@@ -41,9 +56,19 @@ if ($Run) { $testArgs = @("-run", $Run) + $testArgs }
 Push-Location $RepoRoot
 try {
     go test @testArgs
+    if ($LASTEXITCODE -ne 0) { throw "go test failed with exit code $LASTEXITCODE" }
     if ($Docker) {
         & (Join-Path $ScriptDir "run-docker.ps1")
+        if ($LASTEXITCODE -ne 0) { throw "run-docker.ps1 failed with exit code $LASTEXITCODE" }
     }
 } finally {
     Pop-Location
 }
+
+} catch {
+    $failed = $true
+    Write-Error $_
+} finally {
+    if ($failed) { Wait-IfInteractiveOnError }
+}
+if ($failed) { exit 1 }
