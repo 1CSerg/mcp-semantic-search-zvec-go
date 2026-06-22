@@ -39,6 +39,10 @@ if [[ ! -d "$ZVEC_LIB_DIR" ]]; then
   exit 1
 fi
 
+# shellcheck disable=SC1091
+source "$ROOT/scripts/dev/native-path.sh"
+ZVEC_LIB_DIR="$(native_path "$ZVEC_LIB_DIR")"
+
 mkdir -p "$ROOT/.deps"
 printf 'ZVEC_LIB_DIR=%s\n' "$ZVEC_LIB_DIR" > "$ROOT/.deps/zvec-lib.env"
 echo "ZVEC_LIB_DIR=$ZVEC_LIB_DIR"

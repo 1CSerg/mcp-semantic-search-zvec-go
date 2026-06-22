@@ -6,14 +6,7 @@ Push-Location $RepoRoot
 $failed = $false
 try {
     $env:CGO_ENABLED = "1"
-    $ZvecEnv = Join-Path $RepoRoot ".deps\zvec-lib.env"
-    if (Test-Path $ZvecEnv) {
-        Get-Content $ZvecEnv | ForEach-Object {
-            if ($_ -match '^ZVEC_LIB_DIR=(.+)$') {
-                $env:PATH = "$($Matches[1]);$env:PATH"
-            }
-        }
-    }
+    . (Join-Path $RepoRoot "scripts\dev\ci-native-env.ps1")
     go build -tags "zvec,treesitter" -o NUL github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/ast
     if ($LASTEXITCODE -ne 0) { throw "go build ast package failed" }
     go test -tags "zvec,treesitter" -run "TestParseGoTree|TestExtractSymbol|TestASTChunker" -count=1 github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/ast

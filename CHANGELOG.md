@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.0
+
 - Fix: shared daemon `WorkspaceRegistry` — two-phase cold-open, `Close()` drain, `ErrRegistryClosing` → HTTP 503 during shutdown.
 - Fix: open daemon (no `API_TOKEN`) redacts path fields in status/search/reindex; sanitizes path-bearing messages; `include_paths` requires Bearer.
 - Docs: align log path to `.mcp-semantic-search-zvec-go/logs/server.log`.

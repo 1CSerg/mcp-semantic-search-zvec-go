@@ -335,7 +335,11 @@ func TestIsStaleModernOldHeartbeat(t *testing.T) {
 
 func TestIsStalePIDReuse(t *testing.T) {
 	dir := t.TempDir()
-	line := formatLockPayload(os.Getpid(), 1, time.Now().Unix())
+	got := processStartUnix(os.Getpid())
+	if got <= 0 {
+		t.Skip("process start time unavailable on this platform")
+	}
+	line := formatLockPayload(os.Getpid(), got+86400, time.Now().Unix())
 	if err := os.WriteFile(filepath.Join(dir, lockFileName), []byte(line), 0o600); err != nil {
 		t.Fatal(err)
 	}

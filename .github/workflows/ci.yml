@@ -117,18 +117,47 @@ jobs:
           install: mingw-w64-x86_64-gcc
           path-type: inherit
 
-      - name: Fetch tree-sitter grammars
-        if: matrix.fetch_grammars
+      - name: Fetch ONNX Runtime
+        if: matrix.fetch_zvec && contains(matrix.tags, 'onnx')
         shell: bash
-        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+        run: bash scripts/fetch/fetch-onnx-runtime.sh >> "$GITHUB_ENV"
+
+      - name: Fetch tree-sitter grammars (Windows)
+        if: matrix.fetch_grammars && runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\fetch\fetch-tree-sitter-grammars.ps1
+
+      - name: Fetch tree-sitter grammars
+        if: matrix.fetch_grammars && runner.os != 'Windows'
+        shell: bash
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
+          bash scripts/fetch/fetch-tree-sitter-grammars.sh
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CGO_ENABLED: ${{ matrix.cgo }}
+          GOFLAGS: "-tags=${{ matrix.tags }}"
+        run: |
+          . ./scripts/dev/ci-native-env.ps1
+          if ("${{ matrix.tags }}" -ne "") {
+            go test -tags "${{ matrix.tags }}" -count=1 ./...
+          } else {
+            go test -count=1 ./...
+          }
 
       - name: Test
+        if: runner.os != 'Windows'
         shell: bash
         env:
           CGO_ENABLED: ${{ matrix.cgo }}
           GOFLAGS: "-tags=${{ matrix.tags }}"
-          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
         run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
           if [ -n "${{ matrix.tags }}" ]; then
             go test -tags "${{ matrix.tags }}" -count=1 ./...
           else
@@ -149,14 +178,22 @@ jobs:
       - name: Fetch zvec-go vendor libs
         run: bash scripts/fetch/fetch-zvec-libs.sh >> "$GITHUB_ENV"
 
+      - name: Fetch ONNX Runtime
+        run: bash scripts/fetch/fetch-onnx-runtime.sh >> "$GITHUB_ENV"
+
       - name: Fetch tree-sitter grammars
-        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
+          bash scripts/fetch/fetch-tree-sitter-grammars.sh
 
       - name: AST chunk tests (optional macOS)
         env:
           CGO_ENABLED: "1"
-          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
-        run: go test -tags "zvec,onnx,treesitter" -count=1 ./internal/indexer/chunk/...
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
+          go test -tags "zvec,onnx,treesitter" -count=1 ./internal/indexer/chunk/...
 
   zvec-integration:
     runs-on: ubuntu-latest
@@ -191,6 +228,9 @@ jobs:
       - name: Fetch zvec-go vendor libs
         run: bash scripts/fetch/fetch-zvec-libs.sh >> "$GITHUB_ENV"
 
+      - name: Fetch ONNX Runtime
+        run: bash scripts/fetch/fetch-onnx-runtime.sh >> "$GITHUB_ENV"
+
       - name: Cache tree-sitter grammars
         uses: actions/cache@v4
         with:
@@ -199,29 +239,37 @@ jobs:
           key: treesitter-grammars-${{ runner.os }}-${{ hashFiles('go.sum', 'scripts/fetch/fetch-tree-sitter-grammars.sh') }}
 
       - name: Fetch tree-sitter grammars
-        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
+          bash scripts/fetch/fetch-tree-sitter-grammars.sh
 
       - name: AST chunk tests (tree-sitter + CGO)
         env:
           CGO_ENABLED: "1"
-          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
           BENCH_CHECK: "1"
-        run: go test -tags "zvec,onnx,treesitter" -v -count=1 ./internal/indexer/chunk/...
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
+          go test -tags "zvec,onnx,treesitter" -v -count=1 ./internal/indexer/chunk/...
 
       - name: Hybrid benchmark full fixture gate (1000/200/200)
         timeout-minutes: 15
         env:
           CGO_ENABLED: "1"
-          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
           BENCH_CHECK: "1"
           BENCH_FULL: "1"
-        run: go test -tags "zvec,onnx,treesitter" -count=1 -run TestBenchmarkHybridWithin2x ./internal/indexer/chunk/...
+        run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
+          go test -tags "zvec,onnx,treesitter" -count=1 -run TestBenchmarkHybridWithin2x ./internal/indexer/chunk/...
 
       - name: Chunk package coverage (treesitter min 80%)
         env:
           CGO_ENABLED: "1"
-          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
         run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
           go test -tags "zvec,onnx,treesitter" -coverprofile=coverage-chunk-parent.out ./internal/indexer/chunk/...
           total="$(go tool cover -func=coverage-chunk-parent.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
           echo "chunk parent coverage (treesitter): ${total}%"
@@ -235,8 +283,9 @@ jobs:
       - name: AST package coverage (min 80%)
         env:
           CGO_ENABLED: "1"
-          LD_LIBRARY_PATH: ${{ env.ZVEC_LIB_DIR }}
         run: |
+          # shellcheck disable=SC1091
+          source scripts/dev/ci-native-env.sh
           go test -tags "zvec,onnx,treesitter" -coverprofile=coverage-ast.out ./internal/indexer/chunk/ast/...
           total="$(go tool cover -func=coverage-ast.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
           echo "ast coverage: ${total}%"
@@ -257,9 +306,9 @@ jobs:
           go-version: "1.26.3"
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.61
+          version: v2.10.1
           args: --timeout=5m
 
   test-windows:
@@ -279,6 +328,10 @@ jobs:
         shell: bash
         run: bash scripts/fetch/fetch-zvec-libs.sh >> $GITHUB_ENV
 
+      - name: Fetch ONNX Runtime
+        shell: bash
+        run: bash scripts/fetch/fetch-onnx-runtime.sh >> $GITHUB_ENV
+
       - name: Install MSYS2 GCC (tree-sitter CGO)
         uses: msys2/setup-msys2@v2
         with:
@@ -296,9 +349,7 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: |
-          Get-Content .deps/zvec-lib.env | ForEach-Object {
-            if ($_ -match '^ZVEC_LIB_DIR=(.+)$') { $env:PATH = "$($Matches[1]);$env:PATH" }
-          }
+          . ./scripts/dev/ci-native-env.ps1
           go test -tags "zvec,onnx,treesitter" -count=1 ./internal/indexer/chunk/...
 
   merge-config:

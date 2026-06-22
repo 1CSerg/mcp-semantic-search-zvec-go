@@ -158,11 +158,11 @@ Example (update available):
 
 ```json
 {
-  "installed_version": "0.1.7",
-  "latest_version": "0.1.8",
+  "installed_version": "0.1.8",
+  "latest_version": "0.2.0",
   "update_available": true,
   "github_repo": "1CSerg/mcp-semantic-search-zvec-go",
-  "release_url": "https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases/tag/v0.1.8"
+  "release_url": "https://github.com/1CSerg/mcp-semantic-search-zvec-go/releases/tag/v0.2.0"
 }
 ```
 

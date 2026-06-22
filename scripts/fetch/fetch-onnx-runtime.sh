@@ -62,7 +62,12 @@ ORT_LIB_DIR="$DEST/$LIB_NAME.dir"
 mkdir -p "$ORT_LIB_DIR"
 cp -f "$LIB_PATH" "$ORT_LIB_DIR/$LIB_NAME"
 
+# shellcheck disable=SC1091
+source "$ROOT/scripts/dev/native-path.sh"
+ORT_LIB_DIR="$(native_path "$ORT_LIB_DIR")"
+ORT_LIB_PATH="$(native_path "$ORT_LIB_DIR/$LIB_NAME")"
+
 printf 'ORT_LIB_DIR=%s\n' "$ORT_LIB_DIR" > "$ROOT/.deps/onnxruntime.env"
-printf 'ONNXRUNTIME_SHARED_LIBRARY_PATH=%s/%s\n' "$ORT_LIB_DIR" "$LIB_NAME" >> "$ROOT/.deps/onnxruntime.env"
+printf 'ONNXRUNTIME_SHARED_LIBRARY_PATH=%s\n' "$ORT_LIB_PATH" >> "$ROOT/.deps/onnxruntime.env"
 echo "ORT_LIB_DIR=$ORT_LIB_DIR"
-echo "ONNXRUNTIME_SHARED_LIBRARY_PATH=$ORT_LIB_DIR/$LIB_NAME"
+echo "ONNXRUNTIME_SHARED_LIBRARY_PATH=$ORT_LIB_PATH"

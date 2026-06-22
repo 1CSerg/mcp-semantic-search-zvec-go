@@ -279,15 +279,27 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 	if tail[0] == '\n' {
 		start++
 	}
-	end := int64(node.EndPosition().Row) + 1
-	strategy := "ast"
+	parentScope := scope.String()
 	symbolName := ""
 	symbolKind := ""
-	parentScope := scope.String()
 	if parent != nil {
 		symbolName = parent.Name
 		symbolKind = parent.Kind
 		parentScope = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
+	}
+	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
+	if e.counter.Count(tail) > budget {
+		lines := strings.Split(strings.TrimLeft(tail, "\n"), "\n")
+		return emitPartialWindows(e.rel, lines, start, e.cfg, e.counter, partialMeta{
+			chunkStrategy: "partial",
+			symbolKind:    symbolKind,
+			symbolName:    symbolName,
+			parentScope:   parentScope,
+		}, e.emit)
+	}
+	end := int64(node.EndPosition().Row) + 1
+	strategy := "ast"
+	if parent != nil {
 		if parent.Kind == "function" || parent.Kind == "method" {
 			strategy = "partial"
 		}
@@ -345,6 +357,15 @@ func (e *engine) emitPreambleBeforeFirstBoundary(node *sitter.Node, scope Scope)
 	if e.counter.Count(pre) < e.minTokens {
 		return nil
 	}
+	parentScope := scope.String()
+	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
+	if e.counter.Count(pre) > budget {
+		lines := strings.Split(strings.TrimRight(pre, "\n"), "\n")
+		return emitPartialWindows(e.rel, lines, int64(node.StartPosition().Row)+1, e.cfg, e.counter, partialMeta{
+			chunkStrategy: "partial",
+			parentScope:   parentScope,
+		}, e.emit)
+	}
 	start := int64(node.StartPosition().Row) + 1
 	end := int64(firstBound.StartPosition().Row)
 	if end < start {
@@ -399,6 +420,26 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 	}
 	if strategy == "" {
 		strategy = "ast"
+	}
+	parentScope := scope.String()
+	if parent != nil {
+		parentScope = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
+	}
+	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
+	if e.counter.Count(text) > budget {
+		symbolKind := symbolKindForBufferNodes(nodes)
+		symbolName := ""
+		if parent != nil {
+			symbolKind = parent.Kind
+			symbolName = parent.Name
+		}
+		startLine := int64(nodes[0].StartPosition().Row) + 1
+		return emitPartialWindows(e.rel, strings.Split(text, "\n"), startLine, e.cfg, e.counter, partialMeta{
+			chunkStrategy: "partial",
+			symbolKind:    symbolKind,
+			symbolName:    symbolName,
+			parentScope:   parentScope,
+		}, e.emit)
 	}
 	symbolKind := symbolKindForBufferNodes(nodes)
 	ch := e.chunkFromNodes(nodes, scope, symbolKind, "", strategy)

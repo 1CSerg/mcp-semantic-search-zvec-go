@@ -139,8 +139,28 @@ func validateSettingsPaths(workspace, indexDir, configPath string, mode PathCont
 
 func resolvePathForContainment(path string) string {
 	path = filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
-		return resolved
+	// Resolve symlinks on the longest existing prefix so Windows short (8.3) and
+	// long paths compare consistently when trailing segments do not exist yet.
+	p := path
+	for {
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			if p == path {
+				return resolved
+			}
+			suffix, err := filepath.Rel(p, path)
+			if err != nil {
+				return resolved
+			}
+			return filepath.Join(resolved, suffix)
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			break
+		}
+		p = parent
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
 	}
 	return path
 }

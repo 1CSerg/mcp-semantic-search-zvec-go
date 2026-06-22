@@ -51,7 +51,7 @@ curl http://127.0.0.1:8080/health
 
 ## Статус
 
-**v0.1.8** — MRL `dimensions` в embed API, interrupted indexing resume в GUI, shared-daemon registry lifecycle и open-daemon path redaction, `indexing.failed_files` / `diagnostics.log_file`. **Hybrid chunking:** shipped Release/install — `-tags "zvec,onnx,treesitter"` (prose для `.md`/`.mdc`/`.txt`; AST для enabled code langs; legacy CI fallback `-tags "zvec,onnx"` → `line_window` на коде). **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
+**v0.2.0** — shared-daemon registry lifecycle (cold-open, graceful shutdown, HTTP 503 при закрытии), redaction путей в open daemon (status/search/reindex). **Hybrid chunking:** shipped Release/install — `-tags "zvec,onnx,treesitter"` (prose для `.md`/`.mdc`/`.txt`; AST для enabled code langs; legacy CI fallback `-tags "zvec,onnx"` → `line_window` на коде). **v0.1.5** — MCP stdio + HTTP, watcher, локальный ONNX, Unicode INDEX_DIR на Windows. Сборка с нативными deps: `make build-zvec` или install-скрипт.
 
 ## Лицензия
 

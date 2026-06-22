@@ -65,6 +65,9 @@ func TestIsPathAllowedWithAllowlist(t *testing.T) {
 		t.Fatal("external path should pass with allowlist")
 	}
 	child := filepath.Join(external, "nested")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if !IsPathAllowed(child, []string{root}, []string{external}) {
 		t.Fatal("child of allowlisted path should pass")
 	}

@@ -1,7 +1,5 @@
 package lock
 
-import "time"
-
 func processMatchesLock(pid int, startTime int64) bool {
 	if !processAlive(pid) {
 		return false
@@ -11,11 +9,12 @@ func processMatchesLock(pid int, startTime int64) bool {
 	}
 	got := processStartUnix(pid)
 	if got <= 0 {
-		return true
+		// Cannot verify start time; treat as non-match so stale locks are reclaimed.
+		return startTime <= 0
 	}
 	diff := got - startTime
 	if diff < 0 {
 		diff = -diff
 	}
-	return diff <= int64(time.Second)
+	return diff <= 1
 }

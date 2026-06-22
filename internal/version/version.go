@@ -2,7 +2,7 @@ package version
 
 const (
 	Name    = "mcp-semantic-search-zvec-go"
-	Version = "0.1.8"
+	Version = "0.2.0"
 
 	// ZvecGoVersion must match go.mod require github.com/zvec-ai/zvec-go (tag vX.Y.Z).
 	// Windows Unicode index paths: patched via replace ./.deps/zvec-go (ACP path encoding).
