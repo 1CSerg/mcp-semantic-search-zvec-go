@@ -147,6 +147,29 @@ func parseErrorRate(root *sitter.Node) float64 {
 	return float64(errs) / float64(total)
 }
 
+// budgetParentScope matches ParentScope used on emitted chunks (effectiveScope + boundary parent).
+func (e *engine) budgetParentScope(scope Scope, node *sitter.Node, parent *BoundaryMeta) string {
+	scopeForBudget := scope
+	if node != nil {
+		scopeForBudget = e.effectiveScope(scope, node)
+	}
+	if parent != nil {
+		return parentScopeForBoundary(scopeForBudget, *parent, e.lang)
+	}
+	return scopeForBudget.String()
+}
+
+// partialParentScope is ParentScope on partial chunks (enclosing boundary for non-BSL).
+func (e *engine) partialParentScope(scope Scope, node *sitter.Node, parent *BoundaryMeta) string {
+	if parent != nil && e.lang != "bsl" {
+		return parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
+	}
+	if node != nil {
+		return e.effectiveScope(scope, node).String()
+	}
+	return scope.String()
+}
+
 func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope, parent *BoundaryMeta, enclosingScope Scope, emitGroupPreamble, extractOnly bool) error {
 	e.parentMeta = parent
 	e.enclosingScope = enclosingScope
@@ -162,7 +185,7 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
 				return err
 			}
-			ps := parentScopeForBoundary(scope, meta, e.lang)
+			ps := parentScopeForBoundary(e.effectiveScope(scope, child), meta, e.lang)
 			budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
 			if e.tokenSize(child) <= budget {
 				if extractOnly {
@@ -220,7 +243,7 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 			continue
 		}
 
-		ps := scope.String()
+		ps := e.budgetParentScope(scope, child, parent)
 		budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
 		childSize := e.tokenSize(child)
 		if childSize > budget {
@@ -279,22 +302,23 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 	if tail[0] == '\n' {
 		start++
 	}
-	parentScope := scope.String()
 	symbolName := ""
 	symbolKind := ""
 	if parent != nil {
 		symbolName = parent.Name
 		symbolKind = parent.Kind
-		parentScope = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
 	}
-	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
+	budgetScope := e.budgetParentScope(scope, node, parent)
+	chunkScope := e.partialParentScope(scope, node, parent)
+	budget := e.cfg.bodyBudget(e.counter, e.rel, budgetScope)
 	if e.counter.Count(tail) > budget {
 		lines := strings.Split(strings.TrimLeft(tail, "\n"), "\n")
 		return emitPartialWindows(e.rel, lines, start, e.cfg, e.counter, partialMeta{
 			chunkStrategy: "partial",
 			symbolKind:    symbolKind,
 			symbolName:    symbolName,
-			parentScope:   parentScope,
+			parentScope:   chunkScope,
+			budgetScope:   budgetScope,
 		}, e.emit)
 	}
 	end := int64(node.EndPosition().Row) + 1
@@ -314,7 +338,7 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 		Snippet:       strings.TrimLeft(tail, "\n"),
 		SymbolName:    symbolName,
 		SymbolKind:    symbolKind,
-		ParentScope:   parentScope,
+		ParentScope:   chunkScope,
 		ChunkStrategy: strategy,
 	}
 	return e.emit(ch)
@@ -357,7 +381,7 @@ func (e *engine) emitPreambleBeforeFirstBoundary(node *sitter.Node, scope Scope)
 	if e.counter.Count(pre) < e.minTokens {
 		return nil
 	}
-	parentScope := scope.String()
+	parentScope := e.budgetParentScope(scope, node, nil)
 	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
 	if e.counter.Count(pre) > budget {
 		lines := strings.Split(strings.TrimRight(pre, "\n"), "\n")
@@ -421,10 +445,7 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 	if strategy == "" {
 		strategy = "ast"
 	}
-	parentScope := scope.String()
-	if parent != nil {
-		parentScope = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
-	}
+	parentScope := e.budgetParentScope(scope, &nodes[0], parent)
 	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
 	if e.counter.Count(text) > budget {
 		symbolKind := symbolKindForBufferNodes(nodes)
@@ -438,7 +459,8 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 			chunkStrategy: "partial",
 			symbolKind:    symbolKind,
 			symbolName:    symbolName,
-			parentScope:   parentScope,
+			parentScope:   e.partialParentScope(scope, &nodes[0], parent),
+			budgetScope:   parentScope,
 		}, e.emit)
 	}
 	symbolKind := symbolKindForBufferNodes(nodes)
@@ -468,6 +490,10 @@ func (e *engine) emitBoundary(node *sitter.Node, meta BoundaryMeta, scope Scope,
 		return nil
 	}
 	ch.ParentScope = parentScopeForBoundary(scope, meta, e.lang)
+	budget := e.cfg.bodyBudget(e.counter, e.rel, ch.ParentScope)
+	if e.counter.Count(ch.Snippet) > budget {
+		return e.emitPartial(node, scope, &meta)
+	}
 	return e.emit(ch)
 }
 
@@ -481,15 +507,17 @@ func (e *engine) emitPartial(node *sitter.Node, scope Scope, parent *BoundaryMet
 		parentKind = parent.Kind
 		parentName = parent.Name
 	}
-	ps := scope.String()
+	scopeForBudget := e.effectiveScope(scope, node)
+	budgetScope := scopeForBudget.String()
 	if parent != nil {
-		ps = parentScopeForBoundary(e.enclosingScope, *parent, e.lang)
+		budgetScope = parentScopeForBoundary(scopeForBudget, *parent, e.lang)
 	}
 	return emitPartialWindows(e.rel, lines, int64(node.StartPosition().Row)+1, e.cfg, e.counter, partialMeta{
 		chunkStrategy: "partial",
 		symbolKind:    parentKind,
 		symbolName:    parentName,
-		parentScope:   ps,
+		parentScope:   e.partialParentScope(scope, node, parent),
+		budgetScope:   budgetScope,
 	}, e.emit)
 }
 

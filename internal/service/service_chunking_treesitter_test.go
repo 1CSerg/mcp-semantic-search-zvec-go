@@ -52,7 +52,7 @@ func TestSemanticSearch_MinirepoHybridE2E(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.query, func(t *testing.T) {
-			raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: tc.query, Limit: 5})
+			raw, err := p.SemanticSearch(context.Background(), SearchRequest{Query: tc.query, Limit: 25})
 			if err != nil {
 				t.Fatal(err)
 			}

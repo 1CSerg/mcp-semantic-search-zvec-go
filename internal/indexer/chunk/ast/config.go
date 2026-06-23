@@ -84,6 +84,7 @@ type partialMeta struct {
 	symbolKind    string
 	symbolName    string
 	parentScope   string
+	budgetScope   string // bodyBudget scope; defaults to parentScope when empty
 }
 
 func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config, counter token.TokenCounter, meta partialMeta, emit EmitFunc) error {
@@ -92,7 +93,11 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 	if minTokens <= 0 {
 		minTokens = 10
 	}
-	maxTokens := cfg.bodyBudget(counter, rel, meta.parentScope)
+	budgetScope := meta.parentScope
+	if meta.budgetScope != "" {
+		budgetScope = meta.budgetScope
+	}
+	maxTokens := cfg.bodyBudget(counter, rel, budgetScope)
 	for start := 0; start < len(lines); {
 		end := start + window
 		if end > len(lines) {

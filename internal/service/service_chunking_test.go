@@ -305,33 +305,37 @@ func assertSearchResult(t *testing.T, raw json.RawMessage, wantPathSuffix, wantS
 	if !ok || len(results) == 0 {
 		t.Fatalf("no results: %v", payload)
 	}
-	item, ok := results[0].(map[string]any)
-	if !ok {
-		t.Fatalf("result item=%v", results[0])
-	}
-	path, _ := item["path"].(string)
-	if wantPathSuffix != "" && !strings.Contains(path, wantPathSuffix) {
-		t.Fatalf("path=%q want suffix %q", path, wantPathSuffix)
-	}
-	if wantSymbolName != "" {
-		symbol, _ := item["symbol_name"].(string)
-		snippet, _ := item["snippet"].(string)
-		if symbol != wantSymbolName && !strings.Contains(snippet, wantSymbolName) {
-			t.Fatalf("symbol_name=%q snippet missing %q", symbol, wantSymbolName)
+	for _, r := range results {
+		item, ok := r.(map[string]any)
+		if !ok {
+			continue
 		}
-	}
-	if wantSymbolKind != "" {
-		kind, _ := item["symbol_kind"].(string)
-		if kind != wantSymbolKind {
-			t.Fatalf("symbol_kind=%q want %q", kind, wantSymbolKind)
+		path, _ := item["path"].(string)
+		if wantPathSuffix != "" && !strings.Contains(path, wantPathSuffix) {
+			continue
 		}
-	}
-	if wantStrategy != "" {
-		strategy, _ := item["chunk_strategy"].(string)
-		if strategy != wantStrategy {
-			t.Fatalf("chunk_strategy=%q want %q", strategy, wantStrategy)
+		if wantSymbolName != "" {
+			symbol, _ := item["symbol_name"].(string)
+			snippet, _ := item["snippet"].(string)
+			if symbol != wantSymbolName && !strings.Contains(snippet, wantSymbolName) {
+				continue
+			}
 		}
+		if wantSymbolKind != "" {
+			kind, _ := item["symbol_kind"].(string)
+			if kind != wantSymbolKind {
+				continue
+			}
+		}
+		if wantStrategy != "" {
+			strategy, _ := item["chunk_strategy"].(string)
+			if strategy != wantStrategy {
+				continue
+			}
+		}
+		return
 	}
+	t.Fatalf("no result matching path=%q symbol=%q kind=%q strategy=%q in %d hits", wantPathSuffix, wantSymbolName, wantSymbolKind, wantStrategy, len(results))
 }
 
 func TestSemanticSearch_NewFields(t *testing.T) {

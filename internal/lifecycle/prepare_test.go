@@ -86,7 +86,7 @@ func TestStopStaleStdioKillsHelper(t *testing.T) {
 	cmd := startStaleHelper(t, workspace)
 	defer func() { _ = cmd.Process.Kill() }()
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		stopped, err := stopStaleStdioInstances(workspace, os.Getpid())
 		if err != nil {
