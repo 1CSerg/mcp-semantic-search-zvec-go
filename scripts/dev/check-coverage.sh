@@ -21,7 +21,8 @@ echo "coverage: ${total}% (project minimum ${MIN}%, packages: ${PACKAGES})"
 
 fail=0
 while IFS= read -r line; do
-	pkg="$(echo "$line" | awk '{print $2}')"
+	# "ok  github.com/.../pkg  0.1s  coverage: N%" vs bare "github.com/.../pkg  coverage: N%"
+	pkg="$(echo "$line" | awk '{if ($1 == "ok") print $2; else print $1}')"
 	pct="$(echo "$line" | sed -n 's/.*coverage: \([0-9.]*\)%.*/\1/p')"
 	if [ -z "$pct" ]; then
 		continue

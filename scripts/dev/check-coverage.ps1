@@ -26,7 +26,8 @@ try {
     $output | Select-String "coverage: \d+\.?\d*% of statements" | ForEach-Object {
         if ($_.Line -match "coverage: ([\d.]+)%") {
             $pct = [double]$matches[1]
-            $pkg = ($_.Line -split "\s+")[1]
+            $fields = ($_.Line.Trim() -split '\s+')
+            if ($fields[0] -eq 'ok') { $pkg = $fields[1] } else { $pkg = $fields[0] }
             Write-Host ("  package {0}: {1}% (module minimum {2}%)" -f $pkg, $pct, $PkgMin)
             if ($pct -lt $PkgMin) {
                 Write-Error ("package {0}: {1}% is below module minimum {2}%" -f $pkg, $pct, $PkgMin)
