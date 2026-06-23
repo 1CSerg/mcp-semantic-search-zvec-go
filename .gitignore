@@ -52,3 +52,4 @@ Thumbs.db
 /cover
 /docs/issue/*
 /docs/todo/*
+/coverage_*
