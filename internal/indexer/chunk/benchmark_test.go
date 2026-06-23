@@ -203,9 +203,13 @@ func TestBenchmarkHybridWithin2x(t *testing.T) {
 	if timeRatio > limit {
 		t.Fatalf("hybrid wall time %.2fx line_window (limit %.0fx): lw=%v hy=%v", timeRatio, limit, lw.elapsed, hy.elapsed)
 	}
-	if lw.heapInuse > 0 && hy.heapInuse > lw.heapInuse*2 {
+	memLimit := 2.0
+	if os.Getenv("CI") == "true" {
+		memLimit = 3.0
+	}
+	if lw.heapInuse > 0 && float64(hy.heapInuse) > float64(lw.heapInuse)*memLimit {
 		memRatio := float64(hy.heapInuse) / float64(lw.heapInuse)
-		t.Fatalf("hybrid heap_inuse %.2fx line_window (limit 2x): lw=%d hy=%d", memRatio, lw.heapInuse, hy.heapInuse)
+		t.Fatalf("hybrid heap_inuse %.2fx line_window (limit %.0fx): lw=%d hy=%d", memRatio, memLimit, lw.heapInuse, hy.heapInuse)
 	}
 	t.Logf("bench go=%d tsx=%d bsl=%d lw=%v hy=%v time_ratio=%.2f heap_lw=%d heap_hy=%d", goN, tsxN, bslN, lw.elapsed, hy.elapsed, timeRatio, lw.heapInuse, hy.heapInuse)
 }

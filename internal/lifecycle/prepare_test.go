@@ -144,28 +144,17 @@ func TestStopStaleStdioKillsHelper(t *testing.T) {
 	defer func() { _ = cmd.Process.Kill() }()
 
 	helperPID := cmd.Process.Pid
-	helperMatchable := false
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		if helperCmdlineMatchable(workspace, helperPID) {
-			helperMatchable = true
-		}
-
-		stopped, err := stopStaleStdioInstances(workspace, os.Getpid())
-		if err != nil {
-			t.Fatalf("stopStaleStdioInstances: %v", err)
-		}
-		if len(stopped) > 0 {
-			_ = cmd.Wait()
-			return
-		}
-		if helperMatchable && !lock.ProcessAlive(helperPID) {
-			_ = cmd.Wait()
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
+	settings := &config.Settings{
+		WorkspaceRoot: workspace,
+		IndexDir:      filepath.Join(workspace, config.DefaultInstallDirName, config.DefaultIndexSubdir),
 	}
-	t.Fatal("expected stale helper process to be stopped")
+	if err := PrepareWorkspaceLocks(settings); err != nil {
+		t.Fatalf("PrepareWorkspaceLocks: %v", err)
+	}
+	if lock.ProcessAlive(helperPID) {
+		t.Fatalf("expected stale helper pid=%d to be dead after PrepareWorkspaceLocks", helperPID)
+	}
+	_ = cmd.Wait()
 }
 
 func TestPrepareStdioStopsStaleHelper(t *testing.T) {
