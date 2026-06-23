@@ -42,6 +42,35 @@ func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	return pids, nil
 }
 
+func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, fmt.Errorf("read /proc: %w", err)
+	}
+
+	var pids []int
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(ent.Name())
+		if err != nil {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", ent.Name(), "cmdline"))
+		if err != nil {
+			slog.Warn("stdio scan: read cmdline failed", "pid", pid, "err", err)
+			continue
+		}
+		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
+		if !matchesStdioIndexDir(line, indexDir, pid, selfPID) {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	return pids, nil
+}
+
 func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 	pids, err := listStdioPIDs(workspace, selfPID)
 	if err != nil {

@@ -13,3 +13,7 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 	slog.Warn("stale stdio cleanup not implemented on this platform", "workspace", workspace)
 	return nil, ErrStdioScanUnsupported
 }
+
+func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
+	return nil, ErrStdioScanUnsupported
+}

@@ -178,6 +178,12 @@ func TestBenchmarkHybridWithin2x(t *testing.T) {
 	if err := generateBenchmarkFixtures(root, goN, tsxN, bslN); err != nil {
 		t.Fatal(err)
 	}
+	// Warm up tree-sitter grammars and parser pools so heap delta reflects steady-state
+	// indexing, not one-time native grammar loads (dominates BENCH_FULL fixture runs).
+	if _, err := runChunkBenchmark(root, hybridBenchOpts()); err != nil {
+		t.Fatal(err)
+	}
+	runtime.GC()
 	lw, err := runChunkBenchmark(root, lineWindowBenchOpts())
 	if err != nil {
 		t.Fatal(err)
