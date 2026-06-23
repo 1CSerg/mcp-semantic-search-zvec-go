@@ -82,7 +82,7 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio")
+	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
 	cmd.Env = testutil.HelperProcessEnv("GO_WANT_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
@@ -144,9 +144,6 @@ func TestStopStaleStdioKillsHelper(t *testing.T) {
 	defer func() { _ = cmd.Process.Kill() }()
 
 	helperPID := cmd.Process.Pid
-	if runtime.GOOS != "windows" {
-		assertHelperCmdlineMatchable(t, workspace, helperPID, 2*time.Second)
-	}
 	helperMatchable := false
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {

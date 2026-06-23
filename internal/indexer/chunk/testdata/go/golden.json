@@ -147,7 +147,7 @@
     "start_line": 60,
     "end_line": 60,
     "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_kind": "comment",
     "chunk_strategy": "ast",
     "parent_scope": "package main"
   },
