@@ -90,7 +90,7 @@ func pathContainsPath(haystack, needle string) bool {
 		}
 		idx := from + i
 		after := idx + len(n)
-		if after == len(h) || h[after] == '\\' {
+		if after == len(h) || h[after] == '\\' || h[after] == '/' {
 			return true
 		}
 		from = idx + 1

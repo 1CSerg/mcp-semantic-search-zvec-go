@@ -84,6 +84,18 @@ func TestCmdlineContainsWorkspaceEmpty(t *testing.T) {
 	}
 }
 
+func TestPathContainsPathLinuxInstallDir(t *testing.T) {
+	workspace := `/tmp/ws`
+	installDir := `/tmp/ws/.mcp-semantic-search-zvec-go`
+	cmdline := installDir + `/bin/mcp-semantic-search-zvec-go --stdio`
+	if !pathContainsPath(cmdline, installDir) {
+		t.Fatal("expected install dir match in Linux-style cmdline path")
+	}
+	if !cmdlineContainsWorkspace(cmdline, workspace) {
+		t.Fatal("expected cmdlineContainsWorkspace via install dir on Linux paths")
+	}
+}
+
 func TestPathContainsPathSegmentBoundary(t *testing.T) {
 	// A workspace path must not match a sibling with a shared prefix.
 	if pathContainsPath(`/home/user/proj-evil/bin/app --stdio`, `/home/user/proj`) {

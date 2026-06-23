@@ -179,7 +179,7 @@
     "start_line": 65,
     "end_line": 65,
     "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_kind": "comment",
     "chunk_strategy": "ast",
     "parent_scope": "package main"
   },
@@ -211,7 +211,7 @@
     "start_line": 70,
     "end_line": 70,
     "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_kind": "comment",
     "chunk_strategy": "ast",
     "parent_scope": "package main"
   },

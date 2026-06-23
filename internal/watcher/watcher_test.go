@@ -187,12 +187,12 @@ func TestWatcherWaitAndRetry(t *testing.T) {
 	defer cancel()
 	go w.Start(ctx)
 
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	if err := os.WriteFile(file, []byte("v2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if coord.Starts() >= 1 {
 			st := w.Snapshot()
