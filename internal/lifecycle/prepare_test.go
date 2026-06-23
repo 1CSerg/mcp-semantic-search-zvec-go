@@ -25,7 +25,7 @@ func staleHelperBinaryPath(dir string) string {
 	return filepath.Join(dir, name)
 }
 
-func waitForHelperReady(cmd *exec.Cmd, workspace string, timeout time.Duration) error {
+func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if cmd.Process == nil {
@@ -46,7 +46,7 @@ func waitForHelperReady(cmd *exec.Cmd, workspace string, timeout time.Duration) 
 			continue
 		}
 		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
-		if matchesStaleStdio(line, workspace, pid, os.Getpid()) {
+		if strings.Contains(line, "--stdio") {
 			return nil
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -56,7 +56,12 @@ func waitForHelperReady(cmd *exec.Cmd, workspace string, timeout time.Duration) 
 
 func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	t.Helper()
-	helper := staleHelperBinaryPath(workspace)
+	installDir := filepath.Join(workspace, config.DefaultInstallDirName)
+	binDir := filepath.Join(installDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	helper := staleHelperBinaryPath(binDir)
 	data, err := os.ReadFile(os.Args[0])
 	if err != nil {
 		t.Skipf("read test binary: %v", err)
@@ -64,13 +69,20 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	if err := os.WriteFile(helper, data, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(
+		filepath.Join(binDir, config.WorkspaceRootMarkerFile),
+		[]byte(workspace),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
 
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
+	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio")
 	cmd.Env = testutil.HelperProcessEnv("GO_WANT_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
 	}
-	if err := waitForHelperReady(cmd, workspace, 5*time.Second); err != nil {
+	if err := waitForHelperReady(cmd, 5*time.Second); err != nil {
 		_ = cmd.Process.Kill()
 		t.Fatalf("wait for helper: %v", err)
 	}
@@ -105,12 +117,31 @@ func helperCmdlineMatchable(workspace string, pid int) bool {
 	return matchesStaleStdio(line, workspace, pid, os.Getpid())
 }
 
+func assertHelperCmdlineMatchable(t *testing.T, workspace string, pid int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if helperCmdlineMatchable(workspace, pid) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	snippet := "(cmdline unreadable)"
+	if cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline")); err == nil {
+		snippet = strings.ReplaceAll(string(cmdline), "\x00", " ")
+	}
+	t.Fatalf("helper cmdline not matchable within %v: pid=%d snippet=%q", timeout, pid, snippet)
+}
+
 func TestStopStaleStdioKillsHelper(t *testing.T) {
 	workspace := t.TempDir()
 	cmd := startStaleHelper(t, workspace)
 	defer func() { _ = cmd.Process.Kill() }()
 
 	helperPID := cmd.Process.Pid
+	if runtime.GOOS != "windows" {
+		assertHelperCmdlineMatchable(t, workspace, helperPID, 2*time.Second)
+	}
 	helperMatchable := false
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
