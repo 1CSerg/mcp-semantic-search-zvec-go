@@ -2,8 +2,8 @@
   {
     "start_line": 3,
     "end_line": 3,
-    "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_name": "comment",
+    "symbol_kind": "comment",
     "chunk_strategy": "ast",
     "parent_scope": "module sample > region СлужебныеПроцедурыИФункции"
   },

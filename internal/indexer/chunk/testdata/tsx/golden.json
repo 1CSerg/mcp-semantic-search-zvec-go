@@ -2,8 +2,8 @@
   {
     "start_line": 1,
     "end_line": 1,
-    "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_name": "react",
+    "symbol_kind": "import",
     "chunk_strategy": "ast",
     "parent_scope": "module sample"
   },

@@ -2,7 +2,7 @@
   {
     "start_line": 1,
     "end_line": 12,
-    "symbol_name": "",
+    "symbol_name": "fmt",
     "symbol_kind": "import",
     "chunk_strategy": "ast",
     "parent_scope": "package main"
