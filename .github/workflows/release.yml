@@ -83,8 +83,8 @@ jobs:
 
       - name: Fetch tree-sitter grammars (Windows)
         if: runner.os == 'Windows'
-        shell: bash
-        run: bash scripts/fetch/fetch-tree-sitter-grammars.sh
+        shell: pwsh
+        run: .\scripts\fetch\fetch-tree-sitter-grammars.ps1
 
       - name: Build binary (Linux/macOS)
         if: runner.os != 'Windows'
@@ -118,6 +118,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "1"
         run: |
+          . ./scripts/dev/ci-native-env.ps1
           $out = "dist/mcp-semantic-search-zvec-go_${{ steps.ver.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
           New-Item -ItemType Directory -Force -Path dist/release-libs | Out-Null
           go build -tags "zvec,onnx,treesitter" -ldflags="-s -w" -o $out ./cmd/mcp-semantic-search-zvec-go
