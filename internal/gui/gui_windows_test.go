@@ -134,10 +134,18 @@ func waitForSearchIdle(t *testing.T, ui *appUI) {
 
 func waitForRefreshStatus(t *testing.T, ui *appUI, wantSubstring string) {
 	t.Helper()
-	waitForFyneIdle(t, func() bool { return !ui.statusRefreshBusy.Load() })
-	if !strings.Contains(labelText(ui.statusLabel), wantSubstring) {
-		t.Fatalf("statusLabel=%q, want substring %q", labelText(ui.statusLabel), wantSubstring)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var done bool
+		fyne.DoAndWait(func() {
+			done = !ui.statusRefreshBusy.Load() && strings.Contains(ui.statusLabel.Text, wantSubstring)
+		})
+		if done {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
+	t.Fatalf("statusLabel=%q, want substring %q", labelText(ui.statusLabel), wantSubstring)
 }
 
 func TestRemainingText(t *testing.T) {
@@ -425,6 +433,7 @@ func TestReindexCallsService(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("reindex was not called")
 	}
+	waitForRefreshStatus(t, ui, "ожидание")
 }
 
 func TestShowError(t *testing.T) {
@@ -436,14 +445,21 @@ func TestShowError(t *testing.T) {
 
 func TestKillCompetingProcessNoPID(t *testing.T) {
 	ui := newTestAppUI(t, &mockGUIService{}, nil)
-	ui.killCompetingProcess()
+	fyne.DoAndWait(func() {
+		ui.killCompetingProcess()
+	})
+	waitForRefreshStatus(t, ui, "ожидание")
 }
 
 func TestBuildUI(t *testing.T) {
 	ui := newTestAppUI(t, &mockGUIService{}, nil)
-	if ui.build() == nil {
-		t.Fatal("expected UI content")
-	}
+	fyne.DoAndWait(func() {
+		content := ui.build()
+		ui.window.SetContent(content)
+		if content == nil {
+			t.Fatal("expected UI content")
+		}
+	})
 }
 
 func TestSearchWithPathGlob(t *testing.T) {
@@ -461,6 +477,7 @@ func TestSearchWithPathGlob(t *testing.T) {
 	ui.pathGlobEntry.SetText("**/*.go")
 	ui.search()
 	waitForSearchIdle(t, ui)
+	fyne.DoAndWait(func() {})
 	if v := gotGlob.Load(); v != "**/*.go" {
 		t.Fatalf("path glob=%v", v)
 	}

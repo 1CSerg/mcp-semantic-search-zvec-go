@@ -235,11 +235,11 @@ func (ui *appUI) refreshStatus() {
 		return
 	}
 	go func() {
-		defer ui.statusRefreshBusy.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		raw, err := ui.svc.GetIndexStatus(ctx)
 		fyne.Do(func() {
+			defer ui.statusRefreshBusy.Store(false)
 			if err != nil {
 				ui.statusLabel.SetText("Индексация: статус недоступен")
 				ui.messageLabel.SetText(err.Error())
@@ -449,7 +449,6 @@ func (ui *appUI) search() {
 	}
 	ui.searchInFlight.Store(true)
 	go func() {
-		defer ui.searchInFlight.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		raw, err := ui.svc.SemanticSearch(ctx, service.SearchRequest{
@@ -458,6 +457,7 @@ func (ui *appUI) search() {
 			PathGlob: pathGlob,
 		})
 		fyne.Do(func() {
+			defer ui.searchInFlight.Store(false)
 			ui.searchButton.Enable()
 			if err != nil {
 				ui.showError(err)
