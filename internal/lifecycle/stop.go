@@ -10,6 +10,7 @@ import (
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
 const defaultLockStaleSeconds = 300.0
@@ -65,6 +66,9 @@ func forceReclaimLocks(indexDir string) error {
 	idxLock := lock.New(indexDir, defaultLockStaleSeconds)
 	if idxLock.ReclaimStale() {
 		slog.Info("reclaimed stale index lock", "path", idxLock.Path())
+	}
+	if n := zvec.ReclaimAllCollectionLocks(indexDir); n > 0 {
+		slog.Info("reclaimed orphaned zvec collection locks", "count", n, "index_dir", indexDir)
 	}
 	return nil
 }

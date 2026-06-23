@@ -18,6 +18,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/zvecerr"
 )
 
 // ErrAlreadyRunning is returned when Start is called while a job is active.
@@ -610,7 +611,7 @@ func (c *Coordinator) manifestZvecDesync() (bool, error) {
 	}
 	if !c.Zvec.IsOpen() {
 		if err := c.Zvec.Open(); err != nil {
-			if errors.Is(err, zvec.ErrCollectionMissing) {
+			if errors.Is(err, zvec.ErrCollectionMissing) || zvecerr.IsLockError(err) {
 				return true, nil
 			}
 			return false, err
@@ -618,6 +619,9 @@ func (c *Coordinator) manifestZvecDesync() (bool, error) {
 	}
 	docCount, err := c.Zvec.DocCount()
 	if err != nil {
+		if zvecerr.IsLockError(err) {
+			return true, nil
+		}
 		return false, err
 	}
 	return docCount == 0, nil

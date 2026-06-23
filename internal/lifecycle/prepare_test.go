@@ -243,3 +243,34 @@ func TestPrepareStdioSingletonLock(t *testing.T) {
 		t.Fatal("expected error when stdio lock already held")
 	}
 }
+
+func TestPrepareStdioReclaimsZvecLock(t *testing.T) {
+	dir := t.TempDir()
+	indexDir := filepath.Join(dir, config.DefaultInstallDirName, config.DefaultIndexSubdir)
+	settings := &config.Settings{
+		WorkspaceRoot: dir,
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			Indexing: config.IndexingConfig{
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	collectionPath := filepath.Join(indexDir, "zvec", "ws_testcollection")
+	if err := os.MkdirAll(collectionPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(collectionPath, "LOCK")
+	if err := os.WriteFile(lockPath, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdioLock, err := PrepareStdio(settings)
+	if err != nil {
+		t.Fatalf("PrepareStdio: %v", err)
+	}
+	defer func() { _ = stdioLock.Release() }()
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale zvec LOCK reclaimed: %v", err)
+	}
+}

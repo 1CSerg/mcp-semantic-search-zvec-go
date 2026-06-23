@@ -51,7 +51,11 @@ Windows: no CLI flags → desktop GUI. Linux/macOS: no CLI flags → `--stdio` (
 
 # Both (HTTP in background goroutine + MCP stdio)
 ./bin/mcp-semantic-search-zvec-go --stdio --http
+```
 
+Per-project `--http` and Cursor `--stdio` both acquire `stdio.lock` on the same `INDEX_DIR`. **Do not** run a separate `./bin/mcp-semantic-search-zvec-go --http` process while Cursor MCP is active for the same workspace — use `--stdio --http` in one process, or stop Cursor MCP first.
+
+```bash
 # Shared daemon (multi-workspace HTTP; default bind :8080)
 ./bin/mcp-semantic-search-zvec-go --daemon --daemon-config /path/to/daemon.yaml --http-addr :8080
 
@@ -288,7 +292,7 @@ make test-integration
 
 Code: `internal/store/zvec/store.go`, tests in `store_integration_test.go` (`TestIntegrationSpikeChecklist`, tags `integration,zvec`). Windows Cyrillic path smoke: `store_cyrillic_integration_test.go` (`TestIntegrationCyrillicIndexDir`).
 
-**Contributor note (Windows LOCK):** if zvec reports `Can't open lock file` on a non-ASCII `INDEX_DIR`, investigate duplicate `--stdio` MCP processes and stale LOCK reclaim (`PrepareStdio`, `openZvecWithRecovery`) before assuming path encoding failure. **Do not** relocate zvec collections to `%LOCALAPPDATA%` or another ASCII-only root solely because `INDEX_DIR` contains Cyrillic characters.
+**Contributor note (Windows LOCK):** if zvec reports `Can't open lock file` or `Can't lock read-only collection`, investigate duplicate per-project MCP processes (`--stdio`, `--http`) and stale LOCK reclaim (`PrepareWorkspaceLocks`, `PrepareStdio`, `openZvecWithRecovery`) before assuming path encoding failure. **Do not** relocate zvec collections to `%LOCALAPPDATA%` or another ASCII-only root solely because `INDEX_DIR` contains Cyrillic characters.
 
 | Outcome | Action |
 |---------|--------|

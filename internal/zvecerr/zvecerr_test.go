@@ -27,6 +27,9 @@ func TestIsLockError(t *testing.T) {
 	if !IsLockError(errors.New(`zvec error [INTERNAL_ERROR]: Can't open lock file: /tmp/ws/LOCK`)) {
 		t.Fatal("expected lock file error")
 	}
+	if !IsLockError(errors.New(`zvec error [INTERNAL_ERROR]: Can't lock read-only collection: /tmp/ws/LOCK`)) {
+		t.Fatal("expected read-only collection lock error")
+	}
 	if IsLockError(errors.New("collection not found")) {
 		t.Fatal("unexpected lock classification")
 	}
@@ -44,6 +47,9 @@ func TestIsSkippablePerFileError(t *testing.T) {
 	}
 	if IsSkippablePerFileError(errors.New(`zvec error [INTERNAL_ERROR]: Can't open lock file: /tmp/ws/LOCK`)) {
 		t.Fatal("lock errors must not be skippable per-file")
+	}
+	if IsSkippablePerFileError(errors.New(`zvec error [INTERNAL_ERROR]: Can't lock read-only collection: /tmp/ws/LOCK`)) {
+		t.Fatal("read-only collection lock errors must not be skippable per-file")
 	}
 	if IsSkippablePerFileError(errors.New("zvec error: upsert failed")) {
 		t.Fatal("generic zvec error without internal_error should not match")

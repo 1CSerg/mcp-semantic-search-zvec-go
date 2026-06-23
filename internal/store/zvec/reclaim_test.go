@@ -42,3 +42,20 @@ func TestReclaimCollectionLockMissingDir(t *testing.T) {
 		t.Fatal("expected false for missing collection dir")
 	}
 }
+
+func TestReclaimAllCollectionLocks(t *testing.T) {
+	indexDir := t.TempDir()
+	for _, name := range []string{"ws_one", "ws_two"} {
+		collectionPath := filepath.Join(indexDir, "zvec", name)
+		if err := os.MkdirAll(collectionPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		lockPath := filepath.Join(collectionPath, "LOCK")
+		if err := os.WriteFile(lockPath, []byte("stale"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := ReclaimAllCollectionLocks(indexDir); n != 2 {
+		t.Fatalf("reclaimed=%d want 2", n)
+	}
+}

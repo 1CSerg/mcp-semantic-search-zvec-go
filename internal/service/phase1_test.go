@@ -88,6 +88,12 @@ func (s *lockFailZvecStore) Open() error {
 	return errors.New(`Can't open lock file: test lock`)
 }
 
+type readOnlyLockFailZvecStore struct{ mockZvecStore }
+
+func (s *readOnlyLockFailZvecStore) Open() error {
+	return errors.New(`zvec error [INTERNAL_ERROR]: Can't lock read-only collection: /tmp/ws/LOCK`)
+}
+
 type searchLockZvecStore struct {
 	mockZvecStore
 	attempts int
@@ -1608,6 +1614,28 @@ func TestPhase1GetIndexStatusLockErrorDiagnostic(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.zvec = &lockFailZvecStore{}
+	raw, err := p.GetIndexStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	diag, ok := payload["diagnostics"].(map[string]any)
+	if !ok || diag["duplicate_stdio_suspected"] != true {
+		t.Fatalf("diagnostics=%v", payload["diagnostics"])
+	}
+}
+
+func TestPhase1GetIndexStatusReadOnlyLockErrorDiagnostic(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &readOnlyLockFailZvecStore{}
 	raw, err := p.GetIndexStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)

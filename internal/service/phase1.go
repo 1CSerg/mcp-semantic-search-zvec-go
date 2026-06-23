@@ -470,6 +470,12 @@ func (p *Phase1) PrepareStartup() {
 	if p.runIdentityMigrationIfNeeded() {
 		return
 	}
+	if err := lifecycle.PrepareWorkspaceLocks(p.Settings); err != nil {
+		slog.Warn("startup workspace lock prep failed", "err", err)
+	}
+	if err := p.openZvecWithRecovery(); err != nil {
+		slog.Warn("startup zvec open failed", "err", err)
+	}
 	p.StartAutoIndex()
 }
 

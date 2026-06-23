@@ -930,3 +930,62 @@ func TestStaleDocIDs(t *testing.T) {
 		t.Fatalf("expected nil, got %v", stale)
 	}
 }
+
+type lockErrorZvec struct {
+	memZvec
+	openErr error
+}
+
+func (s *lockErrorZvec) Open() error {
+	return s.openErr
+}
+
+func (s *lockErrorZvec) IsOpen() bool {
+	return false
+}
+
+func (s *lockErrorZvec) DocCount() (int, error) {
+	return 0, s.openErr
+}
+
+func TestManifestZvecDesyncLockError(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manPath := filepath.Join(indexDir, "manifest.db")
+	man, err := manifest.Open(manPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := man.Upsert(manifest.FileEntry{
+		RelativePath: "pkg/auth.go",
+		MtimeNs:      1,
+		Size:         10,
+		ChunkCount:   2,
+		DocIDs:       []string{"d1", "d2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := man.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	lockErr := errors.New(`zvec error [INTERNAL_ERROR]: Can't lock read-only collection: /tmp/ws/LOCK`)
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		IndexDir:      indexDir,
+	}
+	c := &Coordinator{
+		Settings: settings,
+		Zvec:     &lockErrorZvec{openErr: lockErr},
+	}
+	need, err := c.manifestZvecDesync()
+	if err != nil {
+		t.Fatalf("manifestZvecDesync: %v", err)
+	}
+	if !need {
+		t.Fatal("expected force reindex when zvec lock fails but manifest has chunks")
+	}
+}

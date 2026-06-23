@@ -7,14 +7,15 @@ import (
 
 func TestLifecycleZvecWrappersDelegateToZvecerr(t *testing.T) {
 	lockErr := errors.New(`zvec error [INTERNAL_ERROR]: Can't open lock file: /tmp/ws/LOCK`)
+	readOnlyLockErr := errors.New(`zvec error [INTERNAL_ERROR]: Can't lock read-only collection: /tmp/ws/LOCK`)
 	skippable := errors.New(`zvec error [INTERNAL_ERROR]: File is too small: 6`)
 	generic := errors.New("zvec error: upsert failed")
 	fatalInternal := errors.New(`zvec error [INTERNAL_ERROR]: upsert failed`)
 
-	if !IsZvecLockError(lockErr) || IsZvecLockError(generic) {
+	if !IsZvecLockError(lockErr) || !IsZvecLockError(readOnlyLockErr) || IsZvecLockError(generic) {
 		t.Fatal("IsZvecLockError wrapper mismatch")
 	}
-	if IsZvecSkippablePerFileError(lockErr) {
+	if IsZvecSkippablePerFileError(lockErr) || IsZvecSkippablePerFileError(readOnlyLockErr) {
 		t.Fatal("lock must not be skippable")
 	}
 	if !IsZvecSkippablePerFileError(skippable) || IsZvecSkippablePerFileError(generic) || IsZvecSkippablePerFileError(fatalInternal) {

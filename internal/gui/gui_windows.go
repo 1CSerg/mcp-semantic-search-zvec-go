@@ -26,7 +26,6 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
@@ -94,38 +93,11 @@ func formatVersionLabel() string {
 	return fmt.Sprintf("Версия %s", version.Version)
 }
 
-// PrepareWorkspaceLocks stops stale MCP stdio instances and reclaims orphaned zvec LOCK files.
-func PrepareWorkspaceLocks(settings *config.Settings) {
-	if settings == nil {
-		return
-	}
-	stopped, err := lifecycle.StopStdioForWorkspace(settings.WorkspaceRoot, settings.IndexDir)
-	if err != nil {
-		slog.Warn("gui workspace lock prep: stop stdio failed", "err", err)
-	} else if len(stopped) > 0 {
-		slog.Info("gui stopped stale mcp processes", "pids", stopped, "workspace", settings.WorkspaceRoot)
-	}
-	profile, err := settings.ActiveProfile()
-	if err != nil {
-		return
-	}
-	cfg := zvec.Config{
-		IndexDir:      settings.IndexDir,
-		WorkspaceRoot: settings.WorkspaceRoot,
-		ProfileName:   settings.App.ActiveProfile,
-		Dimensions:    profile.Dimensions,
-	}
-	if zvec.ReclaimCollectionLock(cfg) {
-		slog.Info("gui reclaimed orphaned zvec collection lock", "collection", zvec.CollectionPath(cfg))
-	}
-	if err := indexer.RecoverInterruptedProgress(settings.IndexDir); err != nil {
-		slog.Warn("gui recover interrupted progress failed", "err", err)
-	}
-}
-
 // Run starts the Windows desktop GUI.
 func Run(ctx context.Context, settings *config.Settings, svc service.Service) error {
-	PrepareWorkspaceLocks(settings)
+	if err := lifecycle.PrepareWorkspaceLocks(settings); err != nil {
+		slog.Warn("gui workspace lock prep failed", "err", err)
+	}
 
 	a := app.NewWithID("github.com.1CSerg.mcp-semantic-search-zvec-go")
 	w := a.NewWindow(windowTitle())
@@ -421,7 +393,9 @@ func indexingProgressFromMap(idx map[string]any) indexer.Progress {
 func (ui *appUI) reclaimZvecLock() {
 	ui.reclaimButton.Disable()
 	go func() {
-		PrepareWorkspaceLocks(ui.settings)
+		if err := lifecycle.PrepareWorkspaceLocks(ui.settings); err != nil {
+			slog.Warn("gui reclaim zvec lock failed", "err", err)
+		}
 		fyne.Do(func() {
 			ui.reclaimButton.Enable()
 			ui.searchStatus.SetText("Попытка освободить LOCK завершена. Обновляю статус...")
@@ -432,7 +406,9 @@ func (ui *appUI) reclaimZvecLock() {
 
 func (ui *appUI) reindex(force bool) {
 	go func() {
-		PrepareWorkspaceLocks(ui.settings)
+		if err := lifecycle.PrepareWorkspaceLocks(ui.settings); err != nil {
+			slog.Warn("gui reclaim zvec lock failed", "err", err)
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		raw, err := ui.svc.Reindex(ctx, service.ReindexRequest{Force: force})

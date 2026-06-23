@@ -117,6 +117,25 @@ func reclaimCollectionLockDir(collectionPath string) bool {
 	return removed
 }
 
+// ReclaimAllCollectionLocks removes orphaned LOCK files under indexDir/zvec/*.
+func ReclaimAllCollectionLocks(indexDir string) int {
+	zvecRoot := filepath.Join(indexDir, "zvec")
+	entries, err := os.ReadDir(zvecRoot)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if reclaimCollectionLockDir(filepath.Join(zvecRoot, e.Name())) {
+			removed++
+		}
+	}
+	return removed
+}
+
 func reclaimCollectionLockFile(lockPath string) bool {
 	return lock.ReclaimOrphanedFile(lockPath)
 }

@@ -8,7 +8,10 @@ func IsLockError(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "lock file") || strings.Contains(msg, "can't open lock")
+	return strings.Contains(msg, "lock file") ||
+		strings.Contains(msg, "can't open lock") ||
+		strings.Contains(msg, "can't lock read-only") ||
+		strings.Contains(msg, "read-only collection")
 }
 
 // IsCorruptSegmentError reports zvec segment corruption (e.g. "File is too small: N").

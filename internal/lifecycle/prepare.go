@@ -1,14 +1,12 @@
 package lifecycle
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
 
@@ -30,42 +28,19 @@ func PrepareStdio(settings *config.Settings) (*lock.Lock, error) {
 
 	var lastErr error
 	for attempt := 0; attempt < stdioLockRetries; attempt++ {
-		stopped, err := stopStaleStdioInstances(settings.WorkspaceRoot, os.Getpid())
-		if err != nil && !errors.Is(err, ErrStdioScanUnsupported) {
-			return nil, err
-		}
-		for _, pid := range stopped {
-			slog.Info("stopped stale stdio mcp process", "pid", pid, "workspace", settings.WorkspaceRoot)
-		}
-		if len(stopped) > 0 {
-			time.Sleep(killGrace)
-		}
-
-		idxLock := lock.New(settings.IndexDir, staleSecs)
-		if idxLock.ReclaimStale() {
-			slog.Info("reclaimed stale index lock", "path", idxLock.Path())
-		}
-		if stdioLock.ReclaimStale() {
-			slog.Info("reclaimed stale stdio lock", "path", stdioLock.Path())
-		}
-		if err := indexer.RecoverStalledProgress(settings.IndexDir, settings.App.Indexing.StallSeconds, func() bool {
-			_, ok := FindStdioForWorkspace(settings.WorkspaceRoot, os.Getpid())
-			return ok
-		}); err != nil {
-			return nil, err
-		}
-		if err := indexer.RecoverInterruptedProgress(settings.IndexDir); err != nil {
+		if err := PrepareWorkspaceLocks(settings); err != nil {
 			return nil, err
 		}
 
-		if err := stdioLock.TryAcquire(); err == nil {
+		acquireErr := stdioLock.TryAcquire()
+		if acquireErr == nil {
 			return stdioLock, nil
 		}
-		lastErr = err
+		lastErr = acquireErr
 		if pid, ok := stdioLock.LiveHolder(); ok {
 			slog.Warn("stdio lock held by another process", "holder_pid", pid, "attempt", attempt+1)
 		} else {
-			slog.Warn("stdio lock acquire failed", "err", err, "attempt", attempt+1)
+			slog.Warn("stdio lock acquire failed", "err", acquireErr, "attempt", attempt+1)
 		}
 		if attempt < stdioLockRetries-1 {
 			time.Sleep(stdioLockRetryDelay)

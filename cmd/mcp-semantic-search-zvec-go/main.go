@@ -262,7 +262,7 @@ func setupPerProject(ctx context.Context, opts perProjectOptions) (*perProjectRu
 		rt.cleanup = append(rt.cleanup, func() { _ = logCloser.Close() })
 	}
 
-	if opts.Stdio {
+	if opts.Stdio || opts.StartBackgrounds {
 		stdioLock, err := lifecycle.PrepareStdio(settings)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: %v\n", err)
