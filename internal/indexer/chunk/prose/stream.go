@@ -15,7 +15,7 @@ func StreamBatched(abs, relativePath string, cfg Config, counter token.TokenCoun
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	maxLine := int64(1024 * 1024)
 	reader, err := newStreamLineReader(f, maxLine)
@@ -128,7 +128,6 @@ func (lr *streamLineReader) readLine() (string, error) {
 				if _, err := lr.r.ReadByte(); err != nil {
 					return "", err
 				}
-				size++
 				if len(line) > 0 && line[len(line)-1] == '\r' {
 					line = line[:len(line)-1]
 				}

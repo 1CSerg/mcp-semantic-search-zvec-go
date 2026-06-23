@@ -127,7 +127,7 @@ func (c *Checker) fetch(ctx context.Context, installedVersion string) Info {
 		base.Message = fmt.Sprintf("update check failed: %v", err)
 		return base
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

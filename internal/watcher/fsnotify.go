@@ -23,7 +23,7 @@ func (b *fsnotifyBackend) run(ctx context.Context, settings *config.Settings, ev
 		slog.Error("fsnotify init failed", "err", err)
 		return fmt.Errorf("fsnotify init: %w", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	root := settings.WorkspaceRoot
 	if err := addWatchTree(w, root, settings.App.Indexing.SkipDirs); err != nil {

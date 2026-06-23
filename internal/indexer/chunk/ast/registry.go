@@ -67,7 +67,15 @@ func init() {
 }
 
 func goScopeFromRoot(root *sitter.Node, src []byte, _ string) Scope {
-	_, scope, err := indexBoundariesWithQuery(goLang(), goQuerySource, root, src, "go", "")
+	spec := grammars["go"]
+	if spec == nil {
+		return Scope{}
+	}
+	query, err := spec.loadQuery()
+	if err != nil {
+		return Scope{}
+	}
+	_, scope, err := indexBoundariesWithCachedQuery(query, root, src, "go", "")
 	if err == nil && scope.String() != "" {
 		return scope
 	}
@@ -100,7 +108,11 @@ func indexBoundaries(root *sitter.Node, src []byte, lang, relPath string) (map[u
 }
 
 func indexBoundariesForSpec(spec *grammarSpec, root *sitter.Node, src []byte, lang, relPath string) (map[uintptr]BoundaryMeta, Scope, error) {
-	boundaries, pkgScope, err := indexBoundariesWithQuery(spec.language, spec.querySrc, root, src, lang, relPath)
+	query, err := spec.loadQuery()
+	if err != nil {
+		return nil, Scope{}, err
+	}
+	boundaries, pkgScope, err := indexBoundariesWithCachedQuery(query, root, src, lang, relPath)
 	if err != nil {
 		return nil, Scope{}, err
 	}
@@ -110,12 +122,7 @@ func indexBoundariesForSpec(spec *grammarSpec, root *sitter.Node, src []byte, la
 	return boundaries, pkgScope, nil
 }
 
-func indexBoundariesWithQuery(language *sitter.Language, querySource string, root *sitter.Node, src []byte, lang, relPath string) (map[uintptr]BoundaryMeta, Scope, error) {
-	query, err := sitter.NewQuery(language, querySource)
-	if err != nil {
-		return nil, Scope{}, fmt.Errorf("compile query: %s at %d:%d", err.Message, err.Row, err.Column)
-	}
-
+func indexBoundariesWithCachedQuery(query *sitter.Query, root *sitter.Node, src []byte, lang, relPath string) (map[uintptr]BoundaryMeta, Scope, error) {
 	qc := sitter.NewQueryCursor()
 	defer qc.Close()
 

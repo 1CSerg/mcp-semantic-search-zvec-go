@@ -37,3 +37,30 @@ func isWordBoundaryAt(s string, idx int) bool {
 	}
 	return s[idx-1] == ' ' || s[idx-1] == '\n' || s[idx-1] == '\t'
 }
+
+func overlapStartsAtBoundary(full, suffix string) bool {
+	suffix = strings.TrimLeft(suffix, " \t\n")
+	if suffix == "" {
+		return true
+	}
+	idx := strings.Index(full, suffix)
+	if idx < 0 {
+		return true
+	}
+	if idx == 0 {
+		return startsAtNaturalBoundary(suffix)
+	}
+	before := full[:idx]
+	if strings.HasSuffix(before, " ") || strings.HasSuffix(before, "\t") || strings.HasSuffix(before, "\n") {
+		return true
+	}
+	for i := len(before) - 1; i >= 0; i-- {
+		if isSentenceEnd(rune(before[i])) {
+			return true
+		}
+		if before[i] == ' ' || before[i] == '\t' || before[i] == '\n' {
+			break
+		}
+	}
+	return false
+}

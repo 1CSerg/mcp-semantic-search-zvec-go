@@ -77,7 +77,7 @@ func JournalMode(dbPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	var mode string
 	if err := db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
 		return "", err
@@ -174,7 +174,7 @@ func (s *Store) List() ([]FileEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []FileEntry
 	for rows.Next() {
 		var e FileEntry

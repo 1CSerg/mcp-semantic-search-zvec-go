@@ -58,6 +58,10 @@ func TestSetupLogFileError(t *testing.T) {
 	}
 }
 
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
+
 func TestNopCloserClose(t *testing.T) {
 	var c nopCloser
 	if err := c.Close(); err != nil {

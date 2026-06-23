@@ -183,3 +183,56 @@ func TestHeadingHasNoOverlap(t *testing.T) {
 		t.Fatal("expected heading")
 	}
 }
+
+func parseFence(line string) (marker string, ok bool) {
+	ch, _, ok := parseFenceOpen(line)
+	if !ok {
+		return "", false
+	}
+	if ch == '`' {
+		return "```", true
+	}
+	return "~~~", true
+}
+
+func headingHasNoOverlap(line string) bool {
+	_, _, ok := parseHeading(line)
+	return ok
+}
+
+func mergeGreedy(parts []string, separator string, budget int, counter token.TokenCounter) []string {
+	pieces := make([]TextPiece, len(parts))
+	for i, p := range parts {
+		pieces[i] = TextPiece{Text: p, Start: 0, End: len(p)}
+	}
+	merged := mergeGreedyPieces(pieces, separator, budget, counter)
+	out := make([]string, len(merged))
+	for i, p := range merged {
+		out[i] = p.Text
+	}
+	return out
+}
+
+func splitParagraphs(text string) []string {
+	return piecesToStrings(splitParagraphsWithSpans(text, 0))
+}
+
+func splitClauses(text string) []string {
+	return piecesToStrings(splitClausesWithSpans(text, 0))
+}
+
+func splitSentences(text string) []string {
+	return piecesToStrings(splitSentencesWithSpans(text, 0))
+}
+
+func splitByChars(text string, budget int, counter token.TokenCounter) []string {
+	return piecesToStrings(splitByCharsWithSpans(text, 0, budget, counter))
+}
+
+func piecesToStrings(parts []TextPiece) []string {
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = p.Text
+	}
+	return out
+}

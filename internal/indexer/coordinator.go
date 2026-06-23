@@ -245,7 +245,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	defer manStore.Close()
+	defer func() { _ = manStore.Close() }()
 
 	if force {
 		if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
@@ -600,7 +600,7 @@ func (c *Coordinator) manifestZvecDesync() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer manStore.Close()
+	defer func() { _ = manStore.Close() }()
 	_, chunks, err := manStore.Stats()
 	if err != nil {
 		return false, err

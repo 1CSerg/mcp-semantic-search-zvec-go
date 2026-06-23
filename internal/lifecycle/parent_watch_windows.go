@@ -34,7 +34,7 @@ func processEntry(pid int) (windows.ProcessEntry32, bool) {
 	if err != nil {
 		return windows.ProcessEntry32{}, false
 	}
-	defer windows.CloseHandle(snap)
+	defer func() { _ = windows.CloseHandle(snap) }()
 
 	var pe windows.ProcessEntry32
 	pe.Size = uint32(unsafe.Sizeof(pe))

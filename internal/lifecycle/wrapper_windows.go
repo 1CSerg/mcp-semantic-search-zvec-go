@@ -22,7 +22,7 @@ func stopLauncherWrappers(workspace string) ([]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("process snapshot: %w", err)
 	}
-	defer windows.CloseHandle(snap)
+	defer func() { _ = windows.CloseHandle(snap) }()
 
 	var pe windows.ProcessEntry32
 	pe.Size = uint32(unsafe.Sizeof(pe))

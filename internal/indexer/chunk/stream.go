@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
 func streamChunkBatched(abs, relativePath string, opts Options, coll *batchCollector) error {
@@ -14,7 +12,7 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	window, overlap := normalizeWindowOpts(opts)
 	maxLine := opts.MaxLineBytes
@@ -83,11 +81,6 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 	}
 }
 
-// streamChunk reads a large file in a streaming fashion and returns all chunks.
-func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
-	return streamChunkLegacy(abs, relativePath, opts)
-}
-
 type lineReader struct {
 	r            *bufio.Reader
 	maxLine      int64
@@ -139,7 +132,6 @@ func (lr *lineReader) readLine() (string, error) {
 				if _, err := lr.r.ReadByte(); err != nil {
 					return "", err
 				}
-				size++
 				if len(line) > 0 && line[len(line)-1] == '\r' {
 					line = line[:len(line)-1]
 				}

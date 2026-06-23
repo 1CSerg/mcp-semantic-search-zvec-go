@@ -96,17 +96,6 @@ func isProcessEnvKey(key string) bool {
 	}
 }
 
-// isSecretEnvKey reports whether an env key likely holds a credential.
-func isSecretEnvKey(key string) bool {
-	upper := strings.ToUpper(key)
-	for _, marker := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "APIKEY", "CREDENTIAL"} {
-		if strings.Contains(upper, marker) {
-			return true
-		}
-	}
-	return false
-}
-
 const (
 	maxDotEnvFileSize = 64 << 10 // 64 KiB
 	maxDotEnvLineSize = 64 << 10
@@ -117,7 +106,7 @@ func parseDotEnvFile(path string) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if info, err := f.Stat(); err == nil && info.Size() > maxDotEnvFileSize {
 		return nil, fmt.Errorf(".env too large: %d bytes (max %d)", info.Size(), maxDotEnvFileSize)

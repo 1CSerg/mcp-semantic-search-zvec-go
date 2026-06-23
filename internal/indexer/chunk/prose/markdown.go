@@ -3,7 +3,6 @@ package prose
 import (
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
@@ -238,17 +237,6 @@ func updateHeadingStack(stack []string, level int, title string) []string {
 	return append(out, title)
 }
 
-func parseFence(line string) (marker string, ok bool) {
-	ch, _, ok := parseFenceOpen(line)
-	if !ok {
-		return "", false
-	}
-	if ch == '`' {
-		return "```", true
-	}
-	return "~~~", true
-}
-
 func parseFenceOpen(line string) (marker byte, length int, ok bool) {
 	trimmed := strings.TrimSpace(line)
 	if len(trimmed) < 3 {
@@ -375,7 +363,7 @@ func (em *proseEmitter) emitProseLines(seg markdownSegment) error {
 	lines := strings.Split(seg.text, "\n")
 	budget := em.cfg.bodyBudget(em.counter, em.rel, seg.parentScope)
 	var buf []string
-	var bufStart int64 = seg.startLine
+	var bufStart = seg.startLine
 	lineNum := seg.startLine
 	for i, ln := range lines {
 		candidate := strings.Join(append(buf, ln), "\n")
@@ -418,11 +406,9 @@ func (em *proseEmitter) emitProse(seg markdownSegment) error {
 	lineStarts := lineOffsets(seg.text)
 	for i, piece := range pieces {
 		body := piece.Text
-		startLine := seg.startLine
-		endLine := seg.endLine
 		relStart, relEnd := linesForRange(seg.text, lineStarts, piece.Start, piece.End)
-		startLine = seg.startLine + relStart - 1
-		endLine = seg.startLine + relEnd - 1
+		startLine := seg.startLine + relStart - 1
+		endLine := seg.startLine + relEnd - 1
 		symbolKind := seg.symbolKind
 		if symbolKind == "" {
 			symbolKind = deepestSplitLevel(body, budget, em.counter)
@@ -479,13 +465,6 @@ func (em *proseEmitter) emitChunk(body string, startLine, endLine int64, symbolN
 	maxEmbed := em.cfg.MaxInputTokens
 	if maxEmbed > 0 && em.counter.Count(snippet) > maxEmbed {
 		snippet = trimToTokenBudget(snippet, maxEmbed, em.counter)
-	}
-	minTok := em.cfg.MinChunkTokens
-	if minTok <= 0 {
-		minTok = 1
-	}
-	if em.counter.Count(body) < minTok && symbolKind != "code_block" {
-		// still emit small trailing fragments
 	}
 	ch := &zvec.Chunk{
 		DocID:         docID(em.rel, startLine, endLine, symbolName),
@@ -586,15 +565,4 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 		start = next
 	}
 	return nil
-}
-
-// headingHasNoOverlap reports whether line is a markdown heading (for tests).
-func headingHasNoOverlap(line string) bool {
-	_, _, ok := parseHeading(line)
-	return ok
-}
-
-// isWordBoundaryRune exported for tests
-func isWordBoundaryRune(r rune) bool {
-	return unicode.IsSpace(r)
 }

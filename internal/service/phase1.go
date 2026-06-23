@@ -96,7 +96,7 @@ func (p *Phase1) manifestStats() (files, chunks int) {
 		slog.Warn("manifest open for stats failed", "path", dbPath, "err", err)
 		return 0, 0
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	f, c, err := store.Stats()
 	if err != nil {
 		slog.Warn("manifest stats failed", "path", dbPath, "err", err)

@@ -126,7 +126,7 @@ func (c *Client) healthCheckOnce(ctx context.Context, base string) error {
 	if err != nil {
 		return fmt.Errorf("embeddings health probe: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError {
 		return fmt.Errorf("embeddings health probe HTTP %d", resp.StatusCode)
 	}
@@ -222,7 +222,7 @@ func (c *Client) doEmbedRequest(ctx context.Context, body []byte, batchSize int)
 	if err != nil {
 		return nil, 0, fmt.Errorf("embeddings request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
 		return nil, resp.StatusCode, err

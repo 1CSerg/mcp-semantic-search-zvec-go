@@ -172,3 +172,7 @@ func TestStreamChunkClassicMacLineEnding(t *testing.T) {
 	inline := FileChunks("f.go", content, Options{WindowLines: 2, OverlapLines: 0})
 	assertChunksEqual(t, inline, streamed)
 }
+
+func streamChunk(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
+	return streamChunkLegacy(abs, relativePath, opts)
+}

@@ -1,3 +1,5 @@
+//go:build zvec
+
 package zvec
 
 import "testing"

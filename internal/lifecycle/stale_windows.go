@@ -18,7 +18,7 @@ func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("process snapshot: %w", err)
 	}
-	defer windows.CloseHandle(snap)
+	defer func() { _ = windows.CloseHandle(snap) }()
 
 	var pe windows.ProcessEntry32
 	pe.Size = uint32(unsafe.Sizeof(pe))
@@ -67,7 +67,7 @@ func processCommandLine(pid uint32) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 
 	const bufSize = 8192
 	buf := make([]byte, bufSize)
@@ -94,7 +94,7 @@ func terminatePID(pid int) error {
 	if err != nil {
 		return err
 	}
-	defer windows.CloseHandle(handle)
+	defer func() { _ = windows.CloseHandle(handle) }()
 	if err := windows.TerminateProcess(handle, 1); err != nil {
 		return err
 	}

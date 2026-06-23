@@ -145,15 +145,19 @@ func SlideWindowEmit(rel string, allLines []string, startLineOffset int64, meta 
 		if start >= end {
 			break
 		}
-		startLine := startLineOffset + int64(start)
-		ch := chunkFromLineWindow(rel, allLines[start:end], startLine, meta)
-		if ch != nil {
-			if counter != nil && meta.MaxTokens > 0 && counter.Count(ch.Snippet) > meta.MaxTokens {
-				if end > start+1 {
+		if counter != nil && meta.MaxTokens > 0 {
+			for end > start+1 {
+				startLine := startLineOffset + int64(start)
+				if ch := chunkFromLineWindow(rel, allLines[start:end], startLine, meta); ch != nil && counter.Count(ch.Snippet) > meta.MaxTokens {
 					end--
 					continue
 				}
+				break
 			}
+		}
+		startLine := startLineOffset + int64(start)
+		ch := chunkFromLineWindow(rel, allLines[start:end], startLine, meta)
+		if ch != nil {
 			if counter != nil && minTokens > 0 && counter.Count(ch.Snippet) < minTokens {
 				if end == len(allLines) {
 					break
@@ -177,16 +181,4 @@ func SlideWindowEmit(rel string, allLines []string, startLineOffset int64, meta 
 		start = next
 	}
 	return nil
-}
-
-func slideWindow(rel string, allLines []string, opts Options) []zvec.Chunk {
-	window, overlap := normalizeWindowOpts(opts)
-	var chunks []zvec.Chunk
-	_ = SlideWindowEmit(rel, allLines, 1, SlideWindowMeta{Window: window, Overlap: overlap, ChunkStrategy: "line_window"}, func(ch *zvec.Chunk) error {
-		if ch != nil {
-			chunks = append(chunks, *ch)
-		}
-		return nil
-	})
-	return chunks
 }

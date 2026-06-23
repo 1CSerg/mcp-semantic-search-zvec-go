@@ -276,7 +276,7 @@ func TestIsStaleLegacyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(dir, 1)
-	if !l.isStale() {
+	if !lockIsStale(l) {
 		t.Fatal("expected stale legacy lock by mtime")
 	}
 }
@@ -314,7 +314,7 @@ func TestIsStaleDeadModernPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(dir, 1)
-	if !l.isStale() {
+	if !lockIsStale(l) {
 		t.Fatal("expected stale lock for dead pid")
 	}
 }
@@ -328,7 +328,7 @@ func TestIsStaleModernOldHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(dir, 60)
-	if !l.isStale() {
+	if !lockIsStale(l) {
 		t.Fatal("expected stale lock for old heartbeat")
 	}
 }
@@ -344,7 +344,7 @@ func TestIsStalePIDReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(dir, 300)
-	if !l.isStale() {
+	if !lockIsStale(l) {
 		t.Fatal("expected stale lock when start time mismatches")
 	}
 }
@@ -392,14 +392,14 @@ func TestIsStaleEmptyLockFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(dir, 300)
-	if !l.isStale() {
+	if !lockIsStale(l) {
 		t.Fatal("expected empty lock file to be stale")
 	}
 }
 
 func TestIsStaleMissingLockFile(t *testing.T) {
 	l := New(t.TempDir(), 300)
-	if l.isStale() {
+	if lockIsStale(l) {
 		t.Fatal("missing lock file should not be stale")
 	}
 }
@@ -412,7 +412,7 @@ func TestIsStaleAliveModernFresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New(dir, 300)
-	if l.isStale() {
+	if lockIsStale(l) {
 		t.Fatal("expected fresh lock for alive process")
 	}
 }
@@ -453,4 +453,34 @@ func TestLiveHolderPlainPIDAlive(t *testing.T) {
 	if !ok || pid != os.Getpid() {
 		t.Fatalf("LiveHolder()=%d ok=%v", pid, ok)
 	}
+}
+
+func lockIsStale(l *Lock) bool {
+	info, err := os.Stat(l.path)
+	if err != nil {
+		return false
+	}
+	if info.Size() == 0 {
+		return true
+	}
+	data, err := os.ReadFile(l.path)
+	if err != nil {
+		return true
+	}
+	if payload, ok := parseLockPayload(string(data)); ok {
+		if !processAlive(payload.PID) {
+			return true
+		}
+		if payload.Legacy {
+			age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
+			return age > l.staleSecs
+		}
+		if !processMatchesLock(payload.PID, payload.StartTime) {
+			return true
+		}
+		age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
+		return age > l.staleSecs
+	}
+	age := time.Since(info.ModTime()).Seconds()
+	return age > l.staleSecs
 }

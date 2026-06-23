@@ -238,36 +238,3 @@ func (l *Lock) ReclaimStale() bool {
 	_ = os.Remove(l.path)
 	return true
 }
-
-func (l *Lock) isStale() bool {
-	info, err := os.Stat(l.path)
-	if err != nil {
-		return false
-	}
-	if info.Size() == 0 {
-		return true
-	}
-	data, err := os.ReadFile(l.path)
-	if err != nil {
-		return true
-	}
-	if payload, ok := parseLockPayload(string(data)); ok {
-		if !processAlive(payload.PID) {
-			return true
-		}
-		if payload.Legacy {
-			age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
-			return age > l.staleSecs
-		}
-		if !processMatchesLock(payload.PID, payload.StartTime) {
-			// PID is alive but its start time differs from the one recorded in
-			// the lock: the original holder died and the PID was reused by an
-			// unrelated process, so the lock is stale.
-			return true
-		}
-		age := time.Since(time.Unix(payload.Heartbeat, 0)).Seconds()
-		return age > l.staleSecs
-	}
-	age := time.Since(info.ModTime()).Seconds()
-	return age > l.staleSecs
-}

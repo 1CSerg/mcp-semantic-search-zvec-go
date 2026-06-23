@@ -327,48 +327,6 @@ func mergeGreedyPieces(parts []TextPiece, separator string, budget int, counter 
 	return merged
 }
 
-// mergeGreedy combines adjacent string pieces (tests only).
-func mergeGreedy(parts []string, separator string, budget int, counter token.TokenCounter) []string {
-	pieces := make([]TextPiece, len(parts))
-	for i, p := range parts {
-		pieces[i] = TextPiece{Text: p, Start: 0, End: len(p)}
-	}
-	merged := mergeGreedyPieces(pieces, separator, budget, counter)
-	out := make([]string, len(merged))
-	for i, p := range merged {
-		out[i] = p.Text
-	}
-	return out
-}
-
-// splitParagraphs splits on blank lines (tests).
-func splitParagraphs(text string) []string {
-	return piecesToStrings(splitParagraphsWithSpans(text, 0))
-}
-
-// splitClauses splits on ; or : followed by whitespace (tests).
-func splitClauses(text string) []string {
-	return piecesToStrings(splitClausesWithSpans(text, 0))
-}
-
-// splitSentences splits on sentence boundaries (tests).
-func splitSentences(text string) []string {
-	return piecesToStrings(splitSentencesWithSpans(text, 0))
-}
-
-// splitByChars splits rune-wise to fit budget (tests).
-func splitByChars(text string, budget int, counter token.TokenCounter) []string {
-	return piecesToStrings(splitByCharsWithSpans(text, 0, budget, counter))
-}
-
-func piecesToStrings(parts []TextPiece) []string {
-	out := make([]string, len(parts))
-	for i, p := range parts {
-		out[i] = p.Text
-	}
-	return out
-}
-
 // overlapSuffix returns a suffix of prev with at most overlapTokens, trimmed at word boundary.
 func overlapSuffix(prev string, overlapTokens int, counter token.TokenCounter) string {
 	if overlapTokens <= 0 || prev == "" {
@@ -440,34 +398,6 @@ func firstSentenceStartIn(s string) int {
 		}
 	}
 	return 0
-}
-
-// overlapStartsAtBoundary reports whether suffix begins at a word or sentence boundary in full.
-func overlapStartsAtBoundary(full, suffix string) bool {
-	suffix = strings.TrimLeft(suffix, " \t\n")
-	if suffix == "" {
-		return true
-	}
-	idx := strings.Index(full, suffix)
-	if idx < 0 {
-		return true
-	}
-	if idx == 0 {
-		return startsAtNaturalBoundary(suffix)
-	}
-	before := full[:idx]
-	if strings.HasSuffix(before, " ") || strings.HasSuffix(before, "\t") || strings.HasSuffix(before, "\n") {
-		return true
-	}
-	for i := len(before) - 1; i >= 0; i-- {
-		if isSentenceEnd(rune(before[i])) {
-			return true
-		}
-		if before[i] == ' ' || before[i] == '\t' || before[i] == '\n' {
-			break
-		}
-	}
-	return false
 }
 
 // deepestSplitLevel reports the coarsest level needed to fit text in budget.

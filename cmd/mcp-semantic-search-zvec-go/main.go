@@ -317,7 +317,7 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 	if err != nil {
 		slog.Warn("file logging setup failed, using stderr only", "err", err)
 	} else {
-		defer logCloser.Close()
+		defer func() { _ = logCloser.Close() }()
 	}
 
 	defer func() {

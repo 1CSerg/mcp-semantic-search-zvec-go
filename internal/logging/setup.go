@@ -20,7 +20,7 @@ func Setup(settings *config.Settings) (*slog.Logger, io.Closer, error) {
 	}
 
 	writers := []io.Writer{os.Stderr}
-	var closer io.Closer = nopCloser{}
+	var closer io.Closer
 	logPath := filepath.Join(settings.LogsDir(), "server.log")
 	rw, err := newRotatingWriter(logPath, settings.App.Logging.MaxBytes, settings.App.Logging.BackupCount)
 	if err != nil {
@@ -47,7 +47,3 @@ func parseLevel(raw string) slog.Level {
 		return slog.LevelInfo
 	}
 }
-
-type nopCloser struct{}
-
-func (nopCloser) Close() error { return nil }
