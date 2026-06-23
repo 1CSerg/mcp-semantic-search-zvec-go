@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +97,47 @@ func newTestAppUI(t *testing.T, svc service.Service, settings *config.Settings) 
 		func(_ widget.ListItemID, _ fyne.CanvasObject) {},
 	)
 	return ui
+}
+
+func labelText(l *widget.Label) string {
+	var text string
+	fyne.DoAndWait(func() {
+		text = l.Text
+	})
+	return text
+}
+
+func buttonVisible(b *widget.Button) bool {
+	var visible bool
+	fyne.DoAndWait(func() {
+		visible = b.Visible()
+	})
+	return visible
+}
+
+func waitForFyneIdle(t *testing.T, idle func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if idle() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("timeout waiting for async GUI work")
+}
+
+func waitForSearchIdle(t *testing.T, ui *appUI) {
+	t.Helper()
+	waitForFyneIdle(t, func() bool { return !ui.searchInFlight.Load() })
+}
+
+func waitForRefreshStatus(t *testing.T, ui *appUI, wantSubstring string) {
+	t.Helper()
+	waitForFyneIdle(t, func() bool { return !ui.statusRefreshBusy.Load() })
+	if !strings.Contains(labelText(ui.statusLabel), wantSubstring) {
+		t.Fatalf("statusLabel=%q, want substring %q", labelText(ui.statusLabel), wantSubstring)
+	}
 }
 
 func TestRemainingText(t *testing.T) {
@@ -273,13 +315,13 @@ func TestApplyStatus(t *testing.T) {
 		Indexing:              map[string]any{"state": "running", "percent": 42.5, "remaining_seconds": 90, "files_done": 1, "files_total": 2, "chunks_indexed": 5},
 	}
 	ui.applyStatus(status, []byte(`{"indexing":{"state":"running"}}`))
-	if !strings.Contains(ui.statusLabel.Text, "выполняется") {
-		t.Fatalf("statusLabel=%q", ui.statusLabel.Text)
+	if !strings.Contains(labelText(ui.statusLabel), "выполняется") {
+		t.Fatalf("statusLabel=%q", labelText(ui.statusLabel))
 	}
-	if !strings.Contains(ui.statusLabel.Text, "42.5%") {
-		t.Fatalf("statusLabel=%q", ui.statusLabel.Text)
+	if !strings.Contains(labelText(ui.statusLabel), "42.5%") {
+		t.Fatalf("statusLabel=%q", labelText(ui.statusLabel))
 	}
-	if ui.killButton.Visible() {
+	if buttonVisible(ui.killButton) {
 		t.Fatal("kill button should stay hidden without concurrent stdio")
 	}
 	if ui.detailText.Text == "" {
@@ -290,15 +332,15 @@ func TestApplyStatus(t *testing.T) {
 func TestSearchValidation(t *testing.T) {
 	ui := newTestAppUI(t, &mockGUIService{}, nil)
 	ui.search()
-	if ui.searchStatus.Text != "Запрос обязателен." {
-		t.Fatalf("searchStatus=%q", ui.searchStatus.Text)
+	if labelText(ui.searchStatus) != "Запрос обязателен." {
+		t.Fatalf("searchStatus=%q", labelText(ui.searchStatus))
 	}
 
 	ui.queryEntry.SetText("find auth")
 	ui.limitEntry.SetText("-1")
 	ui.search()
-	if ui.searchStatus.Text != "Лимит должен быть неотрицательным числом." {
-		t.Fatalf("searchStatus=%q", ui.searchStatus.Text)
+	if labelText(ui.searchStatus) != "Лимит должен быть неотрицательным числом." {
+		t.Fatalf("searchStatus=%q", labelText(ui.searchStatus))
 	}
 }
 
@@ -325,18 +367,18 @@ func TestSearchSuccess(t *testing.T) {
 	ui.limitEntry.SetText("5")
 	ui.search()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(ui.results) == 1 && strings.Contains(ui.searchStatus.Text, "1 результат") {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if len(ui.results) != 1 {
+	waitForSearchIdle(t, ui)
+	var resultsLen int
+	var statusText string
+	fyne.DoAndWait(func() {
+		resultsLen = len(ui.results)
+		statusText = ui.searchStatus.Text
+	})
+	if resultsLen != 1 {
 		t.Fatalf("results=%v", ui.results)
 	}
-	if !strings.Contains(ui.searchStatus.Text, "1 результат") {
-		t.Fatalf("searchStatus=%q", ui.searchStatus.Text)
+	if !strings.Contains(statusText, "1 результат") {
+		t.Fatalf("searchStatus=%q", statusText)
 	}
 }
 
@@ -349,8 +391,8 @@ func TestRefreshStatusErrors(t *testing.T) {
 		}, nil)
 		ui.refreshStatus()
 		waitForRefreshStatus(t, ui, "недоступен")
-		if !strings.Contains(ui.messageLabel.Text, "status unavailable") {
-			t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
+		if !strings.Contains(labelText(ui.messageLabel), "status unavailable") {
+			t.Fatalf("messageLabel=%q", labelText(ui.messageLabel))
 		}
 	})
 
@@ -363,18 +405,6 @@ func TestRefreshStatusErrors(t *testing.T) {
 		ui.refreshStatus()
 		waitForRefreshStatus(t, ui, "неверный статус")
 	})
-}
-
-func waitForRefreshStatus(t *testing.T, ui *appUI, wantSubstring string) {
-	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(ui.statusLabel.Text, wantSubstring) {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("statusLabel=%q, want substring %q", ui.statusLabel.Text, wantSubstring)
 }
 
 func TestReindexCallsService(t *testing.T) {
@@ -399,7 +429,9 @@ func TestReindexCallsService(t *testing.T) {
 
 func TestShowError(t *testing.T) {
 	ui := newTestAppUI(t, &mockGUIService{}, nil)
-	ui.showError(errors.New("boom"))
+	fyne.DoAndWait(func() {
+		ui.showError(errors.New("boom"))
+	})
 }
 
 func TestKillCompetingProcessNoPID(t *testing.T) {
@@ -415,11 +447,11 @@ func TestBuildUI(t *testing.T) {
 }
 
 func TestSearchWithPathGlob(t *testing.T) {
-	var gotGlob string
+	var gotGlob atomic.Value
 	ui := newTestAppUI(t, &mockGUIService{
 		semanticSearch: func(_ context.Context, req service.SearchRequest) (json.RawMessage, error) {
 			if req.PathGlob != nil {
-				gotGlob = *req.PathGlob
+				gotGlob.Store(*req.PathGlob)
 			}
 			return json.RawMessage(`{"results":[]}`), nil
 		},
@@ -428,14 +460,10 @@ func TestSearchWithPathGlob(t *testing.T) {
 	ui.limitEntry.SetText("5")
 	ui.pathGlobEntry.SetText("**/*.go")
 	ui.search()
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		if gotGlob == "**/*.go" {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	waitForSearchIdle(t, ui)
+	if v := gotGlob.Load(); v != "**/*.go" {
+		t.Fatalf("path glob=%v", v)
 	}
-	t.Fatalf("path glob=%q", gotGlob)
 }
 
 func TestRefreshStatusSuccess(t *testing.T) {
@@ -469,7 +497,7 @@ func TestApplyStatusShowsKillButton(t *testing.T) {
 			})
 			status := indexStatus{Indexing: map[string]any{"state": "idle"}}
 			ui.applyStatus(status, []byte(`{"indexing":{"state":"idle"}}`))
-			if !ui.killButton.Visible() {
+			if !buttonVisible(ui.killButton) {
 				t.Fatal("expected kill button visible")
 			}
 			return
@@ -586,14 +614,14 @@ func TestApplyStatusZvecLockShowsReclaim(t *testing.T) {
 		Indexing:           map[string]any{"state": "running", "running": true, "percent": 50.0},
 	}
 	ui.applyStatus(status, []byte(`{}`))
-	if !ui.reclaimButton.Visible() {
+	if !buttonVisible(ui.reclaimButton) {
 		t.Fatal("reclaim button should be visible on lock error")
 	}
-	if !strings.Contains(ui.messageLabel.Text, "Индекс zvec заблокирован") {
-		t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
+	if !strings.Contains(labelText(ui.messageLabel), "Индекс zvec заблокирован") {
+		t.Fatalf("messageLabel=%q", labelText(ui.messageLabel))
 	}
-	if !strings.Contains(ui.messageLabel.Text, "Прогресс manifest не означает рабочий поиск") {
-		t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
+	if !strings.Contains(labelText(ui.messageLabel), "Прогресс manifest не означает рабочий поиск") {
+		t.Fatalf("messageLabel=%q", labelText(ui.messageLabel))
 	}
 }
 
@@ -679,10 +707,10 @@ func TestApplyStatusInterrupted(t *testing.T) {
 		},
 	}
 	ui.applyStatus(status, []byte(`{}`))
-	if !strings.Contains(ui.statusLabel.Text, "прервана") {
-		t.Fatalf("statusLabel=%q", ui.statusLabel.Text)
+	if !strings.Contains(labelText(ui.statusLabel), "прервана") {
+		t.Fatalf("statusLabel=%q", labelText(ui.statusLabel))
 	}
-	if !strings.Contains(ui.messageLabel.Text, "прервана") {
-		t.Fatalf("messageLabel=%q", ui.messageLabel.Text)
+	if !strings.Contains(labelText(ui.messageLabel), "прервана") {
+		t.Fatalf("messageLabel=%q", labelText(ui.messageLabel))
 	}
 }

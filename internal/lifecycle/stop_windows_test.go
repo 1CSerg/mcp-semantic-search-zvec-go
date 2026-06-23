@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,10 +75,11 @@ func TestRecoverDuplicateStdioWithLiveHelper(t *testing.T) {
 
 func TestWatchParentsDetectsExit(t *testing.T) {
 	resetParentWatchTestHooks(t)
-	parentWatchInterval = 20 * time.Millisecond
+	parentWatchInterval = 10 * time.Millisecond
 
-	alive := true
-	parentWatchProcessAlive = func(int) bool { return alive }
+	var alive atomic.Bool
+	alive.Store(true)
+	parentWatchProcessAlive = func(int) bool { return alive.Load() }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -88,8 +90,8 @@ func TestWatchParentsDetectsExit(t *testing.T) {
 		stopped <- struct{}{}
 	}, []watchedProcess{{PID: 4242, Name: "test.exe"}})
 
-	time.Sleep(60 * time.Millisecond)
-	alive = false
+	time.Sleep(150 * time.Millisecond)
+	alive.Store(false)
 
 	select {
 	case <-stopped:

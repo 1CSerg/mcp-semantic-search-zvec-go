@@ -83,6 +83,7 @@ type appUI struct {
 
 	autoResumeAttempted bool
 	statusRefreshBusy   atomic.Bool
+	searchInFlight      atomic.Bool
 }
 
 func windowTitle() string {
@@ -446,7 +447,9 @@ func (ui *appUI) search() {
 	if strings.TrimSpace(ui.searchStatus.Text) == "" || ui.searchStatus.Text == "Введите запрос для поиска по индексированной рабочей папке." {
 		ui.searchStatus.SetText("Идёт поиск...")
 	}
+	ui.searchInFlight.Store(true)
 	go func() {
+		defer ui.searchInFlight.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		raw, err := ui.svc.SemanticSearch(ctx, service.SearchRequest{

@@ -8,16 +8,39 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/testutil"
 )
 
 const lockHelperEnv = "MCP_LOCK_TEST_HELPER"
+
+func crossProcessPollDeadline() time.Duration {
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "-test.race") {
+			return 10 * time.Second
+		}
+	}
+	return 5 * time.Second
+}
+
+func waitForHelperProcess(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	deadline := time.Now().Add(crossProcessPollDeadline())
+	for time.Now().Before(deadline) {
+		if cmd.Process != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("helper process did not start")
+}
 
 func TestCrossProcessExclusiveHold(t *testing.T) {
 	dir := t.TempDir()
 	child := startLockHelper(t, dir, "hold", 5*time.Second)
 	defer func() { _ = child.Process.Kill() }()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(crossProcessPollDeadline())
 	for {
 		l := New(dir, 300)
 		if l.IsLocked() {
@@ -76,7 +99,7 @@ func TestCrossProcessStdioLockFile(t *testing.T) {
 	child := startLockHelperFile(t, dir, StdioLockFileName, "hold", 2*time.Second)
 	defer func() { _ = child.Process.Kill() }()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(crossProcessPollDeadline())
 	for {
 		if NewStdio(dir, 300).IsLocked() {
 			return
@@ -93,7 +116,7 @@ func TestCrossProcessStdioLiveHolder(t *testing.T) {
 	child := startLockHelperFile(t, dir, StdioLockFileName, "hold", 2*time.Second)
 	defer func() { _ = child.Process.Kill() }()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(crossProcessPollDeadline())
 	for {
 		l := NewStdio(dir, 300)
 		if !l.IsLocked() {
@@ -124,7 +147,7 @@ func startLockHelper(t *testing.T, dir, mode string, hold time.Duration) *exec.C
 func startLockHelperFile(t *testing.T, dir, fileName, mode string, hold time.Duration) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=TestLockHelperProcess")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = testutil.HelperProcessEnv(
 		lockHelperEnv+"=1",
 		"MCP_LOCK_TEST_DIR="+dir,
 		"MCP_LOCK_TEST_FILE="+fileName,
@@ -135,6 +158,7 @@ func startLockHelperFile(t *testing.T, dir, fileName, mode string, hold time.Dur
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start helper: %v", err)
 	}
+	waitForHelperProcess(t, cmd)
 	return cmd
 }
 
@@ -170,7 +194,7 @@ func TestCrossProcessLockFileFormat(t *testing.T) {
 	child := startLockHelper(t, dir, "hold", 2*time.Second)
 	defer func() { _ = child.Process.Kill() }()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(crossProcessPollDeadline())
 	for {
 		path := filepath.Join(dir, lockFileName)
 		data, err := os.ReadFile(path)

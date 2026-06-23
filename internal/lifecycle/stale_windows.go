@@ -46,6 +46,39 @@ func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	return pids, nil
 }
 
+func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil, fmt.Errorf("process snapshot: %w", err)
+	}
+	defer func() { _ = windows.CloseHandle(snap) }()
+
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe))
+
+	var pids []int
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		pid := int(pe.ProcessID)
+		name := windows.UTF16ToString(pe.ExeFile[:])
+		if !strings.Contains(strings.ToLower(name), binaryName) {
+			continue
+		}
+		cmdline, err := processCommandLine(uint32(pid))
+		if err != nil {
+			slog.Warn("stdio scan: read cmdline failed", "pid", pid, "err", err)
+			continue
+		}
+		if !matchesStdioIndexDir(cmdline, indexDir, pid, selfPID) {
+			continue
+		}
+		pids = append(pids, pid)
+	}
+	if err != nil && err != syscall.ERROR_NO_MORE_FILES {
+		return pids, err
+	}
+	return pids, nil
+}
+
 func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 	pids, err := listStdioPIDs(workspace, selfPID)
 	if err != nil {
@@ -82,11 +115,37 @@ func processCommandLine(pid uint32) (string, error) {
 	}
 
 	us := (*windows.NTUnicodeString)(unsafe.Pointer(&buf[0]))
-	if us.Buffer == nil || us.Length == 0 {
+	if us.Length == 0 {
 		return "", fmt.Errorf("empty command line for pid %d", pid)
 	}
 	n := int(us.Length / 2)
-	return windows.UTF16ToString(unsafe.Slice(us.Buffer, n)), nil
+	if n <= 0 {
+		return "", fmt.Errorf("empty command line for pid %d", pid)
+	}
+	// ProcessCommandLineInformation stores WCHARs in the same query buffer.
+	// Do not dereference us.Buffer: it may be misaligned or outside this buffer.
+	bufBase := uintptr(unsafe.Pointer(&buf[0]))
+	bufEnd := bufBase + uintptr(len(buf))
+	if us.Buffer != nil {
+		ptr := uintptr(unsafe.Pointer(us.Buffer))
+		if ptr >= bufBase && ptr+uintptr(n*2) <= bufEnd {
+			start := int(ptr - bufBase)
+			inline := buf[start : start+n*2]
+			return windows.UTF16ToString(unsafe.Slice(
+				(*uint16)(unsafe.Pointer(&inline[0])),
+				n,
+			)), nil
+		}
+	}
+	headerSize := int(unsafe.Sizeof(windows.NTUnicodeString{}))
+	if headerSize+n*2 > len(buf) {
+		return "", fmt.Errorf("command line buffer too small for pid %d", pid)
+	}
+	inline := buf[headerSize : headerSize+n*2]
+	return windows.UTF16ToString(unsafe.Slice(
+		(*uint16)(unsafe.Pointer(&inline[0])),
+		n,
+	)), nil
 }
 
 func terminatePID(pid int) error {

@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/testutil"
 )
 
 func staleHelperBinaryPath(dir string) string {
@@ -43,17 +43,6 @@ func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
 	return fmt.Errorf("helper not ready within %v", timeout)
 }
 
-func helperProcessEnv() []string {
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "GOCOVERDIR=") {
-			continue
-		}
-		env = append(env, e)
-	}
-	return append(env, "GO_WANT_HELPER=1")
-}
-
 func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	t.Helper()
 	helper := staleHelperBinaryPath(workspace)
@@ -66,7 +55,7 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	}
 
 	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
-	cmd.Env = helperProcessEnv()
+	cmd.Env = testutil.HelperProcessEnv("GO_WANT_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
 	}
