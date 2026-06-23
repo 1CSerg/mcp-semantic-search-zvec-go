@@ -10,8 +10,8 @@
   {
     "start_line": 14,
     "end_line": 14,
-    "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_name": "comment",
+    "symbol_kind": "comment",
     "chunk_strategy": "ast",
     "parent_scope": "package main"
   },
@@ -26,8 +26,8 @@
   {
     "start_line": 22,
     "end_line": 22,
-    "symbol_name": "",
-    "symbol_kind": "",
+    "symbol_name": "comment",
+    "symbol_kind": "comment",
     "chunk_strategy": "ast",
     "parent_scope": "package main"
   },

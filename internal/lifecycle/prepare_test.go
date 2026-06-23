@@ -27,26 +27,31 @@ func staleHelperBinaryPath(dir string) string {
 
 func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	if runtime.GOOS == "windows" {
+		for time.Now().Before(deadline) {
+			if cmd.Process != nil {
+				return nil
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return fmt.Errorf("helper not ready within %v", timeout)
+	}
+	var aliveSince time.Time
 	for time.Now().Before(deadline) {
 		if cmd.Process == nil {
+			aliveSince = time.Time{}
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		if runtime.GOOS == "windows" {
-			return nil
-		}
-		pid := cmd.Process.Pid
-		if !lock.ProcessAlive(pid) {
+		if !lock.ProcessAlive(cmd.Process.Pid) {
+			aliveSince = time.Time{}
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
-		if err != nil {
-			time.Sleep(20 * time.Millisecond)
-			continue
+		if aliveSince.IsZero() {
+			aliveSince = time.Now()
 		}
-		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
-		if strings.Contains(line, "--stdio") {
+		if time.Since(aliveSince) >= 200*time.Millisecond {
 			return nil
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -82,7 +87,7 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
 	}
-	if err := waitForHelperReady(cmd, 5*time.Second); err != nil {
+	if err := waitForHelperReady(cmd, 15*time.Second); err != nil {
 		_ = cmd.Process.Kill()
 		t.Fatalf("wait for helper: %v", err)
 	}

@@ -1074,8 +1074,9 @@ func TestPrepareStartupMigratesManifestOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantCollection := zvec.CollectionName(settings.WorkspaceRoot, settings.App.ActiveProfile, profile.Dimensions)
+	wantWorkspaceRoot := config.NormalizeAbsolutePath(settings.WorkspaceRoot)
 	if meta.WorkspaceID != settings.WorkspaceID ||
-		meta.WorkspaceRoot != settings.WorkspaceRoot ||
+		meta.WorkspaceRoot != wantWorkspaceRoot ||
 		meta.CollectionName != wantCollection ||
 		meta.ZvecGoVersion != version.ZvecGoVersion {
 		t.Fatalf("meta=%+v", meta)
