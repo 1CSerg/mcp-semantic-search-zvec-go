@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,6 +137,12 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(req.Query) == "" {
+		return marshal(map[string]any{
+			"query":   req.Query,
+			"results": []any{},
+		})
+	}
 
 	idx := p.indexingProgress()
 
@@ -164,6 +171,9 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 	}
 
 	hits, err := p.zvecSearchWithContext(ctx, vector, limit, derefString(req.PathGlob))
+	if err == nil {
+		hits = rerankSearchHits(hits, req.Query)
+	}
 	if err != nil && lifecycle.IsZvecLockError(err) {
 		recErr := p.recoverZvecLock()
 		if recErr == nil {
@@ -209,6 +219,7 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 			SymbolKind:    h.SymbolKind,
 			ParentScope:   h.ParentScope,
 			ChunkStrategy: h.ChunkStrategy,
+			ChunkType:     h.ChunkType,
 		})
 	}
 	totalMS := float64(time.Since(start).Milliseconds())
@@ -255,8 +266,9 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 	root := p.Settings.WorkspaceRoot
 	diag := indexStatusDiagnostics(p.Settings)
 	if !zvecOpenOK && lifecycle.IsZvecLockError(errors.New(zvecErr)) {
-		diag["duplicate_stdio_suspected"] = true
-		diag["hint"] = "Restart Cursor or kill extra mcp-semantic-search-zvec-go processes for this workspace"
+		setDuplicateStdioDiagnostic(diag)
+	} else if _, ok := lifecycle.FindStdioForIndexDir(p.Settings.IndexDir, os.Getpid()); ok {
+		setDuplicateStdioDiagnostic(diag)
 	}
 	filesFailed := 0
 	if v, ok := idx.ToIndexingMap()["files_failed"]; ok {

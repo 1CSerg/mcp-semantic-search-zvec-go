@@ -153,8 +153,8 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if settings.WorkspaceRoot != dir {
-		t.Fatalf("workspace=%q", settings.WorkspaceRoot)
+	if settings.WorkspaceRoot != NormalizeAbsolutePath(dir) {
+		t.Fatalf("workspace=%q want %q", settings.WorkspaceRoot, NormalizeAbsolutePath(dir))
 	}
 	if settings.HTTPAddr != ":8081" {
 		t.Fatalf("http_addr=%q want :8081 from HTTP_ADDR env", settings.HTTPAddr)

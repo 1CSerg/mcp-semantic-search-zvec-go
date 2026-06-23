@@ -36,6 +36,7 @@ type SearchResultItem struct {
 	SymbolKind    string  `json:"symbol_kind"`
 	ParentScope   string  `json:"parent_scope"`
 	ChunkStrategy string  `json:"chunk_strategy"`
+	ChunkType     string  `json:"chunk_type,omitempty"`
 }
 
 // ReindexRequest triggers background indexing.

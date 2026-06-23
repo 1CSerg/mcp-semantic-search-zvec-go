@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
@@ -72,7 +73,7 @@ func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions, chunki
 	if err != nil {
 		return fmt.Errorf("read index_meta: %w", err)
 	}
-	if meta.WorkspaceID != "" && workspaceID != "" && meta.WorkspaceID != workspaceID {
+	if meta.WorkspaceID != "" && workspaceID != "" && !workspaceIDsEqual(meta.WorkspaceID, workspaceID) {
 		return fmt.Errorf("%w: index belongs to workspace_id %q, current is %q", ErrOwnerMismatch, meta.WorkspaceID, workspaceID)
 	}
 	if meta.EmbeddingProfile != "" && profile != "" && meta.EmbeddingProfile != profile {
@@ -90,11 +91,20 @@ func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions, chunki
 	return nil
 }
 
+func workspaceIDsEqual(a, b string) bool {
+	if a == b {
+		return true
+	}
+	return config.NormalizeAbsolutePath(a) == config.NormalizeAbsolutePath(b)
+}
+
 func indexMetaFromIdentity(identity IndexIdentity, zvecGoVersion string) IndexMeta {
-	collectionName := CollectionName(identity.WorkspaceRoot, identity.Profile, identity.Dimensions)
+	root := config.NormalizeAbsolutePath(identity.WorkspaceRoot)
+	wsID := config.NormalizeWorkspaceID(identity.WorkspaceID, root)
+	collectionName := CollectionName(root, identity.Profile, identity.Dimensions)
 	return IndexMeta{
-		WorkspaceID:          identity.WorkspaceID,
-		WorkspaceRoot:        identity.WorkspaceRoot,
+		WorkspaceID:          wsID,
+		WorkspaceRoot:        root,
 		WorkspaceFingerprint: collectionName,
 		EmbeddingProfile:     identity.Profile,
 		EmbeddingDimensions:  identity.Dimensions,

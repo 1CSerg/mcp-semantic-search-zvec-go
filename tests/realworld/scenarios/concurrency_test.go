@@ -23,7 +23,7 @@ func TestDuplicateStdioSuspected(t *testing.T) {
 		harness.KillProcessGraceful(t, cmd1)
 		harness.KillProcessGraceful(t, cmd2)
 	})
-	time.Sleep(3 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	status := harness.CallMCPTool(t, session, "index_status", map[string]any{})
 	diag, _ := status["diagnostics"].(map[string]any)

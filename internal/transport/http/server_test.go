@@ -66,7 +66,7 @@ func TestHandlerRoutes(t *testing.T) {
 		{"status", http.MethodGet, "/v1/status", "", http.StatusOK},
 		{"workspaces", http.MethodGet, "/v1/workspaces", "", http.StatusNotImplemented},
 		{"search ok", http.MethodPost, "/v1/search", `{"query":"auth"}`, http.StatusOK},
-		{"search empty", http.MethodPost, "/v1/search", `{"query":"  "}`, http.StatusBadRequest},
+		{"search empty", http.MethodPost, "/v1/search", `{"query":"  "}`, http.StatusOK},
 		{"search bad json", http.MethodPost, "/v1/search", `{`, http.StatusBadRequest},
 		{"search negative limit", http.MethodPost, "/v1/search", `{"query":"auth","limit":-1}`, http.StatusBadRequest},
 		{"reindex", http.MethodPost, "/v1/reindex", `{"force":true}`, http.StatusOK},
@@ -103,11 +103,18 @@ func TestHandlerBearerAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health probe should stay public, status=%d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unauth status=%d", rec.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	req = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
 	req.Header.Set("Authorization", "Bearer secret-token")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -115,7 +122,7 @@ func TestHandlerBearerAuth(t *testing.T) {
 		t.Fatalf("auth status=%d", rec.Code)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/health", nil)
+	req = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
 	req.Header.Set("Authorization", "bearer secret-token")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

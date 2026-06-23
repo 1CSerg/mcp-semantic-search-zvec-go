@@ -88,6 +88,7 @@ copy_runtime_libs "$BIN_DIR"
 
 cp -f "$CONFIG_SRC" "$REALWORLD/config.yaml"
 touch "$REALWORLD/.env"
+printf '%s\n' "$INDEX_DIR" > "$BIN_DIR/index-dir.txt"
 
 if [[ "$PROFILE" == "onnx" ]] || grep -q 'active_profile: local_multilingual' "$REALWORLD/config.yaml" 2>/dev/null; then
   echo "==> fetch ONNX model"

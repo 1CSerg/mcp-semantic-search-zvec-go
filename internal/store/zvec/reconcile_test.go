@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
@@ -203,7 +204,7 @@ func TestResetIndexForIdentityChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.WorkspaceID != "ws-b" || updated.WorkspaceRoot != newRoot || updated.CollectionName != newCollection {
+	if updated.WorkspaceID != "ws-b" || updated.WorkspaceRoot != config.NormalizeAbsolutePath(newRoot) || updated.CollectionName != newCollection {
 		t.Fatalf("meta=%+v", updated)
 	}
 	if updated.ZvecGoVersion != version.ZvecGoVersion {
@@ -396,7 +397,7 @@ func TestReconcileIndexBackfillsIncompleteMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.WorkspaceRoot != root ||
+	if meta.WorkspaceRoot != config.NormalizeAbsolutePath(root) ||
 		meta.EmbeddingProfile != "test" ||
 		meta.ChunkingVersion != 1 ||
 		meta.ChunkingStrategy != "hybrid" {

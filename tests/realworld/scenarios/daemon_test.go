@@ -86,6 +86,10 @@ func assertDaemonWorkspaceReachable(t *testing.T, setup *harness.DaemonSetup, ws
 		}
 	}
 	if n, ok := status["zvec_doc_count"].(float64); !ok || n < 1 {
+		harness.ReindexDaemonWorkspace(t, setup, ws.ID, bearer)
+		status = harness.WaitDaemonIndexIdle(t, setup, ws.ID, bearer)
+	}
+	if n, ok := status["zvec_doc_count"].(float64); !ok || n < 1 {
 		t.Fatalf("status for %s missing zvec_doc_count: %v", ws.ID, status)
 	}
 	body := map[string]any{"query": ws.Keyword, "limit": 5, "workspace_id": ws.ID}

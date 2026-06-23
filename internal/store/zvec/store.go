@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
 
@@ -73,7 +74,8 @@ type Config struct {
 
 // CollectionName derives stable zvec collection directory name.
 func CollectionName(workspaceRoot, profileName string, dimensions int) string {
-	raw := fmt.Sprintf("%s:%s:%d", filepath.Clean(workspaceRoot), profileName, dimensions)
+	workspaceRoot = config.NormalizeAbsolutePath(filepath.Clean(workspaceRoot))
+	raw := fmt.Sprintf("%s:%s:%d", workspaceRoot, profileName, dimensions)
 	sum := sha256.Sum256([]byte(raw))
 	return "ws_" + hex.EncodeToString(sum[:])[:16]
 }

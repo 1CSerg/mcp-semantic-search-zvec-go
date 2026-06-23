@@ -16,6 +16,11 @@ func newPollingBackend() backend {
 	return &pollingBackend{}
 }
 
+type fileSnapshot struct {
+	mtimeNs int64
+	size    int64
+}
+
 func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, events chan<- string) error {
 	interval := time.Duration(settings.App.FileWatcher.PollIntervalSeconds * float64(time.Second))
 	if interval <= 0 {
@@ -24,7 +29,7 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var prev map[string]int64
+	var prev map[string]fileSnapshot
 	for {
 		select {
 		case <-ctx.Done():
@@ -35,8 +40,8 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 				continue
 			}
 			if prev != nil {
-				for rel, mtime := range curr {
-					if prev[rel] != mtime {
+				for rel, stat := range curr {
+					if prevStat, ok := prev[rel]; !ok || prevStat != stat {
 						select {
 						case events <- rel:
 						case <-ctx.Done():
@@ -59,7 +64,7 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 	}
 }
 
-func snapshot(settings *config.Settings) (map[string]int64, error) {
+func snapshot(settings *config.Settings) (map[string]fileSnapshot, error) {
 	scanResult, err := scan.Discover(scan.Options{
 		Root:       settings.WorkspaceRoot,
 		Extensions: settings.App.Indexing.Extensions,
@@ -68,14 +73,14 @@ func snapshot(settings *config.Settings) (map[string]int64, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]int64, len(scanResult.Files))
+	out := make(map[string]fileSnapshot, len(scanResult.Files))
 	for _, rel := range scanResult.Files {
 		abs := filepath.Join(settings.WorkspaceRoot, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)
 		if err != nil {
 			continue
 		}
-		out[rel] = info.ModTime().UnixNano()
+		out[rel] = fileSnapshot{mtimeNs: info.ModTime().UnixNano(), size: info.Size()}
 	}
 	return out, nil
 }

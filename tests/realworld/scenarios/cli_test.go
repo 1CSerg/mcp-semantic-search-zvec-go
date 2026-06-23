@@ -135,7 +135,10 @@ func TestHTTPHealthVsReadyDuringIndex(t *testing.T) {
 	if health == nil {
 		t.Fatal("health nil during indexing")
 	}
-	ready := harness.GetJSON(t, srv.HTTPBase+"/ready")
+	ready, code := harness.GetJSONAuth(t, srv.HTTPBase+"/ready", "")
+	if code != http.StatusOK && code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /ready during indexing: code=%d body=%v", code, ready)
+	}
 	if ready["status"] == "" {
 		t.Fatalf("ready missing status during indexing: %v", ready)
 	}

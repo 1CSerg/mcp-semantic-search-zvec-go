@@ -86,8 +86,7 @@ func StartHTTPServerNoCleanup(t *testing.T, repo string, port int, extraEnv ...s
 	binDir := BinDir(repo)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	cmd := exec.Command(bin, "--http", "--http-addr", addr)
-	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
-	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = applyExtraEnv(prependBinToPath(BaseEnv(repo), binDir), extraEnv)
 	cmd.Dir = binDir
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start http server: %v", err)
@@ -104,8 +103,7 @@ func StartMCPServerNoCleanup(t *testing.T, repo string, extraEnv ...string) *exe
 	bin := BinPath(repo)
 	binDir := BinDir(repo)
 	cmd := exec.Command(bin, "--stdio")
-	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
-	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = applyExtraEnv(prependBinToPath(BaseEnv(repo), binDir), extraEnv)
 	cmd.Dir = binDir
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start mcp stdio: %v", err)

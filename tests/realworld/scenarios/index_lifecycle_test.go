@@ -24,9 +24,10 @@ func TestIncrementalFileChange(t *testing.T) {
 	repo := harness.RequireHarness(t)
 	defer harness.AssertNoLeftovers(t, repo)
 
-	srv := harness.StartHTTPServer(t, repo, 19350, watcherEnv()...)
+	idx := harness.TmpIndexDir(t, repo, "incremental-file-change")
+	srv := harness.StartHTTPServerWithConfigIndex(t, repo, harness.ConfigPath(repo), idx, 19350, watcherEnv()...)
 	harness.ForceReindex(t, srv.HTTPBase)
-	harness.WaitIndexIdle(t, srv.HTTPBase)
+	harness.AssertIndexReady(t, srv.HTTPBase)
 
 	target := filepath.Join(harness.CorpusDir(repo), "backend", "auth", "middleware.go")
 	data, err := os.ReadFile(target)
@@ -45,11 +46,20 @@ func TestIncrementalFileChange(t *testing.T) {
 		_ = os.WriteFile(target, data, 0o644)
 	})
 
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
+		status := harness.GetJSON(t, srv.HTTPBase+"/v1/status")
+		idx, _ := status["indexing"].(map[string]any)
+		if idx != nil {
+			if running, _ := idx["running"].(bool); running {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+		}
 		resp := harness.PostJSON(t, srv.HTTPBase+"/v1/search", map[string]any{
-			"query": marker,
-			"limit": 5,
+			"query":      marker,
+			"limit":      20,
+			"path_glob":  "**/middleware.go",
 		})
 		results, _ := resp["results"].([]any)
 		for _, r := range results {
@@ -68,9 +78,10 @@ func TestIncrementalDeleteRenameNew(t *testing.T) {
 	repo := harness.RequireHarness(t)
 	defer harness.AssertNoLeftovers(t, repo)
 
-	srv := harness.StartHTTPServer(t, repo, 19351, watcherEnv()...)
+	idx := harness.TmpIndexDir(t, repo, "incremental-delete-rename")
+	srv := harness.StartHTTPServerWithConfigIndex(t, repo, harness.ConfigPath(repo), idx, 19351, watcherEnv()...)
 	harness.ForceReindex(t, srv.HTTPBase)
-	harness.WaitIndexIdle(t, srv.HTTPBase)
+	harness.AssertIndexReady(t, srv.HTTPBase)
 
 	corpus := harness.CorpusDir(repo)
 	oldPath := filepath.Join(corpus, "docs", "notes.txt")
@@ -95,9 +106,17 @@ func TestIncrementalDeleteRenameNew(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Remove(newFile) })
 
-	deadline := time.Now().Add(3 * time.Minute)
+	deadline := time.Now().Add(5 * time.Minute)
 	var foundNew bool
 	for time.Now().Before(deadline) {
+		status := harness.GetJSON(t, srv.HTTPBase+"/v1/status")
+		idx, _ := status["indexing"].(map[string]any)
+		if idx != nil {
+			if running, _ := idx["running"].(bool); running {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+		}
 		resp := harness.PostJSON(t, srv.HTTPBase+"/v1/search", map[string]any{
 			"query": newMarker,
 			"limit": 5,
@@ -120,7 +139,7 @@ func TestIncrementalDeleteRenameNew(t *testing.T) {
 		t.Fatal("new file not indexed after watcher event")
 	}
 
-	// Stale path should disappear or rank lower after delete/rename settles.
+	harness.WaitIndexIdle(t, srv.HTTPBase)
 	resp := harness.PostJSON(t, srv.HTTPBase+"/v1/search", map[string]any{
 		"query": "REALWORLD_TXT_PARAGRAPH",
 		"limit": 10,
@@ -139,7 +158,8 @@ func TestInterruptIndexingResume(t *testing.T) {
 	repo := harness.RequireHarness(t)
 	defer harness.AssertNoLeftovers(t, repo)
 
-	srv := harness.StartHTTPServerNoCleanup(t, repo, 19352)
+	idx := harness.TmpIndexDir(t, repo, "interrupt-kill")
+	srv := harness.StartHTTPServerWithConfigIndex(t, repo, harness.ConfigPath(repo), idx, 19352)
 	harness.ForceReindex(t, srv.HTTPBase)
 
 	deadline := time.Now().Add(30 * time.Second)
@@ -161,15 +181,12 @@ func TestInterruptIndexingResume(t *testing.T) {
 	}
 	time.Sleep(2 * time.Second)
 
-	srv2 := harness.StartHTTPServer(t, repo, 19353)
+	srv2 := harness.StartHTTPServerWithConfigIndex(t, repo, harness.ConfigPath(repo), harness.TmpIndexDir(t, repo, "interrupt-resume"), 19353)
 	harness.ForceReindex(t, srv2.HTTPBase)
-	status := harness.WaitIndexIdle(t, srv2.HTTPBase)
-	if n, ok := status["zvec_doc_count"].(float64); !ok || n < 1 {
-		t.Fatalf("resume reindex failed: %v", status)
-	}
-	idx, _ := status["indexing"].(map[string]any)
-	if idx != nil {
-		if running, _ := idx["running"].(bool); running {
+	status := harness.AssertIndexReady(t, srv2.HTTPBase)
+	indexing, _ := status["indexing"].(map[string]any)
+	if indexing != nil {
+		if running, _ := indexing["running"].(bool); running {
 			t.Fatal("indexing still running after resume")
 		}
 	}

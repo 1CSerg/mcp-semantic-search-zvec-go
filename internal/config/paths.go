@@ -173,6 +173,25 @@ func normalizePathForContainment(path string) string {
 	return path
 }
 
+// NormalizeAbsolutePath canonicalizes a path for stable workspace identity (Windows drive letter case).
+func NormalizeAbsolutePath(path string) string {
+	return normalizePathForContainment(resolvePathForContainment(path))
+}
+
+// NormalizeWorkspaceID returns a canonical workspace_id; path-like ids are normalized like roots.
+func NormalizeWorkspaceID(id, workspaceRoot string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return workspaceRoot
+	}
+	if strings.ContainsAny(id, `/\`) || strings.EqualFold(id, workspaceRoot) {
+		if abs, err := filepath.Abs(id); err == nil {
+			return NormalizeAbsolutePath(abs)
+		}
+	}
+	return id
+}
+
 // cloudDriveMarkers are lowercase, separator-stripped folder-name prefixes for
 // common cloud-sync clients. Matched against the start of each path segment
 // (also separator-stripped) so "Yandex.Disk", "Yandex Disk", "Google Drive" and

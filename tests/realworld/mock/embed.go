@@ -51,17 +51,44 @@ func main() {
 		if *delay > 0 {
 			time.Sleep(*delay)
 		}
-		vec := make([]float64, *dims)
-		vec[0] = 1
+		var req struct {
+			Input json.RawMessage `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		count := embeddingInputCount(req.Input)
+		if count < 1 {
+			count = 1
+		}
+		data := make([]map[string]any, count)
+		for i := 0; i < count; i++ {
+			vec := make([]float64, *dims)
+			vec[0] = 1
+			data[i] = map[string]any{"object": "embedding", "index": i, "embedding": vec}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"object": "list",
-			"data": []map[string]any{
-				{"object": "embedding", "index": 0, "embedding": vec},
-			},
+			"data":   data,
 		})
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	log.Printf("mock embeddings listening on %s (dims=%d fail=%v fail-count=%d)", addr, *dims, *fail, *failCount)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+func embeddingInputCount(raw json.RawMessage) int {
+	if len(raw) == 0 {
+		return 1
+	}
+	if raw[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return 1
+		}
+		if len(items) == 0 {
+			return 1
+		}
+		return len(items)
+	}
+	return 1
 }

@@ -72,9 +72,12 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token := s.settings.APIToken; token != "" && !bearerAuthorized(r, token) {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
-			return
+		// Probes stay unauthenticated so orchestrators and test harness can wait for listen.
+		if r.URL.Path != "/health" {
+			if token := s.settings.APIToken; token != "" && !bearerAuthorized(r, token) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+				return
+			}
 		}
 		w.Header().Set("X-Server-Version", version.Version)
 		next.ServeHTTP(w, r)
@@ -172,10 +175,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req service.SearchRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	if strings.TrimSpace(req.Query) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"})
 		return
 	}
 	workspaceID := firstNonEmpty(req.WorkspaceID, r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))

@@ -68,6 +68,11 @@ func setDiagnosticHint(diag map[string]any, hint string) {
 	diag["hint"] = hint
 }
 
+func setDuplicateStdioDiagnostic(diag map[string]any) {
+	diag["duplicate_stdio_suspected"] = true
+	setDiagnosticHint(diag, "Restart Cursor or kill extra mcp-semantic-search-zvec-go processes for this workspace")
+}
+
 func enrichIndexStatusDiagnostics(
 	diag map[string]any,
 	settings *config.Settings,

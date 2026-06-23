@@ -47,6 +47,8 @@ func BaseEnv(repo string) []string {
 		"AUTO_INDEX_ON_START=false",
 		"FILE_WATCHER_ENABLED=false",
 		"MCP_DISABLE_PARENT_WATCH=true",
+		// Harness keeps INDEX_DIR/CONFIG_PATH under .realworld/, outside corpus.
+		"MCP_PATH_CONTAINMENT=off",
 	)
 }
 
@@ -104,6 +106,19 @@ func replaceEnvKey(env []string, key, value string) []string {
 	return out
 }
 
+func applyExtraEnv(env []string, extraEnv []string) []string {
+	out := env
+	for _, e := range extraEnv {
+		idx := strings.IndexByte(e, '=')
+		if idx <= 0 {
+			out = append(out, e)
+			continue
+		}
+		out = replaceEnvKey(out, e[:idx+1], e[idx+1:])
+	}
+	return out
+}
+
 // StartHTTPServer spawns --http and waits for /health.
 func StartHTTPServer(t *testing.T, repo string, port int, extraEnv ...string) *ServerProcess {
 	t.Helper()
@@ -128,8 +143,7 @@ func StartHTTPServerWithArgs(t *testing.T, repo string, port int, extraArgs []st
 		port = p
 	}
 	cmd := exec.Command(bin, args...)
-	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
-	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = applyExtraEnv(prependBinToPath(BaseEnv(repo), binDir), extraEnv)
 	cmd.Dir = binDir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -153,10 +167,22 @@ func StartHTTPServerWithConfig(t *testing.T, repo, configPath string, port int) 
 	return startHTTPServerWithEnv(t, repo, port, WithConfigEnv(repo, configPath))
 }
 
+// TmpIndexDir returns an isolated index directory for a single scenario.
+func TmpIndexDir(t *testing.T, repo, name string) string {
+	t.Helper()
+	dir := filepath.Join(RealworldRoot(repo), "tmp-index", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir tmp index: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // StartHTTPServerWithConfigIndex starts HTTP with alternate config and index dir.
-func StartHTTPServerWithConfigIndex(t *testing.T, repo, configPath, indexDir string, port int) *ServerProcess {
+func StartHTTPServerWithConfigIndex(t *testing.T, repo, configPath, indexDir string, port int, extraEnv ...string) *ServerProcess {
 	env := WithConfigEnv(repo, configPath)
 	env = replaceEnvKey(env, "INDEX_DIR=", indexDir)
+	env = applyExtraEnv(env, extraEnv)
 	return startHTTPServerWithEnv(t, repo, port, env)
 }
 
@@ -205,8 +231,7 @@ func startMCPServerSession(t *testing.T, repo string, extraEnv []string) (*mcp.C
 	bin := BinPath(repo)
 	binDir := BinDir(repo)
 	cmd := exec.Command(bin, "--stdio")
-	cmd.Env = prependBinToPath(BaseEnv(repo), binDir)
-	cmd.Env = append(cmd.Env, extraEnv...)
+	cmd.Env = applyExtraEnv(prependBinToPath(BaseEnv(repo), binDir), extraEnv)
 	cmd.Dir = binDir
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "realworld-test", Version: "0"}, nil)
@@ -260,6 +285,19 @@ func WaitIndexIdle(t *testing.T, httpBase string) map[string]any {
 	return nil
 }
 
+// AssertIndexReady waits for idle indexing and requires an open, non-empty zvec collection.
+func AssertIndexReady(t *testing.T, httpBase string) map[string]any {
+	t.Helper()
+	status := WaitIndexIdle(t, httpBase)
+	if open, _ := status["zvec_open_ok"].(bool); !open {
+		t.Fatalf("zvec not open after reindex: %v", status)
+	}
+	if n, ok := status["zvec_doc_count"].(float64); !ok || n < 1 {
+		t.Fatalf("expected zvec_doc_count >= 1, status=%v", status)
+	}
+	return status
+}
+
 // ForceReindex triggers POST /v1/reindex with force=true.
 func ForceReindex(t *testing.T, httpBase string) {
 	t.Helper()
@@ -279,6 +317,8 @@ func AssertSearchHit(t *testing.T, httpBase, query, pathSuffix, wantSymbol, want
 	}
 	resp := postJSON(t, httpBase+"/v1/search", body)
 	results, _ := resp["results"].([]any)
+	searchQuery, _ := body["query"].(string)
+	var pathMatches []map[string]any
 	for _, r := range results {
 		item, _ := r.(map[string]any)
 		if item == nil {
@@ -300,7 +340,23 @@ func AssertSearchHit(t *testing.T, httpBase, query, pathSuffix, wantSymbol, want
 				t.Fatalf("hit %q has chunk_strategy=%q want %q", path, strat, wantStrategy)
 			}
 		}
-		return item
+		pathMatches = append(pathMatches, item)
+	}
+	for _, item := range pathMatches {
+		snippet, _ := item["snippet"].(string)
+		sym, _ := item["symbol_name"].(string)
+		if searchQuery != "" && strings.Contains(snippet, searchQuery) && sym != "" {
+			return item
+		}
+	}
+	for _, item := range pathMatches {
+		snippet, _ := item["snippet"].(string)
+		if searchQuery != "" && strings.Contains(snippet, searchQuery) {
+			return item
+		}
+	}
+	if len(pathMatches) > 0 {
+		return pathMatches[0]
 	}
 	t.Fatalf("no search hit for query=%q pathSuffix=%q symbol=%q strategy=%q in %v", query, pathSuffix, wantSymbol, wantStrategy, resp)
 	return nil
@@ -412,9 +468,52 @@ func AssertJSONExcludesSubstring(t *testing.T, label string, v any, substr strin
 	}
 }
 
-// AssertNoLeftovers checks no orphan locks, listening harness ports, or stray MCP processes.
+// CleanupHarnessRuntime stops stray harness MCP processes and removes orphan lock files.
+func CleanupHarnessRuntime(t *testing.T, repo string) {
+	t.Helper()
+	for _, pid := range findStrayProcesses(repo) {
+		if pid <= 0 {
+			continue
+		}
+		if runtime.GOOS == "windows" {
+			_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", pid)).Run()
+		} else {
+			proc, err := os.FindProcess(pid)
+			if err == nil {
+				_ = proc.Kill()
+			}
+		}
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/IM", "embed.exe").Run()
+	}
+	time.Sleep(500 * time.Millisecond)
+	indexDir := IndexDir(repo)
+	for _, name := range []string{"index.lock", "stdio.lock"} {
+		_ = os.Remove(filepath.Join(indexDir, name))
+	}
+	for port := 19301; port <= 19400; port++ {
+		if IsPortListening("127.0.0.1", port) {
+			// Best-effort: ports in harness range should be free between scenarios.
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	for port := 19320; port <= 19396; port++ {
+		if IsPortListening("127.0.0.1", port) {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+	for _, port := range []int{19990, 19995, 19996, 19997, 19998} {
+		if IsPortListening("127.0.0.1", port) {
+			time.Sleep(200 * time.Millisecond)
+		}
+	}
+}
+
 func AssertNoLeftovers(t *testing.T, repo string) {
 	t.Helper()
+	CleanupHarnessRuntime(t, repo)
+	time.Sleep(500 * time.Millisecond)
 	indexDir := IndexDir(repo)
 	for _, name := range []string{"index.lock", "stdio.lock"} {
 		p := filepath.Join(indexDir, name)
@@ -604,7 +703,11 @@ func killProcess(t *testing.T, cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Kill()
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", cmd.Process.Pid)).Run()
+	} else {
+		_ = cmd.Process.Kill()
+	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {

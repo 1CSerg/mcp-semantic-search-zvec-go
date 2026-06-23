@@ -149,7 +149,7 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 		r.mu.Unlock()
 		if evicted != nil {
 			r.beginDiscard()
-			go r.discardHandle(evicted)
+			r.discardHandle(evicted)
 		}
 
 		var h *workspaceHandle
@@ -225,6 +225,17 @@ func (r *Registry) initWorkspace(spec WorkspaceSpec) (*workspaceHandle, error) {
 	}
 	if err := r.closeCtx.Err(); err != nil {
 		return nil, err
+	}
+
+	profile, err := settings.ActiveProfile()
+	if err == nil {
+		cfg := zvec.Config{
+			IndexDir:      settings.IndexDir,
+			WorkspaceRoot: settings.WorkspaceRoot,
+			ProfileName:   settings.App.ActiveProfile,
+			Dimensions:    profile.Dimensions,
+		}
+		zvec.ReclaimCollectionLock(cfg)
 	}
 
 	phase1, err := service.NewPhase1(settings)
@@ -318,6 +329,16 @@ func (r *Registry) discardHandle(h *workspaceHandle) {
 	if h.phase1 != nil {
 		if err := h.phase1.Close(); err != nil {
 			slog.Warn("workspace discard", "err", err)
+		}
+	}
+	if h.settings != nil {
+		if profile, err := h.settings.ActiveProfile(); err == nil {
+			zvec.ReclaimCollectionLock(zvec.Config{
+				IndexDir:      h.settings.IndexDir,
+				WorkspaceRoot: h.settings.WorkspaceRoot,
+				ProfileName:   h.settings.App.ActiveProfile,
+				Dimensions:    profile.Dimensions,
+			})
 		}
 	}
 }

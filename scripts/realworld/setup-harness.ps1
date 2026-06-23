@@ -60,6 +60,7 @@ Copy-RuntimeLibs $BinDir
 
 Copy-Item -Force $ConfigSrc (Join-Path $Realworld "config.yaml")
 New-Item -ItemType File -Force -Path (Join-Path $Realworld ".env") | Out-Null
+Set-Content -Path (Join-Path $BinDir "index-dir.txt") -Value $IndexDir -Encoding UTF8
 
 if ($Profile -eq "onnx" -or (Select-String -Path (Join-Path $Realworld "config.yaml") -Pattern "active_profile:\s*local_multilingual" -Quiet)) {
     Write-Host "==> fetch ONNX model"

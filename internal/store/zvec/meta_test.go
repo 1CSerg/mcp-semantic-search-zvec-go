@@ -2,6 +2,9 @@ package zvec
 
 import (
 	"errors"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
@@ -195,5 +198,36 @@ func TestIndexMetaFromIdentityChunkingFields(t *testing.T) {
 	meta := indexMetaFromIdentity(identity, version.ZvecGoVersion)
 	if meta.ChunkingVersion != 1 || meta.ChunkingStrategy != "hybrid" {
 		t.Fatalf("meta=%+v", meta)
+	}
+}
+
+func TestValidateIndexMetaWorkspaceIDCaseInsensitiveOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only")
+	}
+	dir := t.TempDir()
+	root := filepath.Clean(`D:\Projects\MyApp`)
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:         root,
+		EmbeddingProfile:    "smoke",
+		EmbeddingDimensions: 128,
+		ChunkingVersion:     1,
+		ChunkingStrategy:    "hybrid",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateIndexMeta(dir, strings.ToLower(root), "smoke", 128, 1, "hybrid"); err != nil {
+		t.Fatalf("expected case-insensitive workspace_id match: %v", err)
+	}
+}
+
+func TestCollectionNameStableAcrossDriveLetterCase(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only")
+	}
+	a := CollectionName(`D:\Projects\MyApp`, "profile", 384)
+	b := CollectionName(`d:\projects\myapp`, "profile", 384)
+	if a != b {
+		t.Fatalf("collection names differ: %q vs %q", a, b)
 	}
 }

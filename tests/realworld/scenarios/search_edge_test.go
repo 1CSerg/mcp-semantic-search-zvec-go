@@ -103,7 +103,10 @@ func TestSearchBeforeReadyAndDuringIndexing(t *testing.T) {
 	defer harness.AssertNoLeftovers(t, repo)
 
 	srv := harness.StartHTTPServer(t, repo, 19363)
-	ready := harness.GetJSON(t, srv.HTTPBase+"/ready")
+	ready, code := harness.GetJSONAuth(t, srv.HTTPBase+"/ready", "")
+	if code != http.StatusOK && code != http.StatusServiceUnavailable {
+		t.Fatalf("GET /ready before reindex: code=%d body=%v", code, ready)
+	}
 	if ready["status"] != "not_ready" && ready["status"] != "ready" {
 		t.Logf("/ready before reindex: %v", ready)
 	}

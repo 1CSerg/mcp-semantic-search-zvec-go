@@ -403,6 +403,8 @@ func (e *engine) emitPreambleBeforeFirstBoundary(node *sitter.Node, scope Scope)
 		ChunkType:     "code",
 		Name:          filepath.Base(e.rel),
 		Snippet:       strings.TrimRight(pre, "\n"),
+		SymbolName:    symbolNameFromText(pre),
+		SymbolKind:    "comment",
 		ParentScope:   scope.String(),
 		ChunkStrategy: "ast",
 	}
@@ -448,8 +450,8 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 	parentScope := e.budgetParentScope(scope, &nodes[0], parent)
 	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
 	if e.counter.Count(text) > budget {
-		symbolKind := symbolKindForBufferNodes(nodes)
-		symbolName := ""
+		symbolKind := symbolKindForBufferNodes(nodes, e.src)
+		symbolName := symbolNameForBufferNodes(nodes, e.src)
 		if parent != nil {
 			symbolKind = parent.Kind
 			symbolName = parent.Name
@@ -463,8 +465,9 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 			budgetScope:   parentScope,
 		}, e.emit)
 	}
-	symbolKind := symbolKindForBufferNodes(nodes)
-	ch := e.chunkFromNodes(nodes, scope, symbolKind, "", strategy)
+	symbolKind := symbolKindForBufferNodes(nodes, e.src)
+	symbolName := symbolNameForBufferNodes(nodes, e.src)
+	ch := e.chunkFromNodes(nodes, scope, symbolKind, symbolName, strategy)
 	if ch == nil {
 		*buffer = nil
 		return nil
@@ -578,11 +581,85 @@ func verbatimConcat(src []byte, nodes []sitter.Node) string {
 	return string(src[start:end])
 }
 
-// symbolKindForBufferNodes tags buffer flushes that include import_declaration nodes (§7).
-func symbolKindForBufferNodes(nodes []sitter.Node) string {
+// symbolKindForBufferNodes tags buffer flushes that include import or comment nodes (§7).
+func symbolKindForBufferNodes(nodes []sitter.Node, src []byte) string {
 	for _, n := range nodes {
-		if n.Kind() == "import_declaration" {
+		switch n.Kind() {
+		case "import_declaration", "import_statement", "import_from_statement":
 			return "import"
+		case "comment":
+			return "comment"
+		}
+	}
+	text := strings.TrimSpace(verbatimConcat(src, nodes))
+	if strings.HasPrefix(text, "//") || strings.HasPrefix(text, "#") {
+		return "comment"
+	}
+	return ""
+}
+
+func symbolNameForBufferNodes(nodes []sitter.Node, src []byte) string {
+	text := strings.TrimSpace(verbatimConcat(src, nodes))
+	if name := symbolNameFromText(text); name != "" && name != "comment" {
+		return name
+	}
+	for _, n := range nodes {
+		switch n.Kind() {
+		case "import_declaration", "import_statement", "import_from_statement":
+			if path := importPathFromText(string(n.Utf8Text(src))); path != "" {
+				return path
+			}
+		case "comment":
+			if name := symbolNameFromText(string(n.Utf8Text(src))); name != "" {
+				return name
+			}
+		}
+	}
+	if symbolKindForBufferNodes(nodes, src) == "comment" {
+		return symbolNameFromText(text)
+	}
+	return ""
+}
+
+func symbolNameFromText(text string) string {
+	if name := markerNameFromComment(text); name != "" {
+		return name
+	}
+	if strings.HasPrefix(strings.TrimSpace(text), "//") || strings.HasPrefix(strings.TrimSpace(text), "#") {
+		return "comment"
+	}
+	return ""
+}
+
+func markerNameFromComment(text string) string {
+	text = strings.TrimSpace(text)
+	for _, prefix := range []string{"//", "#", "/*", "*/"} {
+		text = strings.TrimPrefix(text, prefix)
+	}
+	text = strings.TrimSpace(text)
+	if i := strings.Index(text, "REALWORLD_"); i >= 0 {
+		rest := text[i:]
+		for j, r := range rest {
+			if r == ' ' || r == '—' || r == '-' || r == '\t' {
+				if j > 0 {
+					return rest[:j]
+				}
+				break
+			}
+		}
+		return rest
+	}
+	return ""
+}
+
+func importPathFromText(text string) string {
+	text = strings.TrimSpace(text)
+	for _, q := range []string{`"`, `'`, "`"} {
+		if i := strings.Index(text, q); i >= 0 {
+			rest := text[i+len(q):]
+			if j := strings.Index(rest, q); j > 0 {
+				return rest[:j]
+			}
 		}
 	}
 	return ""

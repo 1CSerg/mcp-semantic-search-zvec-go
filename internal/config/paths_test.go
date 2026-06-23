@@ -162,3 +162,21 @@ func TestStripPathSeparators(t *testing.T) {
 		t.Fatalf("got=%q", got)
 	}
 }
+
+func TestNormalizeAbsolutePathWindowsDriveCase(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-only")
+	}
+	a := NormalizeAbsolutePath(`D:\Projects\MyApp`)
+	b := NormalizeAbsolutePath(`d:\projects\myapp`)
+	if a != b {
+		t.Fatalf("NormalizeAbsolutePath mismatch: %q vs %q", a, b)
+	}
+}
+
+func TestNormalizeWorkspaceIDUsesRoot(t *testing.T) {
+	root := NormalizeAbsolutePath(t.TempDir())
+	if got := NormalizeWorkspaceID("", root); got != root {
+		t.Fatalf("got=%q want=%q", got, root)
+	}
+}

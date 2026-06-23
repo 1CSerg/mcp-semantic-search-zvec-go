@@ -67,12 +67,9 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 	if opts.WorkspaceRoot == "" {
 		opts.WorkspaceRoot = mustAbs(getwd())
 	}
-	workspace := mustAbs(opts.WorkspaceRoot)
+	workspace := NormalizeAbsolutePath(mustAbs(opts.WorkspaceRoot))
 
-	workspaceID := opts.WorkspaceID
-	if workspaceID == "" {
-		workspaceID = workspace
-	}
+	workspaceID := NormalizeWorkspaceID(opts.WorkspaceID, workspace)
 
 	indexRaw := opts.IndexDir
 	if indexRaw == "" {

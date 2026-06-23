@@ -105,5 +105,6 @@ func RequireHarness(t *testing.T) string {
 	if _, err := os.Stat(cfg); err != nil {
 		t.Skipf("realworld harness not ready (missing %s); run scripts/realworld/setup-harness", cfg)
 	}
+	CleanupHarnessRuntime(t, repo)
 	return repo
 }
