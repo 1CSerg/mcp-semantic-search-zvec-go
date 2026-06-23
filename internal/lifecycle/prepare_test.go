@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,17 @@ func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
 	return fmt.Errorf("helper not ready within %v", timeout)
 }
 
+func helperProcessEnv() []string {
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GOCOVERDIR=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	return append(env, "GO_WANT_HELPER=1")
+}
+
 func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	t.Helper()
 	helper := staleHelperBinaryPath(workspace)
@@ -54,7 +66,7 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	}
 
 	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
-	cmd.Env = append(os.Environ(), "GO_WANT_HELPER=1")
+	cmd.Env = helperProcessEnv()
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
 	}

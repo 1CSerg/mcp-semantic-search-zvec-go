@@ -1,3 +1,5 @@
+//go:build !zvec || !treesitter
+
 package ast
 
 import (
