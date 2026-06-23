@@ -3,6 +3,7 @@
 package lifecycle
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
 
 func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
@@ -79,6 +82,10 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 	var stopped []int
 	for _, pid := range pids {
 		if err := terminatePID(pid); err != nil {
+			if !lock.ProcessAlive(pid) {
+				stopped = append(stopped, pid)
+				continue
+			}
 			slog.Warn("stale stdio scan: terminate failed", "pid", pid, "err", err)
 			continue
 		}
@@ -88,14 +95,25 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 }
 
 func terminatePID(pid int) error {
+	if !lock.ProcessAlive(pid) {
+		return fmt.Errorf("process %d not found", pid)
+	}
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
 	_ = proc.Signal(syscall.SIGTERM)
 	time.Sleep(killGrace)
+	if !lock.ProcessAlive(pid) {
+		return nil
+	}
 	if err := proc.Signal(syscall.SIGKILL); err != nil {
-		return syscall.Kill(pid, syscall.SIGKILL)
+		if killErr := syscall.Kill(pid, syscall.SIGKILL); killErr != nil {
+			if errors.Is(killErr, syscall.ESRCH) && !lock.ProcessAlive(pid) {
+				return nil
+			}
+			return killErr
+		}
 	}
 	return nil
 }

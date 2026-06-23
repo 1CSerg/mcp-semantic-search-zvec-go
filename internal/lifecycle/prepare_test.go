@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func staleHelperBinaryPath(dir string) string {
 	return filepath.Join(dir, name)
 }
 
-func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
+func waitForHelperReady(cmd *exec.Cmd, workspace string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if cmd.Process == nil {
@@ -34,8 +35,18 @@ func waitForHelperReady(cmd *exec.Cmd, timeout time.Duration) error {
 		if runtime.GOOS == "windows" {
 			return nil
 		}
-		pid := strconv.Itoa(cmd.Process.Pid)
-		if _, err := os.ReadFile(filepath.Join("/proc", pid, "cmdline")); err == nil {
+		pid := cmd.Process.Pid
+		if !lock.ProcessAlive(pid) {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+		if err != nil {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
+		if matchesStaleStdio(line, workspace, pid, os.Getpid()) {
 			return nil
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -59,7 +70,7 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
 	}
-	if err := waitForHelperReady(cmd, 5*time.Second); err != nil {
+	if err := waitForHelperReady(cmd, workspace, 5*time.Second); err != nil {
 		_ = cmd.Process.Kill()
 		t.Fatalf("wait for helper: %v", err)
 	}
@@ -82,18 +93,40 @@ func TestHelperStaleStdio(t *testing.T) {
 	select {}
 }
 
+func helperCmdlineMatchable(workspace string, pid int) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	cmdline, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return false
+	}
+	line := strings.ReplaceAll(string(cmdline), "\x00", " ")
+	return matchesStaleStdio(line, workspace, pid, os.Getpid())
+}
+
 func TestStopStaleStdioKillsHelper(t *testing.T) {
 	workspace := t.TempDir()
 	cmd := startStaleHelper(t, workspace)
 	defer func() { _ = cmd.Process.Kill() }()
 
+	helperPID := cmd.Process.Pid
+	helperMatchable := false
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		if helperCmdlineMatchable(workspace, helperPID) {
+			helperMatchable = true
+		}
+
 		stopped, err := stopStaleStdioInstances(workspace, os.Getpid())
 		if err != nil {
 			t.Fatalf("stopStaleStdioInstances: %v", err)
 		}
 		if len(stopped) > 0 {
+			_ = cmd.Wait()
+			return
+		}
+		if helperMatchable && !lock.ProcessAlive(helperPID) {
 			_ = cmd.Wait()
 			return
 		}
