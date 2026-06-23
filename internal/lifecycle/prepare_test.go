@@ -151,10 +151,14 @@ func TestStopStaleStdioKillsHelper(t *testing.T) {
 	if err := PrepareWorkspaceLocks(settings); err != nil {
 		t.Fatalf("PrepareWorkspaceLocks: %v", err)
 	}
-	if lock.ProcessAlive(helperPID) {
-		t.Fatalf("expected stale helper pid=%d to be dead after PrepareWorkspaceLocks", helperPID)
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+		return // success
+	case <-time.After(5 * time.Second):
+		t.Fatalf("helper pid=%d still running after PrepareWorkspaceLocks", helperPID)
 	}
-	_ = cmd.Wait()
 }
 
 func TestPrepareStdioStopsStaleHelper(t *testing.T) {

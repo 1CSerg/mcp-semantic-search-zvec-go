@@ -17,7 +17,7 @@ func ProcessAlive(pid int) bool {
 	defer func() { _ = syscall.CloseHandle(h) }()
 	var exitCode uint32
 	if err := syscall.GetExitCodeProcess(h, &exitCode); err != nil {
-		return false
+		return true
 	}
 	const stillActive = 259 // STILL_ACTIVE
 	return exitCode == stillActive

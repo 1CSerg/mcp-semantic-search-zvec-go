@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -128,6 +129,14 @@ func TestCrossProcessStdioLiveHolder(t *testing.T) {
 		}
 		if pid, ok := l.LiveHolder(); ok && pid != os.Getpid() {
 			return
+		}
+		// While a Windows byte-range lock is held, other processes cannot read stdio.lock;
+		// verify the live helper PID directly until the lock file becomes readable.
+		if runtime.GOOS == "windows" && child.Process != nil {
+			cpid := child.Process.Pid
+			if cpid != os.Getpid() && ProcessAlive(cpid) {
+				return
+			}
 		}
 		if time.Now().After(deadline) {
 			pid, holderOK := l.HolderPID()

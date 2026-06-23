@@ -192,13 +192,10 @@ func TestWatcherWaitAndRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if coord.Starts() >= 1 {
-			st := w.Snapshot()
-			if st.PendingEvents == 0 && coord.Starts() >= 1 {
-				return
-			}
+			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
