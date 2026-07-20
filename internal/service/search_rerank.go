@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
@@ -49,7 +50,7 @@ func searchQueryTerms(query string) []string {
 	seen := make(map[string]struct{})
 	for _, f := range fields {
 		f = strings.TrimSpace(f)
-		if len(f) < 3 {
+		if utf8.RuneCountInString(f) < 3 {
 			continue
 		}
 		if _, ok := seen[f]; ok {
@@ -75,8 +76,9 @@ func pathMatchBoost(path string, terms []string) float64 {
 		if strings.Contains(base, term) {
 			boost += 0.22
 		}
-		if len(term) >= 5 {
-			stem := term[:4]
+		rs := []rune(term)
+		if len(rs) >= 5 {
+			stem := string(rs[:4])
 			if strings.Contains(p, stem) {
 				boost += 0.12
 			}

@@ -364,6 +364,39 @@ func TestWatcherLoopSkipsIrrelevantFiles(t *testing.T) {
 	}
 }
 
+func TestWatcherLoopTriggersReindexOnDirectoryRemove(t *testing.T) {
+	coord := &mockCoordinator{}
+	w := &Watcher{
+		settings: &config.Settings{
+			App: config.AppConfig{
+				FileWatcher: config.FileWatcherConfig{
+					DebounceSeconds: 0.05,
+				},
+				Indexing: config.IndexingConfig{
+					Extensions: []string{".go"},
+					SkipDirs:   []string{".git"},
+				},
+			},
+		},
+		coordinator: coord,
+		stopCh:      make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan string, 1)
+	go w.loop(ctx, events)
+	// fsnotify often emits only the directory path on recursive delete.
+	events <- "pkg"
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if coord.Starts() >= 1 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("starts=%d, expected reindex after directory remove", coord.Starts())
+}
+
 func TestWatcherSnapshot(t *testing.T) {
 	settings := &config.Settings{
 		WorkspaceRoot: t.TempDir(),

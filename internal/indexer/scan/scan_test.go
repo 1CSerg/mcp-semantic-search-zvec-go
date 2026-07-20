@@ -261,6 +261,13 @@ func TestMatchesWatchPath(t *testing.T) {
 	if MatchesWatchPath("readme.txt", ext, skip) {
 		t.Fatal("expected extension mismatch")
 	}
+	// Directory Remove/Rename has no extension — still trigger reindex.
+	if !MatchesWatchPath("pkg", ext, skip) {
+		t.Fatal("expected directory path match")
+	}
+	if MatchesWatchPath("node_modules", ext, skip) {
+		t.Fatal("expected skipped directory")
+	}
 }
 
 func TestShouldSkipPath(t *testing.T) {

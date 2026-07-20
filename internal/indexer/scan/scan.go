@@ -249,11 +249,16 @@ func shouldSkipDir(name string, skipDirs []string) bool {
 }
 
 // MatchesWatchPath reports whether a relative path should trigger watcher reindex.
+// Extension-less paths (typically directories) are accepted so Remove/Rename of a
+// folder still triggers reindex when fsnotify only emits the directory event.
 func MatchesWatchPath(rel string, extensions, skipDirs []string) bool {
 	if shouldSkipPath(rel, skipDirs) {
 		return false
 	}
-	return matchesExtension(rel, extensions)
+	if matchesExtension(rel, extensions) {
+		return true
+	}
+	return filepath.Ext(rel) == ""
 }
 
 func matchesExtension(rel string, extensions []string) bool {
