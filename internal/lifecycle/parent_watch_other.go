@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux
 
 package lifecycle
 
@@ -31,10 +31,10 @@ func defaultProcessName(pid int) string {
 		return strings.TrimSpace(string(data))
 	}
 	if data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline")); err == nil {
-		line := strings.ReplaceAll(string(data), "\x00", " ")
-		fields := strings.Fields(line)
-		if len(fields) > 0 {
-			return filepath.Base(fields[0])
+		// cmdline is NUL-separated; firstExecutableToken splits on the first NUL
+		// so a path containing spaces (e.g. "/opt/my app/bin/sh") is preserved.
+		if exe := firstExecutableToken(string(data)); exe != "" {
+			return filepath.Base(exe)
 		}
 	}
 	return ""

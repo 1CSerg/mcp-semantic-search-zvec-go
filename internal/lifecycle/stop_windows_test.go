@@ -119,13 +119,97 @@ func TestProcessEntryCurrentProcess(t *testing.T) {
 }
 
 func TestStopLauncherWrappersNoMatch(t *testing.T) {
-	stopped, err := stopLauncherWrappers(t.TempDir())
+	stopped, err := stopLauncherWrappers(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(stopped) != 0 {
 		t.Fatalf("stopped=%v, want none", stopped)
 	}
+}
+
+func TestLaunchChainPIDSetIncludesSelfAndParent(t *testing.T) {
+	resetParentWatchTestHooks(t)
+
+	selfPID := os.Getpid()
+	parentPID := selfPID + 100
+	parentWatchCurrentPID = func() int { return selfPID }
+	parentWatchParentPID = func(pid int) int {
+		if pid == selfPID {
+			return parentPID
+		}
+		return 0
+	}
+	parentWatchProcessStart = func(pid int) int64 {
+		// Distinct, non-zero start times for each pid.
+		return int64(pid) * 1000
+	}
+
+	chain := launchChainPIDSet()
+	startSelf, ok := chain[selfPID]
+	if !ok {
+		t.Fatalf("launchChainPIDSet missing self pid=%d", selfPID)
+	}
+	if startSelf != int64(selfPID)*1000 {
+		t.Fatalf("self start=%d want %d", startSelf, int64(selfPID)*1000)
+	}
+	startParent, ok := chain[parentPID]
+	if !ok {
+		t.Fatalf("launchChainPIDSet missing parent pid=%d", parentPID)
+	}
+	if startParent != int64(parentPID)*1000 {
+		t.Fatalf("parent start=%d want %d", startParent, int64(parentPID)*1000)
+	}
+}
+
+func TestIsExcludedPID(t *testing.T) {
+	resetParentWatchTestHooks(t)
+	// Fixed start-time for the live lookup so identity checks are deterministic.
+	parentWatchProcessStart = func(pid int) int64 { return 100 }
+
+	t.Run("recorded zero falls back to pid-only match", func(t *testing.T) {
+		exclude := map[int]int64{42: 0, 99: 0}
+		if !isExcludedPID(42, exclude) {
+			t.Fatal("expected pid 42 (start=0) to be excluded by pid-only")
+		}
+		if isExcludedPID(43, exclude) {
+			t.Fatal("expected pid 43 not to be excluded")
+		}
+		if isExcludedPID(42, nil) {
+			t.Fatal("nil exclude must not exclude any pid")
+		}
+	})
+
+	t.Run("matching start time excludes", func(t *testing.T) {
+		// recorded=100, current=100 → match (±1s tolerance)
+		exclude := map[int]int64{42: 100}
+		if !isExcludedPID(42, exclude) {
+			t.Fatal("expected pid 42 to be excluded with matching start")
+		}
+	})
+
+	t.Run("mismatched start time (pid reuse) is not excluded", func(t *testing.T) {
+		// recorded=100, but the pid now reports start=5000 → recycled → NOT excluded.
+		var reportedStart int64 = 100
+		parentWatchProcessStart = func(pid int) int64 { return reportedStart }
+		exclude := map[int]int64{42: 100}
+		if !isExcludedPID(42, exclude) {
+			t.Fatal("precondition: same start should exclude")
+		}
+		reportedStart = 5000
+		if isExcludedPID(42, exclude) {
+			t.Fatal("recycled pid with mismatched start must NOT be excluded")
+		}
+	})
+
+	t.Run("current start unavailable preserves exclude", func(t *testing.T) {
+		// recorded=100, current unavailable (0) → safe direction: keep exclude.
+		parentWatchProcessStart = func(pid int) int64 { return 0 }
+		exclude := map[int]int64{42: 100}
+		if !isExcludedPID(42, exclude) {
+			t.Fatal("when current start is unknown, exclude should be preserved (safe)")
+		}
+	})
 }
 
 func TestForceReclaimLocksEmptyDir(t *testing.T) {

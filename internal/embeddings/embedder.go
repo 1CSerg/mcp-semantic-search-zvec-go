@@ -14,6 +14,10 @@ type Embedder interface {
 	EmbedQuery(ctx context.Context, query string) ([]float32, error)
 	Dimensions() int
 	HealthCheck(ctx context.Context) error
+	// Close releases provider-native resources (e.g. the ONNX Runtime session).
+	// Implementations must be safe to call once, after all Embed calls have
+	// returned. It must not be called concurrently with Embed.
+	Close() error
 }
 
 // NewEmbedder creates an embedding provider from profile settings.

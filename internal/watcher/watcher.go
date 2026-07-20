@@ -46,6 +46,8 @@ type Watcher struct {
 	lastError     string
 	debounce      *time.Timer
 	stopCh        chan struct{}
+	stopOnce      sync.Once
+	wg            sync.WaitGroup // tracks loop + backend goroutines so Stop can wait for them
 	retryActive   bool
 	retryPending  bool
 	lastRetryRel  string
@@ -97,10 +99,12 @@ func (w *Watcher) Start(ctx context.Context) {
 	w.mu.Unlock()
 
 	events := make(chan string, 64)
+	w.wg.Add(2)
 	go func() {
+		defer w.wg.Done()
 		err := w.backend.run(ctx, w.settings, events)
 		close(events)
-		if err != nil && ctx.Err() == nil {
+		if err != nil && ctx.Err() == nil && !w.isStopped() {
 			w.mu.Lock()
 			w.running = false
 			w.lastError = err.Error()
@@ -108,9 +112,29 @@ func (w *Watcher) Start(ctx context.Context) {
 			slog.Error("watcher backend stopped", "backend", w.backendName, "err", err)
 		}
 	}()
-	go w.loop(ctx, events)
+	go func() {
+		defer w.wg.Done()
+		w.loop(ctx, events)
+	}()
 
 	<-ctx.Done()
+	w.finishStop()
+}
+
+// isStopped reports whether Stop (or finishStop) has closed stopCh.
+func (w *Watcher) isStopped() bool {
+	select {
+	case <-w.stopCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// finishStop performs the idempotent teardown shared by the Start exit path and
+// Stop: it marks the watcher not-running, stops the debounce timer and closes
+// stopCh exactly once so all select-loops listening on it unblock.
+func (w *Watcher) finishStop() {
 	w.mu.Lock()
 	w.running = false
 	if w.debounce != nil {
@@ -118,7 +142,23 @@ func (w *Watcher) Start(ctx context.Context) {
 		w.debounce = nil
 	}
 	w.mu.Unlock()
-	close(w.stopCh)
+	w.stopOnce.Do(func() { close(w.stopCh) })
+}
+
+// Stop cancels the watcher's event loop without depending on the caller's
+// context. It is safe to call concurrently and multiple times. After Stop the
+// watcher will not trigger any new reindex jobs, which lets a service shutdown
+// safely release native resources (tree-sitter handles, zvec) without racing
+// the watcher. Stop waits for the loop and backend goroutines to exit.
+func (w *Watcher) Stop() {
+	if w == nil || w.backend == nil {
+		return
+	}
+	if w.isStopped() {
+		return
+	}
+	w.finishStop()
+	w.wg.Wait()
 }
 
 func (w *Watcher) loop(ctx context.Context, events <-chan string) {

@@ -176,8 +176,10 @@ func versionGreater(a, b string) bool {
 	if a == b {
 		return false
 	}
-	pa := parseVersionParts(a)
-	pb := parseVersionParts(b)
+	va, vpa := splitSemver(a)
+	vb, vpb := splitSemver(b)
+	pa := va
+	pb := vb
 	maxLen := len(pa)
 	if len(pb) > maxLen {
 		maxLen = len(pb)
@@ -194,27 +196,128 @@ func versionGreater(a, b string) bool {
 			return ai > bi
 		}
 	}
-	return a > b
+	// Numeric core versions are equal. Per semver, a release (no pre-release)
+	// is greater than ANY pre-release of the same version (1.2.3 > 1.2.3-rc.1),
+	// and two pre-releases compare dot-by-dot with numeric identifiers compared
+	// as integers (1.2.3-rc.10 > 1.2.3-rc.2). build metadata never affects order.
+	return comparePrerelease(vpa, vpb) > 0
 }
 
-func parseVersionParts(v string) []int {
-	parts := strings.Split(v, ".")
-	out := make([]int, 0, len(parts))
-	for _, p := range parts {
+// splitSemver separates a normalized version into its numeric core version parts
+// and its pre-release identifiers. Build metadata (after '+') is discarded.
+//   "1.2.3"         -> ([1,2,3],  nil)
+//   "1.2.3-rc.1"    -> ([1,2,3],  ["rc","1"])
+//   "1.2.3+build5"  -> ([1,2,3],  nil)
+//   "1.2.3-beta.1+a" -> ([1,2,3], ["beta","1"])
+//   "1.2"           -> ([1,2],    nil)
+// A non-numeric core segment falls back to 0 for that position so that versions
+// like "1.2.x" do not crash ordering; such tags are rare for release artifacts.
+func splitSemver(v string) (core []int, prerelease []string) {
+	// Drop build metadata.
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	pre := ""
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		pre = v[i+1:]
+		v = v[:i]
+	}
+	for _, p := range strings.Split(v, ".") {
 		p = strings.TrimSpace(p)
-		if p == "" {
-			out = append(out, 0)
-			continue
-		}
-		// Strip pre-release suffix (e.g. 1.2.3-beta)
-		if i := strings.IndexAny(p, "-+"); i >= 0 {
-			p = p[:i]
-		}
 		n, err := strconv.Atoi(p)
 		if err != nil {
-			return []int{0}
+			n = 0
 		}
-		out = append(out, n)
+		core = append(core, n)
 	}
-	return out
+	if pre != "" {
+		prerelease = strings.Split(pre, ".")
+	}
+	return core, prerelease
+}
+
+// comparePrerelease implements the semver §11 pre-release ordering:
+//   - A version WITHOUT a pre-release has HIGHER precedence than one WITH
+//     (release > pre-release).
+//   - Two pre-releases compare identifier-by-identifier (dot-separated). A
+//     larger set of identifiers wins if all preceding ones are equal.
+//   - Numeric identifiers (all digits) compare as integers; a numeric identifier
+//     is LOWER than an alphanumeric one.
+//   - Alphanumeric identifiers compare lexically by ASCII (semver §11.0.4).
+// Returns >0 if a > b, 0 if equal, <0 if a < b.
+func comparePrerelease(a, b []string) int {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	if len(a) == 0 {
+		return 1 // release > pre-release
+	}
+	if len(b) == 0 {
+		return -1
+	}
+	min := len(a)
+	if len(b) < min {
+		min = len(b)
+	}
+	for i := 0; i < min; i++ {
+		if c := comparePrereleaseIdentifier(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	// All shared identifiers equal: the longer pre-release wins.
+	switch {
+	case len(a) > len(b):
+		return 1
+	case len(a) < len(b):
+		return -1
+	default:
+		return 0
+	}
+}
+
+// comparePrereleaseIdentifier compares two single pre-release identifiers per
+// semver: numeric < alphanumeric, numerics as integers, alphanumerics lexically.
+func comparePrereleaseIdentifier(a, b string) int {
+	aNum := isNumericIdentifier(a)
+	bNum := isNumericIdentifier(b)
+	switch {
+	case aNum && bNum:
+		na, _ := strconv.ParseInt(a, 10, 64)
+		nb, _ := strconv.ParseInt(b, 10, 64)
+		switch {
+		case na > nb:
+			return 1
+		case na < nb:
+			return -1
+		default:
+			return 0
+		}
+	case aNum && !bNum:
+		return -1 // numeric has lower precedence
+	case !aNum && bNum:
+		return 1
+	default:
+		switch {
+		case a > b:
+			return 1
+		case a < b:
+			return -1
+		default:
+			return 0
+		}
+	}
+}
+
+// isNumericIdentifier reports whether s is a non-empty string of ASCII digits
+// (semver's definition of a numeric identifier).
+func isNumericIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

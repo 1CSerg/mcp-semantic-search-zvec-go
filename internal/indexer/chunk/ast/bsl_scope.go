@@ -49,11 +49,22 @@ func buildBSLRegionTracker(root *sitter.Node, src []byte) *bslRegionTracker {
 		}
 	}
 	walk(root)
-	sort.Slice(events, func(i, j int) bool {
-		if events[i].line == events[j].line {
-			return events[i].isStart && !events[j].isStart
+	// Stable sort so the parent_scope string (built from the event order) is
+	// deterministic across runs. The comparator orders by line, then "start
+	// before end" on the same line, then by name as a final tiebreaker so that
+	// two starts on the same line are ordered deterministically. For two
+	// end-events on the same line the name tiebreaker is "" == "" (BSL
+	// #endregion carries no name), so the comparator reports them as equal and
+	// sort.SliceStable preserves their traversal order — which is what we want
+	// (the inner region must end before the outer one).
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].line != events[j].line {
+			return events[i].line < events[j].line
 		}
-		return events[i].line < events[j].line
+		if events[i].isStart != events[j].isStart {
+			return events[i].isStart // start before end on the same line
+		}
+		return events[i].name < events[j].name
 	})
 	return &bslRegionTracker{events: events}
 }

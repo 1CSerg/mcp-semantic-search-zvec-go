@@ -16,12 +16,14 @@ func resetParentWatchTestHooks(t *testing.T) {
 	oldParentPID := parentWatchParentPID
 	oldProcessName := parentWatchProcessName
 	oldProcessAlive := parentWatchProcessAlive
+	oldProcessStart := parentWatchProcessStart
 	t.Cleanup(func() {
 		parentWatchInterval = oldInterval
 		parentWatchCurrentPID = oldCurrentPID
 		parentWatchParentPID = oldParentPID
 		parentWatchProcessName = oldProcessName
 		parentWatchProcessAlive = oldProcessAlive
+		parentWatchProcessStart = oldProcessStart
 	})
 }
 

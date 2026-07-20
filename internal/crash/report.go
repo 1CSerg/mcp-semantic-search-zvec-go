@@ -86,7 +86,15 @@ func WriteWithOptions(logDir, version string, fatal any, opts WriteOptions) erro
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(logDir, "last_crash.json"))
+	final := filepath.Join(logDir, "last_crash.json")
+	if err := os.Rename(tmp, final); err != nil {
+		// On Windows Rename fails (Access is denied) if the destination is held
+		// open by another process (editor, indexer). Clean up the temp file so it
+		// does not accumulate; the previous crash report, if any, is left intact.
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // SanitizeStack replaces known absolute path prefixes with placeholders.

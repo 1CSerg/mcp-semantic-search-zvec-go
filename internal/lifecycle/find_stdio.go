@@ -12,7 +12,7 @@ func FindStdioForWorkspace(workspace string, selfPID int) (int, bool) {
 	if err != nil || len(pids) == 0 {
 		return 0, false
 	}
-	return pids[0], true
+	return pids[0].PID, true
 }
 
 // FindStdioForIndexDir returns another live --stdio MCP process sharing index-dir.txt.
@@ -25,5 +25,5 @@ func FindStdioForIndexDir(indexDir string, selfPID int) (int, bool) {
 	if err != nil || len(pids) == 0 {
 		return 0, false
 	}
-	return pids[0], true
+	return pids[0].PID, true
 }

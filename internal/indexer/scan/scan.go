@@ -1,6 +1,8 @@
 package scan
 
 import (
+	"bytes"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -72,30 +74,53 @@ func discoverGit(root string, opts Options) (Result, bool) {
 }
 
 func gitFiles(root string) ([]string, error) {
-	return gitCommandLines(root, "ls-files", "--cached", "--others", "--exclude-standard")
+	return gitCommandLines(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 }
 
 func gitDeletedFiles(root string) ([]string, error) {
-	return gitCommandLines(root, "ls-files", "--deleted")
+	return gitCommandLines(root, "ls-files", "-z", "--deleted")
 }
 
+// gitCommandLines runs `git -C <root> -c core.quotepath=false <args...>` and
+// returns NUL-terminated (-z) path entries. The explicit core.quotepath=false
+// keeps non-ASCII path bytes literal (git defaults to C-style octal escapes for
+// Cyrillic / CJK names, which would otherwise never match real files on disk),
+// and -z makes the output unambiguous for paths containing spaces, quotes or
+// newlines.
 func gitCommandLines(root string, args ...string) ([]string, error) {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+	gitArgs := append([]string{"-C", root, "-c", "core.quotepath=false"}, args...)
+	cmd := exec.Command("git", gitArgs...)
 	out, err := cmd.Output()
 	if err != nil {
+		// cmd.Output() captures stderr into *exec.ExitError.Stderr, but does not
+		// surface it in err.Error(). For a non-git directory git prints
+		// "fatal: not a git repository" to stderr — including it here makes
+		// "git_unavailable" diagnostics actionable.
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := strings.TrimSpace(string(exitErr.Stderr))
+			if stderr != "" {
+				return nil, fmt.Errorf("%s: %s", err.Error(), stderr)
+			}
+		}
 		return nil, err
 	}
-	return parseGitLsFilesOutput(out), nil
+	return parseGitLsFilesZ(out), nil
 }
 
-func parseGitLsFilesOutput(out []byte) []string {
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+// parseGitLsFilesZ splits NUL-terminated git ls-files -z output into slash-
+// normalized relative paths. Empty output yields an empty slice (not [""]).
+func parseGitLsFilesZ(out []byte) []string {
+	if len(out) == 0 {
+		return nil
+	}
 	var files []string
-	for _, line := range lines {
-		line = strings.TrimSpace(strings.ReplaceAll(line, "\\", "/"))
-		if line != "" {
-			files = append(files, line)
+	for _, entry := range bytes.Split(out, []byte{0}) {
+		// A trailing NUL after the last entry produces a final empty element;
+		// skip it along with any genuinely empty entries.
+		if len(entry) == 0 {
+			continue
 		}
+		files = append(files, strings.ReplaceAll(string(entry), "\\", "/"))
 	}
 	return files
 }
@@ -135,6 +160,13 @@ func excludeMissingByStat(root string, files []string) ([]string, []string) {
 				skipped = append(skipped, rel)
 				continue
 			}
+			// Any other stat error (EACCES, ELOOP on a broken symlink, etc.)
+			// means the path is not indexable right now: skip it rather than
+			// keeping it, which would only fail later inside the chunker with a
+			// less actionable error.
+			slog.Debug("scan skipped unreadable path", "path", rel, "err", err)
+			skipped = append(skipped, rel)
+			continue
 		}
 		kept = append(kept, rel)
 	}

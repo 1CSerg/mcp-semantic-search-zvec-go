@@ -10,10 +10,11 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"golang.org/x/sys/windows"
 )
 
-func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
+func listStdioPIDs(workspace string, selfPID int) ([]procCandidate, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, fmt.Errorf("process snapshot: %w", err)
@@ -23,7 +24,7 @@ func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	var pe windows.ProcessEntry32
 	pe.Size = uint32(unsafe.Sizeof(pe))
 
-	var pids []int
+	var pids []procCandidate
 	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
 		pid := int(pe.ProcessID)
 		name := windows.UTF16ToString(pe.ExeFile[:])
@@ -38,7 +39,7 @@ func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 		if !matchesStaleStdio(cmdline, workspace, pid, selfPID) {
 			continue
 		}
-		pids = append(pids, pid)
+		pids = append(pids, procCandidate{PID: pid, StartTime: lock.ProcessStartTime(pid)})
 	}
 	if err != nil && err != syscall.ERROR_NO_MORE_FILES {
 		return pids, err
@@ -46,7 +47,7 @@ func listStdioPIDs(workspace string, selfPID int) ([]int, error) {
 	return pids, nil
 }
 
-func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
+func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]procCandidate, error) {
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
 		return nil, fmt.Errorf("process snapshot: %w", err)
@@ -56,7 +57,7 @@ func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
 	var pe windows.ProcessEntry32
 	pe.Size = uint32(unsafe.Sizeof(pe))
 
-	var pids []int
+	var pids []procCandidate
 	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
 		pid := int(pe.ProcessID)
 		name := windows.UTF16ToString(pe.ExeFile[:])
@@ -71,7 +72,7 @@ func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
 		if !matchesStdioIndexDir(cmdline, indexDir, pid, selfPID) {
 			continue
 		}
-		pids = append(pids, pid)
+		pids = append(pids, procCandidate{PID: pid, StartTime: lock.ProcessStartTime(pid)})
 	}
 	if err != nil && err != syscall.ERROR_NO_MORE_FILES {
 		return pids, err
@@ -80,17 +81,17 @@ func listStdioPIDsForIndexDir(indexDir string, selfPID int) ([]int, error) {
 }
 
 func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
-	pids, err := listStdioPIDs(workspace, selfPID)
+	cands, err := listStdioPIDs(workspace, selfPID)
 	if err != nil {
 		return nil, err
 	}
 	var stopped []int
-	for _, pid := range pids {
-		if err := terminatePID(pid); err != nil {
-			slog.Warn("stale stdio scan: terminate failed", "pid", pid, "err", err)
+	for _, c := range cands {
+		if err := terminatePIDChecked(c.PID, c.StartTime); err != nil {
+			slog.Warn("stale stdio scan: terminate failed", "pid", c.PID, "err", err)
 			continue
 		}
-		stopped = append(stopped, pid)
+		stopped = append(stopped, c.PID)
 	}
 	return stopped, nil
 }

@@ -11,12 +11,13 @@ import (
 	"unsafe"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"golang.org/x/sys/windows"
 )
 
 const launcherScriptName = "run-mcp-stdio.ps1"
 
-func stopLauncherWrappers(workspace string) ([]int, error) {
+func stopLauncherWrappers(workspace string, exclude map[int]int64) ([]int, error) {
 	installDir := filepath.Join(workspace, config.DefaultInstallDirName)
 	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
 	if err != nil {
@@ -42,7 +43,11 @@ func stopLauncherWrappers(workspace string) ([]int, error) {
 		if !matchesLauncherWrapper(cmdline, workspace, installDir) {
 			continue
 		}
-		if err := terminatePID(pid); err != nil {
+		if isExcludedPID(pid, exclude) {
+			continue
+		}
+		startTime := lock.ProcessStartTime(pid)
+		if err := terminatePIDChecked(pid, startTime); err != nil {
 			slog.Warn("launcher scan: terminate failed", "pid", pid, "err", err)
 			continue
 		}

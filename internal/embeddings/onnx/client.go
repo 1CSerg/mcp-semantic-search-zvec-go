@@ -30,6 +30,7 @@ type Client struct {
 	session    *ort.DynamicAdvancedSession
 	inputNames []string
 	hiddenSize int
+	closed     bool
 	mu         sync.Mutex
 }
 
@@ -157,6 +158,9 @@ func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed || c.session == nil {
+		return nil, fmt.Errorf("onnx client is closed")
+	}
 	batchSize := c.profile.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
@@ -203,8 +207,17 @@ func (c *Client) HealthCheck(_ context.Context) error {
 	return err
 }
 
-// Close releases native ONNX resources.
+// Close releases native ONNX resources. It acquires the inference mutex so it
+// cannot race with a concurrent Embed (which would otherwise destroy the
+// session mid-Run — a use-after-free in native onnxruntime). After Close
+// returns, Embed reports an error instead of panicking on a nil session.
 func (c *Client) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	c.closed = true
 	if c.session != nil {
 		c.session.Destroy()
 		c.session = nil

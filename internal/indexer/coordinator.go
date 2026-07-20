@@ -93,6 +93,13 @@ func (c *Coordinator) UnlockZvecForClose() {
 	c.zvecCloseMu.Unlock()
 }
 
+// Close releases native chunker resources (tree-sitter C handles). It must be
+// called only after WaitForIdle has returned and no indexing goroutine is
+// running; it is intended for process shutdown. Safe to call multiple times.
+func (c *Coordinator) Close() {
+	chunk.CloseResources()
+}
+
 // IsRunning reports whether a job is active in this process.
 func (c *Coordinator) IsRunning() bool {
 	c.mu.Lock()

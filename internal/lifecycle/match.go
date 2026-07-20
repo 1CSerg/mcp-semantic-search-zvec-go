@@ -43,6 +43,13 @@ func firstExecutableToken(cmdline string) string {
 	if cmdline == "" {
 		return ""
 	}
+	// On Unix /proc/<pid>/cmdline is NUL-separated, so a path containing spaces
+	// (e.g. "/opt/my app/bin") survives intact only if we split on NUL first.
+	// Replacing NUL with a space (as the callers previously did) would truncate
+	// such a path at the first internal space.
+	if i := strings.IndexByte(cmdline, 0); i >= 0 {
+		return cmdline[:i]
+	}
 	if cmdline[0] == '"' {
 		end := strings.Index(cmdline[1:], `"`)
 		if end >= 0 {

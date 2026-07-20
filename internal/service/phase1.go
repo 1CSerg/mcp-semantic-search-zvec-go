@@ -44,6 +44,14 @@ type Phase1 struct {
 	lastZvecLockWarn time.Time
 	shutdownOnce     sync.Once
 	searchWG         sync.WaitGroup
+
+	// searchMu guards searchesShuttingDown and serializes searchWG.Add with the
+	// searchWG.Wait performed in Shutdown. Per sync.WaitGroup contract, Add must
+	// not happen concurrently with Wait; the mutex + flag gate ensures that once
+	// Shutdown flips the flag, no new Add can race the Wait, and existing searches
+	// will observe their context cancellation and return (so Wait is bounded).
+	searchMu             sync.Mutex
+	searchesShuttingDown bool
 }
 
 // NewPhase1 creates the production service (zvec + indexer).
@@ -125,12 +133,28 @@ func (p *Phase1) isIndexingRunning() bool {
 	return p.indexingProgress().Running
 }
 
-func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.RawMessage, error) {
+func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (payload json.RawMessage, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	p.searchWG.Add(1)
+	if err := p.beginSearch(); err != nil {
+		return nil, err
+	}
 	defer p.searchWG.Done()
+	// recover so a panic from the embedder or zvec does not crash the whole
+	// MCP/HTTP server. The deferred searchWG.Done above still runs (defers
+	// execute during panic unwind, in LIFO order, so this recover runs first).
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("semantic search panic", "query", req.Query, "panic", rec)
+			p, mErr := marshal(map[string]any{
+				"query":   req.Query,
+				"results": []any{},
+				"message": fmt.Sprintf("internal error: %v", rec),
+			})
+			payload, err = p, mErr
+		}
+	}()
 
 	start := time.Now()
 	limit, err := normalizeSearchLimit(req.Limit, req.TopK)
@@ -186,6 +210,12 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
+		// Shutdown began between the outer beginSearch and the inner one in
+		// zvecSearchWithContext: surface a dedicated error instead of the
+		// generic "vector search failed".
+		if errors.Is(err, ErrShuttingDown) {
+			return nil, err
+		}
 		if errors.Is(err, zvec.ErrCollectionMissing) {
 			return marshal(map[string]any{
 				"query":   req.Query,
@@ -224,18 +254,18 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (json.Ra
 	}
 	totalMS := float64(time.Since(start).Milliseconds())
 	p.searchStats.Record(totalMS)
-	payload := map[string]any{
+	result := map[string]any{
 		"query":       req.Query,
 		"results":     results,
 		"performance": p.searchStats.Performance(totalMS),
 	}
 	if idx.Running {
-		payload["indexing"] = idx.ToIndexingMap()
-		if _, hasMsg := payload["message"]; !hasMsg {
-			payload["message"] = "results may be incomplete while indexing is in progress"
+		result["indexing"] = idx.ToIndexingMap()
+		if _, hasMsg := result["message"]; !hasMsg {
+			result["message"] = "results may be incomplete while indexing is in progress"
 		}
 	}
-	return marshal(payload)
+	return marshal(result)
 }
 
 func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
@@ -647,13 +677,37 @@ func (p *Phase1) Close() error {
 func (p *Phase1) Shutdown(ctx context.Context) error {
 	var err error
 	p.shutdownOnce.Do(func() {
+		// Stop accepting new searches BEFORE waiting, so searchWG.Wait cannot race
+		// with a concurrent searchWG.Add (sync.WaitGroup contract). In-flight
+		// searches observe their ctx and return, so Wait is bounded.
+		p.stopAcceptingSearches()
+
 		indexIdle := true
 		if p.coordinator != nil {
+			// Stop the file watcher BEFORE waiting for the indexer to go idle and
+			// before releasing native chunker handles. Otherwise a save event
+			// arriving mid-shutdown could trigger coordinator.Start, which would
+			// race the tree-sitter parser Close() below (use-after-free on the C
+			// TSParser handle).
+			p.startupMu.RLock()
+			wInst := p.watcherInst
+			p.startupMu.RUnlock()
+			if wInst != nil {
+				wInst.Stop()
+			}
 			if waitErr := p.coordinator.WaitForIdle(ctx); waitErr != nil {
 				if err == nil {
 					err = waitErr
 				}
 				indexIdle = false
+			}
+			// Only release the native tree-sitter C handles when we know the
+			// indexer goroutine is no longer parsing. Closing them while an
+			// index job is still running would be a use-after-free on the C
+			// TSParser handle. If WaitForIdle timed out we leak the handles
+			// (acceptable at process shutdown) rather than risk a segfault.
+			if indexIdle {
+				p.coordinator.Close()
 			}
 		}
 		searchesIdle := true
@@ -676,9 +730,39 @@ func (p *Phase1) Shutdown(ctx context.Context) error {
 				err = closeErr
 			}
 		}
+		// Release provider-native resources (e.g. the ONNX Runtime session).
+		// For the OpenAI-compatible HTTP provider Close is a cheap no-op.
+		if p.embed != nil {
+			if closeErr := p.embed.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
 		zvec.ReclaimCollectionLock(p.zvecCfg)
 	})
 	return err
+}
+
+// beginSearch registers a new in-flight search under searchMu. It returns
+// ErrShuttingDown if Shutdown has already flipped the searchesShuttingDown flag.
+// Holding searchMu around Add guarantees Add cannot race with the Wait in
+// Shutdown (which sets the flag under the same mutex before calling Wait).
+func (p *Phase1) beginSearch() error {
+	p.searchMu.Lock()
+	defer p.searchMu.Unlock()
+	if p.searchesShuttingDown {
+		return ErrShuttingDown
+	}
+	p.searchWG.Add(1)
+	return nil
+}
+
+// stopAcceptingSearches flips the shutdown flag so no new searches can call
+// searchWG.Add. It must run before searchWG.Wait to satisfy the WaitGroup
+// contract (no concurrent Add/Wait).
+func (p *Phase1) stopAcceptingSearches() {
+	p.searchMu.Lock()
+	p.searchesShuttingDown = true
+	p.searchMu.Unlock()
 }
 
 func (p *Phase1) waitSearches(ctx context.Context) error {
@@ -691,6 +775,17 @@ func (p *Phase1) waitSearches(ctx context.Context) error {
 	case <-done:
 		return nil
 	case <-ctx.Done():
+		// ctx (the shutdown deadline) expired before all in-flight searches
+		// finished. Do NOT block on <-done here: the in-flight zvec.Search call
+		// inside zvecSearchWithContext does not accept a context, so it can run
+		// well past the deadline (large collection, slow disk). Blocking would
+		// hang Shutdown indefinitely and defeat the point of the timeout.
+		//
+		// The Wait() goroutine above is not leaked: Shutdown runs under
+		// shutdownOnce (so waitSearches is invoked at most once), and once
+		// stopAcceptingSearches ran no new searches register on searchWG, so the
+		// remaining in-flight searches will eventually finish and the goroutine
+		// will exit on its own.
 		return ctx.Err()
 	}
 }
@@ -755,7 +850,9 @@ func (p *Phase1) zvecSearchWithContext(ctx context.Context, vector []float32, li
 		err  error
 	}
 	ch := make(chan result, 1)
-	p.searchWG.Add(1)
+	if err := p.beginSearch(); err != nil {
+		return nil, err
+	}
 	go func() {
 		defer p.searchWG.Done()
 		var res result

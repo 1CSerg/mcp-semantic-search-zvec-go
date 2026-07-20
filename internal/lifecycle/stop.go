@@ -31,7 +31,7 @@ func StopStdioForWorkspace(workspace, indexDir string) ([]int, error) {
 		return nil, err
 	}
 
-	wrapperStopped, err := stopLauncherWrappers(workspace)
+	wrapperStopped, err := stopLauncherWrappers(workspace, nil)
 	if err != nil {
 		return nil, err
 	}

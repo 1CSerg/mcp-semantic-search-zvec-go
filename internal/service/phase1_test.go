@@ -2105,6 +2105,50 @@ func TestSemanticSearchNegativeLimit(t *testing.T) {
 	}
 }
 
+// TestSemanticSearchRejectedAfterShutdownGate verifies that once Shutdown has
+// begun (flipped the search gate), new SemanticSearch calls return
+// ErrShuttingDown instead of racing searchWG.Add with the in-flight Wait.
+func TestSemanticSearchRejectedAfterShutdownGate(t *testing.T) {
+	srv := modelsEmbedServer(t)
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &blockingSearchZvecStore{
+		mockZvecStore: mockZvecStore{hits: []zvec.SearchHit{{Path: "a.go", Score: 1, Snippet: "x"}}},
+		searchEntered: make(chan struct{}),
+		allowSearch:   make(chan struct{}),
+	}
+	p.zvec = store
+
+	searchDone := make(chan struct{})
+	go func() {
+		_, _ = p.SemanticSearch(context.Background(), SearchRequest{Query: "hello"})
+		close(searchDone)
+	}()
+	<-store.searchEntered
+
+	// Flip the gate synchronously (what Shutdown does first), without waiting.
+	p.stopAcceptingSearches()
+
+	// A brand-new search must be rejected, not registered on the WaitGroup.
+	_, err = p.SemanticSearch(context.Background(), SearchRequest{Query: "late"})
+	if !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("err=%v want ErrShuttingDown", err)
+	}
+
+	// Release the original in-flight search and allow Shutdown to complete.
+	close(store.allowSearch)
+	<-searchDone
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	if err := p.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+}
+
 func TestNormalizeSearchLimit(t *testing.T) {
 	topK := 7
 	got, err := normalizeSearchLimit(0, &topK)

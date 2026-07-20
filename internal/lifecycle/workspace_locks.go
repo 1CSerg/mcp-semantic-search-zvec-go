@@ -27,7 +27,7 @@ func PrepareWorkspaceLocks(settings *config.Settings) error {
 		slog.Info("stopped stale stdio mcp process", "pid", pid, "workspace", settings.WorkspaceRoot)
 	}
 
-	wrapperStopped, err := stopLauncherWrappers(settings.WorkspaceRoot)
+	wrapperStopped, err := stopLauncherWrappers(settings.WorkspaceRoot, launchChainPIDSet())
 	if err != nil {
 		return err
 	}

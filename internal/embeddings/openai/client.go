@@ -51,6 +51,16 @@ func (c *Client) Dimensions() int {
 	return c.profile.Dimensions
 }
 
+// Close releases HTTP client resources. The OpenAI-compatible provider holds no
+// native state; this satisfies the embeddings.Embedder contract and drains idle
+// connections.
+func (c *Client) Close() error {
+	if c.httpClient != nil {
+		c.httpClient.CloseIdleConnections()
+	}
+	return nil
+}
+
 // Embed encodes texts into vectors.
 func (c *Client) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {

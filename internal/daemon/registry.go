@@ -172,8 +172,11 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 			}
 			close(wait.done)
 			if err == nil && h != nil {
-				r.beginDiscard()
+				// NOTE: beginDiscard re-acquires r.mu (sync.Mutex is non-reentrant),
+				// so we must release it here first to avoid self-deadlock. Mirrors the
+				// eviction path above (reserveOpenSlotLocked -> beginDiscard).
 				r.mu.Unlock()
+				r.beginDiscard()
 				r.discardHandle(h)
 			} else {
 				r.mu.Unlock()
@@ -244,9 +247,27 @@ func (r *Registry) initWorkspace(spec WorkspaceSpec) (*workspaceHandle, error) {
 	}
 	wsCtx, cancel := context.WithCancel(r.rootCtx)
 	phase1.SetLifecycleContext(wsCtx)
+
+	// If we panic (or return an error) after this point, the caller's recover()
+	// wrapper in BorrowService will catch it but won't tear down the partially
+	// built phase1 — the watcher goroutine and zvec handles would leak. Install
+	// a cleanup guard that fires only on the failure paths; on success the guard
+	// is disarmed right before returning the handle.
+	success := false
+	defer func() {
+		if success {
+			return
+		}
+		cancel()
+		if closeErr := phase1.Close(); closeErr != nil {
+			slog.Warn("phase1 cleanup after failed init", "workspace_id", spec.ID, "err", closeErr)
+		}
+	}()
+
 	phase1.StartFileWatcher(wsCtx)
 	phase1.PrepareStartup()
 
+	success = true
 	return &workspaceHandle{
 		spec:     spec,
 		settings: settings,

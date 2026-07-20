@@ -1,10 +1,10 @@
-# Clone zvec-ai/zvec-go v0.5.0 and download pre-built vendor libs into .deps/zvec-go.
+# Clone zvec-ai/zvec-go v0.5.1 and download pre-built vendor libs into .deps/zvec-go.
 $ErrorActionPreference = "Stop"
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Invoke-RemoteFile.ps1')
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Dest = Join-Path $RepoRoot ".deps\zvec-go"
-$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.5.0" }
+$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.5.1" }
 
 function Get-NormalizedZvecTag {
     param([string]$Version)
@@ -48,7 +48,7 @@ if (-not (Test-Path (Join-Path $Dest ".git"))) {
         if ($LASTEXITCODE -ne 0) { $currentTag = "unknown" }
         if ($currentTag -ne $Tag) {
             Write-Host "Updating zvec-go in $Dest to $Tag (was $currentTag)..."
-            git fetch --depth 1 origin "tag $Tag"
+            git fetch --depth 1 origin tag $Tag
             if ($LASTEXITCODE -ne 0) { throw "git fetch tag $Tag failed" }
             git checkout $Tag
             if ($LASTEXITCODE -ne 0) { throw "git checkout $Tag failed" }

@@ -107,8 +107,17 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 		IdleTimeout:       120 * time.Second,
 	}
 
+	// served signals the shutdown goroutine that ListenAndServe has returned
+	// (whether on ctx cancellation or on its own, e.g. a bind error) so the
+	// goroutine does not block on <-ctx.Done() forever after this function
+	// returns — which would leak the goroutine if the server failed to start.
+	served := make(chan struct{})
 	go func() {
-		<-ctx.Done()
+		select {
+		case <-ctx.Done():
+		case <-served:
+			return
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -118,6 +127,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 
 	slog.Info("http server listening", "addr", addr)
 	err := srv.ListenAndServe()
+	close(served)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

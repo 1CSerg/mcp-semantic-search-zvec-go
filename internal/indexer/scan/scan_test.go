@@ -104,6 +104,49 @@ func TestDiscoverGit(t *testing.T) {
 	}
 }
 
+// TestDiscoverGitCyrillicPath ensures non-ASCII (Cyrillic) filenames survive git
+// discovery. With git's default core.quotepath=true these would arrive as C-style
+// octal escapes and silently never match real files on disk (regression guard
+// for the core.quotepath=false + ls-files -z fix).
+func TestDiscoverGitCyrillicPath(t *testing.T) {
+	dir := t.TempDir()
+	const cyrName = "Модули.bsl"
+	if err := os.WriteFile(filepath.Join(dir, cyrName), []byte("// 1C BSL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	init := exec.Command("git", "init", dir)
+	init.Dir = dir
+	if out, err := init.CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	// Force the problematic default explicitly so the test is robust against a
+	// user/global gitconfig that already sets core.quotepath=false.
+	cfg := exec.Command("git", "-C", dir, "config", "core.quotepath", "true")
+	if out, err := cfg.CombinedOutput(); err != nil {
+		t.Skipf("git config: %v %s", err, out)
+	}
+	add := exec.Command("git", "-C", dir, "add", cyrName)
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Skipf("git add: %v %s", err, out)
+	}
+
+	result, err := Discover(Options{
+		Root:       dir,
+		Extensions: []string{".bsl"},
+		SkipDirs:   []string{".git"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Method != "git" {
+		t.Fatalf("method=%q", result.Method)
+	}
+	if len(result.Files) != 1 || result.Files[0] != cyrName {
+		t.Fatalf("files=%v want [%s]", result.Files, cyrName)
+	}
+}
+
 func TestDiscoverWalk(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644); err != nil {

@@ -41,6 +41,8 @@ func (e *keywordTestEmbedder) Dimensions() int { return e.dims }
 
 func (e *keywordTestEmbedder) HealthCheck(context.Context) error { return nil }
 
+func (e *keywordTestEmbedder) Close() error { return nil }
+
 func keywordVector(text string, dims int) []float32 {
 	if dims <= 0 {
 		dims = 64

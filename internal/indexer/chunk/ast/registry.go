@@ -99,6 +99,33 @@ func (g *grammarSpec) loadQuery() (*sitter.Query, error) {
 	return g.query, g.queryErr
 }
 
+// closeQuery releases the native C TSQuery handle if the query was loaded. Like
+// the parser handles, tree-sitter Query has no finalizer (see the binding
+// README) and must be closed explicitly.
+func (g *grammarSpec) closeQuery() {
+	g.queryOnce.Do(func() {
+		// No-op: ensures that if closeResources runs before a first loadQuery,
+		// a later loadQuery won't try to allocate after we've torn down.
+	})
+	if g.query != nil {
+		g.query.Close()
+		g.query = nil
+	}
+}
+
+// closeResources releases every native C handle the AST subsystem allocated
+// (parser pools and compiled queries). It must be called exactly once, after
+// all parsing is finished (process shutdown). After it runs the package must
+// not be used again.
+func closeResources() {
+	for _, spec := range grammars {
+		if spec.pool != nil {
+			spec.pool.closeAll()
+		}
+		spec.closeQuery()
+	}
+}
+
 func indexBoundaries(root *sitter.Node, src []byte, lang, relPath string) (map[uintptr]BoundaryMeta, Scope, error) {
 	spec, ok := grammars[lang]
 	if !ok {

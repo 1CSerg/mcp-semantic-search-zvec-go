@@ -11,9 +11,10 @@ import (
 	"strings"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 )
 
-func stopLauncherWrappers(workspace string) ([]int, error) {
+func stopLauncherWrappers(workspace string, exclude map[int]int64) ([]int, error) {
 	installDir := filepath.Join(workspace, config.DefaultInstallDirName)
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -34,11 +35,18 @@ func stopLauncherWrappers(workspace string) ([]int, error) {
 			slog.Warn("launcher scan: read cmdline failed", "pid", pid, "err", err)
 			continue
 		}
-		line := strings.ReplaceAll(string(cmdline), "\x00", " ")
-		if !matchesLauncherWrapper(line, workspace, installDir) {
+		// Keep the raw NUL-separated cmdline so paths containing spaces are not
+		// truncated by firstExecutableToken and substring matches stay intact.
+		if !matchesLauncherWrapper(string(cmdline), workspace, installDir) {
 			continue
 		}
-		if err := terminatePID(pid); err != nil {
+		if isExcludedPID(pid, exclude) {
+			continue
+		}
+		// Capture start time now and re-check identity before kill to defend
+		// against pid reuse between the scan and the signal.
+		startTime := lock.ProcessStartTime(pid)
+		if err := terminatePIDChecked(pid, startTime); err != nil {
 			slog.Warn("launcher scan: terminate failed", "pid", pid, "err", err)
 			continue
 		}
