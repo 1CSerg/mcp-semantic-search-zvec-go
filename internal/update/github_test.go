@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -197,6 +199,58 @@ func TestCheckerCachesSuccess(t *testing.T) {
 	}
 }
 
+func TestCheckerSingleflightDedupes(t *testing.T) {
+	t.Setenv(envDisable, "false")
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release
+		_, _ = w.Write([]byte(`{"tag_name":"v0.2.0","html_url":"https://github.com/owner/repo/releases/tag/v0.2.0"}`))
+	}))
+	defer srv.Close()
+
+	checker := NewChecker("owner/repo")
+	checker.apiBase = srv.URL
+	checker.client = srv.Client()
+	checker.ttl = time.Hour
+
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(n)
+	results := make([]Info, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i] = checker.Check(context.Background(), "0.1.0")
+		}(i)
+	}
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for upstream request")
+	}
+	// Let sibling Check calls join the in-flight singleflight.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("upstream calls=%d want 1", got)
+	}
+	for i, info := range results {
+		if !info.UpdateAvailable || info.LatestVersion != "0.2.0" {
+			t.Fatalf("results[%d]=%+v", i, info)
+		}
+	}
+}
+
 func TestCheckerInvalidJSON(t *testing.T) {
 	t.Setenv(envDisable, "false")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -244,9 +298,9 @@ func TestSplitSemverNonNumeric(t *testing.T) {
 
 func TestSplitSemverPrerelease(t *testing.T) {
 	cases := []struct {
-		in           string
-		core         []int
-		prerelease   []string
+		in         string
+		core       []int
+		prerelease []string
 	}{
 		{"1.2.3", []int{1, 2, 3}, nil},
 		{"1.2.3-rc.1", []int{1, 2, 3}, []string{"rc", "1"}},

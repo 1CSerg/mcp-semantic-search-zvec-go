@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -40,6 +42,7 @@ type Checker struct {
 	cached       Info
 	cachedAt     time.Time
 	cacheSuccess bool
+	sf           singleflight.Group
 }
 
 // NewChecker creates a GitHub release checker for owner/repo slug.
@@ -72,32 +75,48 @@ func (c *Checker) Check(ctx context.Context, installedVersion string) Info {
 		}
 	}
 
-	c.mu.Lock()
-	if !c.cachedAt.IsZero() {
-		ttl := c.ttl
-		if !c.cacheSuccess {
-			ttl = errorCacheTTL
-		}
-		if time.Since(c.cachedAt) < ttl {
-			out := c.cached
-			out.InstalledVersion = installedVersion
-			c.mu.Unlock()
-			return out
-		}
+	if info, ok := c.cachedInfo(installedVersion); ok {
+		return info
 	}
-	c.mu.Unlock()
 
-	info := c.fetch(ctx, installedVersion)
-	success := info.Message == ""
-
-	c.mu.Lock()
-	c.cached = info
-	c.cachedAt = time.Now()
-	c.cacheSuccess = success
-	c.mu.Unlock()
-
+	v, _, _ := c.sf.Do(c.repo, func() (any, error) {
+		// Another waiter may have filled the cache while we waited for the lock.
+		if info, ok := c.cachedInfo(installedVersion); ok {
+			return info, nil
+		}
+		info := c.fetch(ctx, installedVersion)
+		success := info.Message == ""
+		c.mu.Lock()
+		c.cached = info
+		c.cachedAt = time.Now()
+		c.cacheSuccess = success
+		c.mu.Unlock()
+		info.InstalledVersion = installedVersion
+		return info, nil
+	})
+	info := v.(Info)
 	info.InstalledVersion = installedVersion
 	return info
+}
+
+// cachedInfo returns a copy of the cached Info with InstalledVersion set when
+// the cache entry is still within its TTL.
+func (c *Checker) cachedInfo(installedVersion string) (Info, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cachedAt.IsZero() {
+		return Info{}, false
+	}
+	ttl := c.ttl
+	if !c.cacheSuccess {
+		ttl = errorCacheTTL
+	}
+	if time.Since(c.cachedAt) >= ttl {
+		return Info{}, false
+	}
+	out := c.cached
+	out.InstalledVersion = installedVersion
+	return out, true
 }
 
 func disabled() bool {
@@ -205,11 +224,13 @@ func versionGreater(a, b string) bool {
 
 // splitSemver separates a normalized version into its numeric core version parts
 // and its pre-release identifiers. Build metadata (after '+') is discarded.
-//   "1.2.3"         -> ([1,2,3],  nil)
-//   "1.2.3-rc.1"    -> ([1,2,3],  ["rc","1"])
-//   "1.2.3+build5"  -> ([1,2,3],  nil)
-//   "1.2.3-beta.1+a" -> ([1,2,3], ["beta","1"])
-//   "1.2"           -> ([1,2],    nil)
+//
+//	"1.2.3"         -> ([1,2,3],  nil)
+//	"1.2.3-rc.1"    -> ([1,2,3],  ["rc","1"])
+//	"1.2.3+build5"  -> ([1,2,3],  nil)
+//	"1.2.3-beta.1+a" -> ([1,2,3], ["beta","1"])
+//	"1.2"           -> ([1,2],    nil)
+//
 // A non-numeric core segment falls back to 0 for that position so that versions
 // like "1.2.x" do not crash ordering; such tags are rare for release artifacts.
 func splitSemver(v string) (core []int, prerelease []string) {
@@ -244,6 +265,7 @@ func splitSemver(v string) (core []int, prerelease []string) {
 //   - Numeric identifiers (all digits) compare as integers; a numeric identifier
 //     is LOWER than an alphanumeric one.
 //   - Alphanumeric identifiers compare lexically by ASCII (semver §11.0.4).
+//
 // Returns >0 if a > b, 0 if equal, <0 if a < b.
 func comparePrerelease(a, b []string) int {
 	if len(a) == 0 && len(b) == 0 {

@@ -28,7 +28,6 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 	meta := SlideWindowMeta{Window: window, Overlap: overlap, ChunkStrategy: "line_window"}
 	buf := make([]string, 0, window)
 	start := 0
-	lineCount := 0
 
 	for {
 		if len(buf) < window {
@@ -48,7 +47,6 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 			if err != nil {
 				return err
 			}
-			lineCount++
 			buf = append(buf, line)
 			continue
 		}
@@ -68,7 +66,6 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 		if err != nil {
 			return err
 		}
-		lineCount++
 
 		step := window - overlap
 		start += step

@@ -31,6 +31,7 @@ prose_cov
 
 # Local dev
 .deps/
+todo.md
 
 # Legacy cmake debug artifacts
 *-configure-err.log
