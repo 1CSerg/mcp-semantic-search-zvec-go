@@ -718,12 +718,17 @@ func (p *Phase1) Shutdown(ctx context.Context) error {
 			searchesIdle = false
 		}
 
+		// closeZvec is allowed only when no goroutine can still touch the CGO
+		// collection handle: either both the indexer and searches finished
+		// cleanly, or the searches finished and we can prove the indexer is not
+		// running by acquiring zvecCloseMu (held by Coordinator.run for the
+		// whole indexing goroutine). When coordinator == nil, indexIdle stays
+		// true (the block above is skipped), so closeZvec reduces to searchesIdle
+		// and no extra branch is needed.
 		closeZvec := indexIdle && searchesIdle
 		if !closeZvec && searchesIdle && p.coordinator != nil && p.coordinator.TryLockZvecForClose() {
 			closeZvec = true
 			defer p.coordinator.UnlockZvecForClose()
-		} else if !closeZvec && searchesIdle && p.coordinator == nil && !p.isIndexingRunning() {
-			closeZvec = true
 		}
 		if closeZvec && p.zvec != nil {
 			if closeErr := p.zvec.Close(); closeErr != nil && err == nil {

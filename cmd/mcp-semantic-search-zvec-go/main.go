@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -543,14 +544,23 @@ func warnIfOpenHTTP(addr, token string) {
 	slog.Warn("HTTP API has no API_TOKEN and binds to a non-loopback address; the API is open to the network. Set API_TOKEN or bind to 127.0.0.1", "addr", addr)
 }
 
+// isLoopbackAddr reports whether addr binds only to a loopback interface.
+// It uses net.SplitHostPort so IPv6 literals (e.g. "[::1]:8080") and the
+// empty-host wildcard forms (":8080", "[::]:8080") are parsed correctly;
+// the empty / IPv6-any host binds to ALL interfaces and returns false.
 func isLoopbackAddr(addr string) bool {
 	host := addr
-	if i := strings.LastIndex(addr, ":"); i >= 0 {
-		host = addr[:i]
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
 	}
 	host = strings.Trim(host, "[]")
 	switch host {
-	case "127.0.0.1", "::1", "localhost":
+	case "127.0.0.1", "::1", "localhost", "":
+		// Empty host (":8080") listens on every interface, NOT only loopback,
+		// so it must NOT be treated as loopback for the network-exposure check.
+		if host == "" {
+			return false
+		}
 		return true
 	default:
 		return false

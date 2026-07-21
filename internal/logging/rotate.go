@@ -54,6 +54,13 @@ func (w *rotatingWriter) open() error {
 	return nil
 }
 
+// oversizedRecordOnce guards a one-shot warning for a record larger than
+// maxBytes (e.g. a huge stacktrace). The warning goes to stderr only — NEVER
+// to this writer — because logging into rotatingWriter from inside its own
+// Write would recurse and panic. sync.Once makes the warning fire at most
+// once per process instead of spamming every oversized line.
+var oversizedRecordOnce sync.Once
+
 func (w *rotatingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -62,7 +69,17 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 	}
+	// Rotate when appending would overflow the budget. A record larger than
+	// maxBytes still overflows after rotation (the rotated file is empty), but
+	// we rotate anyway so the previous content moves to .1 and the oversized
+	// entry starts a fresh segment rather than blowing past the limit silently.
 	if w.size+int64(len(p)) > int64(w.maxBytes) {
+		if int64(len(p)) > int64(w.maxBytes) {
+			oversizedRecordOnce.Do(func() {
+				fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: log record larger than max_bytes (%d > %d); writing to a fresh rotated segment: %s\n",
+					len(p), w.maxBytes, w.path)
+			})
+		}
 		if err := w.rotateLocked(); err != nil {
 			return 0, err
 		}

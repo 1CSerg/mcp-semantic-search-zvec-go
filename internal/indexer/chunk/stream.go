@@ -34,16 +34,14 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 		if len(buf) < window {
 			line, err := reader.readLine()
 			if err == io.EOF {
+				// Tail window shorter than `window`: emit whatever was buffered
+				// (chunkFromLineWindow returns nil for whitespace-only tails,
+				// in which case there is nothing to flush) and stop.
 				if len(buf) == 0 {
 					return nil
 				}
-				end := start + len(buf)
 				if ch := chunkFromLineWindow(relativePath, buf, int64(start+1), meta); ch != nil {
-					if err := coll.add(ch); err != nil {
-						return err
-					}
-				} else if end == lineCount {
-					return nil
+					return coll.add(ch)
 				}
 				return nil
 			}
@@ -55,7 +53,6 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 			continue
 		}
 
-		end := start + window
 		ch := chunkFromLineWindow(relativePath, buf[:window], int64(start+1), meta)
 		if ch != nil {
 			if err := coll.add(ch); err != nil {
@@ -65,9 +62,7 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 
 		line, err := reader.readLine()
 		if err == io.EOF {
-			if ch == nil && end == lineCount {
-				return nil
-			}
+			// Last full window already emitted above; nothing more to read.
 			return nil
 		}
 		if err != nil {
