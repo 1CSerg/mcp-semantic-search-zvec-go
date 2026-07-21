@@ -22,6 +22,10 @@ type fileSnapshot struct {
 }
 
 func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, events chan<- string, stopCh <-chan struct{}) error {
+	return b.runWithBaselineReady(ctx, settings, events, stopCh, nil)
+}
+
+func (b *pollingBackend) runWithBaselineReady(ctx context.Context, settings *config.Settings, events chan<- string, stopCh <-chan struct{}, baselineReady chan struct{}) error {
 	interval := time.Duration(settings.App.FileWatcher.PollIntervalSeconds * float64(time.Second))
 	if interval <= 0 {
 		interval = 10 * time.Second
@@ -29,7 +33,14 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var prev map[string]fileSnapshot
+	prev, err := snapshot(settings)
+	if err != nil {
+		prev = nil
+	}
+	if baselineReady != nil {
+		close(baselineReady)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -37,37 +48,44 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 		case <-stopCh:
 			return nil
 		case <-ticker.C:
-			curr, err := snapshot(settings)
+			prev, err = b.pollOnce(ctx, settings, events, stopCh, prev)
 			if err != nil {
 				continue
 			}
-			if prev != nil {
-				for rel, stat := range curr {
-					if prevStat, ok := prev[rel]; !ok || prevStat != stat {
-						select {
-						case events <- rel:
-						case <-ctx.Done():
-							return nil
-						case <-stopCh:
-							return nil
-						}
-					}
-				}
-				for rel := range prev {
-					if _, ok := curr[rel]; !ok {
-						select {
-						case events <- rel:
-						case <-ctx.Done():
-							return nil
-						case <-stopCh:
-							return nil
-						}
-					}
-				}
-			}
-			prev = curr
 		}
 	}
+}
+
+func (b *pollingBackend) pollOnce(ctx context.Context, settings *config.Settings, events chan<- string, stopCh <-chan struct{}, prev map[string]fileSnapshot) (map[string]fileSnapshot, error) {
+	curr, err := snapshot(settings)
+	if err != nil {
+		return prev, err
+	}
+	if prev != nil {
+		for rel, stat := range curr {
+			if prevStat, ok := prev[rel]; !ok || prevStat != stat {
+				select {
+				case events <- rel:
+				case <-ctx.Done():
+					return prev, nil
+				case <-stopCh:
+					return prev, nil
+				}
+			}
+		}
+		for rel := range prev {
+			if _, ok := curr[rel]; !ok {
+				select {
+				case events <- rel:
+				case <-ctx.Done():
+					return prev, nil
+				case <-stopCh:
+					return prev, nil
+				}
+			}
+		}
+	}
+	return curr, nil
 }
 
 func snapshot(settings *config.Settings) (map[string]fileSnapshot, error) {

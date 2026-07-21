@@ -13,7 +13,7 @@ import (
 func TestPollingBackendDetectsChange(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "main.go")
-	if err := os.WriteFile(file, []byte("v1"), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte("version-one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -32,25 +32,90 @@ func TestPollingBackendDetectsChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan string, 4)
-	go newPollingBackend().run(ctx, settings, events, nil)
+	baselineReady := make(chan struct{})
+	pb := newPollingBackend().(*pollingBackend)
+	go pb.runWithBaselineReady(ctx, settings, events, nil, baselineReady)
+
+	select {
+	case <-baselineReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for polling baseline")
+	}
 
 	select {
 	case <-events:
 		t.Fatal("unexpected event on baseline snapshot")
-	case <-time.After(120 * time.Millisecond):
+	default:
 	}
 
-	if err := os.WriteFile(file, []byte("v2"), 0o644); err != nil {
+	if err := os.WriteFile(file, []byte("version-two-longer"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case rel := <-events:
-		if rel != "main.go" {
-			t.Fatalf("rel=%q", rel)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case rel := <-events:
+			if rel != "main.go" {
+				t.Fatalf("rel=%q", rel)
+			}
+			return
+		default:
+			time.Sleep(10 * time.Millisecond)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for polling event")
 	}
+	t.Fatal("timeout waiting for polling event")
+}
+
+func TestPollingBackendDetectsChangeBeforeFirstTick(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "main.go")
+	if err := os.WriteFile(file, []byte("baseline-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		App: config.AppConfig{
+			FileWatcher: config.FileWatcherConfig{
+				PollIntervalSeconds: 2,
+			},
+			Indexing: config.IndexingConfig{
+				Extensions: []string{".go"},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan string, 4)
+	baselineReady := make(chan struct{})
+	pb := newPollingBackend().(*pollingBackend)
+	go pb.runWithBaselineReady(ctx, settings, events, nil, baselineReady)
+
+	select {
+	case <-baselineReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for polling baseline")
+	}
+
+	if err := os.WriteFile(file, []byte("changed-before-first-tick-with-distinct-size"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case rel := <-events:
+			if rel != "main.go" {
+				t.Fatalf("rel=%q", rel)
+			}
+			return
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	t.Fatal("timeout waiting for polling event before first tick")
 }
 
 func TestWatcherTriggersReindex(t *testing.T) {
