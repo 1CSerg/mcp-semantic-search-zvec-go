@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,10 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/testutil"
 )
+
+func init() {
+	flag.Bool("stdio", false, "test-only: accept --stdio in helper subprocess cmdline")
+}
 
 func staleHelperBinaryPath(dir string) string {
 	name := "mcp-semantic-search-zvec-go"
@@ -83,7 +88,7 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "-args", "--stdio", workspace)
+	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
 	cmd.Env = testutil.HelperProcessEnv("GO_WANT_HELPER=1")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

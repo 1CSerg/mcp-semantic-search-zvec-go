@@ -216,7 +216,7 @@ func TestBoundaryCapturesNotAliased(t *testing.T) {
 	}
 	defer tree.Close()
 	root := tree.RootNode()
-	boundaries, _, err := indexBoundariesForSpec(spec, &root, src, "go", "sample.go")
+	boundaries, _, err := indexBoundariesForSpec(spec, root, src, "go", "sample.go")
 	if err != nil {
 		t.Fatal(err)
 	}

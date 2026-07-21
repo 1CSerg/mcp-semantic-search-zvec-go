@@ -25,7 +25,7 @@ func StartTestStdioHelper(t *testing.T, workspace string) *exec.Cmd {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "-args", "--stdio", workspace)
+	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
 	cmd.Env = testutil.HelperProcessEnv("GO_WANT_HELPER=1")
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
