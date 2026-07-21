@@ -104,7 +104,7 @@ templates/                          # MCP fragments
 
 ## zvec-go
 
-Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.5.1 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) ≥ v0.4.0). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
+Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.6.0 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) ≥ v0.6.0). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
 
 ### Build tags
 
@@ -123,7 +123,7 @@ make fetch-zvec-libs
 # writes .deps/zvec-lib.env with ZVEC_LIB_DIR
 ```
 
-Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.1` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.6.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
 
 ### tree-sitter (hybrid AST chunking)
 
@@ -412,12 +412,12 @@ Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model по
 |-------|------------|
 | `go.mod` | `require github.com/zvec-ai/zvec-go vX.Y.Z` и `replace => ./.deps/zvec-go` |
 | `internal/version/version.go` | `ZvecGoVersion` (тег `vX.Y.Z`, вшит в бинарник) |
-| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.5.1`) |
+| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.6.0`) |
 | `scripts/fetch/fetch-zvec-libs.ps1` | то же |
 | `docker/Dockerfile` | `ARG ZVEC_GO_TAG=vX.Y.Z` |
 
-Локальная копия модуля и pre-built native libs (`zvec_c_api.dll` / `libzvec_c_api.so` и т.д.) подтягиваются в `.deps/zvec-go` через `make fetch-zvec-libs` по тегу из fetch-скриптов. Переопределение без правки файлов: env `ZVEC_GO_TAG=vX.Y.Z`. Fetch-скрипты при несовпадении тега делают `git fetch` + `checkout` (re-clone вручную не обязателен).
+Локальная копия модуля и pre-built native libs (`zvec_c_api.dll` / `libzvec_c_api.so` и т.д.) подтягиваются в `.deps/zvec-go` через `make fetch-zvec-libs` по тегу из fetch-скриптов. Переопределение без правки файлов: env `ZVEC_GO_TAG=vX.Y.Z`. Fetch-скрипты при несовпадении тега делают `git fetch` + `checkout -f` (re-clone вручную не обязателен) и накатывают ACP-патч Unicode-путей из [`scripts/fetch/patches/zvec-go-acp/`](../scripts/fetch/patches/zvec-go-acp/) (Windows Cyrillic `INDEX_DIR`).
 
-После смены версии: обновите таблицу выше и снова `make fetch-zvec-libs`.
+После смены версии: обновите таблицу выше, при необходимости перегенерируйте `collection.go.patch`, и снова `make fetch-zvec-libs`.
 
 **Автомиграция в целевом проекте:** при старте бинарник сравнивает `version.ZvecGoVersion` с `zvec_go_version` в `index_meta.json`. При расхождении сбрасывает zvec-коллекцию и `manifest.db`; если `AUTO_INDEX_ON_START=true` (Native install, per-project `--stdio`) — запускает force `reindex`, иначе нужен ручной MCP `reindex`. В shared daemon режиме auto-index при старте не действует.

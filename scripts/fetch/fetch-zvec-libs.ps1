@@ -1,10 +1,11 @@
-# Clone zvec-ai/zvec-go v0.5.1 and download pre-built vendor libs into .deps/zvec-go.
+# Clone zvec-ai/zvec-go v0.6.0 and download pre-built vendor libs into .deps/zvec-go.
 $ErrorActionPreference = "Stop"
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Invoke-RemoteFile.ps1')
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Dest = Join-Path $RepoRoot ".deps\zvec-go"
-$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.5.1" }
+$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.6.0" }
+$AcpPatchDir = Join-Path $RepoRoot "scripts\fetch\patches\zvec-go-acp"
 
 function Get-NormalizedZvecTag {
     param([string]$Version)
@@ -34,6 +35,36 @@ function Install-ZvecLibsWindows {
     Expand-Archive -Path $Tmp -DestinationPath $DestLib -Force
 }
 
+function Apply-ZvecAcpPatch {
+    param([string]$DestDir)
+    if (-not (Test-Path $AcpPatchDir)) {
+        throw "ACP patch dir missing: $AcpPatchDir"
+    }
+    $collection = Join-Path $DestDir "collection.go"
+    $content = Get-Content -Raw -Path $collection
+    if ($content -notmatch 'cStringPath') {
+        Write-Host "Applying zvec-go ACP Unicode path patch..."
+        Push-Location $DestDir
+        try {
+            git apply (Join-Path $AcpPatchDir "collection.go.patch")
+            if ($LASTEXITCODE -ne 0) { throw "git apply collection.go.patch failed" }
+        } finally {
+            Pop-Location
+        }
+    }
+    foreach ($f in @(
+            "cpath.go",
+            "path_unix.go",
+            "path_windows.go",
+            "path_windows_test.go",
+            "path_windows_test_helper.go",
+            "path_test.go",
+            "collection_cyrillic_integration_test.go"
+        )) {
+        Copy-Item (Join-Path $AcpPatchDir $f) (Join-Path $DestDir $f) -Force
+    }
+}
+
 $failed = $false
 try {
 
@@ -50,13 +81,17 @@ if (-not (Test-Path (Join-Path $Dest ".git"))) {
             Write-Host "Updating zvec-go in $Dest to $Tag (was $currentTag)..."
             git fetch --depth 1 origin tag $Tag
             if ($LASTEXITCODE -ne 0) { throw "git fetch tag $Tag failed" }
-            git checkout $Tag
+            git checkout -f $Tag
             if ($LASTEXITCODE -ne 0) { throw "git checkout $Tag failed" }
+            git clean -fd --exclude=lib
+            if ($LASTEXITCODE -ne 0) { throw "git clean failed" }
         }
     } finally {
         Pop-Location
     }
 }
+
+Apply-ZvecAcpPatch -DestDir $Dest
 
 $LibDir = Join-Path $Dest "lib\windows_amd64"
 $LibMarker = Join-Path $LibDir "zvec_c_api.dll"

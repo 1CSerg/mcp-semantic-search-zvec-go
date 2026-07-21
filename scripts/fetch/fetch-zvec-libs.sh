@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
-# Clone zvec-ai/zvec-go v0.5.1 into .deps/ and download pre-built native libs.
+# Clone zvec-ai/zvec-go v0.6.0 into .deps/ and download pre-built native libs.
 # Prints ZVEC_LIB_DIR=... for CI (append >> $GITHUB_ENV) or: eval "$(bash scripts/fetch/fetch-zvec-libs.sh)"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="$ROOT/.deps/zvec-go"
-TAG="${ZVEC_GO_TAG:-v0.5.1}"
+TAG="${ZVEC_GO_TAG:-v0.6.0}"
+ACP_PATCH_DIR="$ROOT/scripts/fetch/patches/zvec-go-acp"
+
+apply_zvec_acp_patch() {
+  local dest="$1"
+  if [[ ! -d "$ACP_PATCH_DIR" ]]; then
+    echo "fetch-zvec-libs: ACP patch dir missing: $ACP_PATCH_DIR" >&2
+    exit 1
+  fi
+  if ! grep -q 'cStringPath' "$dest/collection.go"; then
+    echo "Applying zvec-go ACP Unicode path patch..." >&2
+    (cd "$dest" && git apply "$ACP_PATCH_DIR/collection.go.patch")
+  fi
+  local f
+  for f in cpath.go path_unix.go path_windows.go path_windows_test.go path_windows_test_helper.go path_test.go collection_cyrillic_integration_test.go; do
+    cp -f "$ACP_PATCH_DIR/$f" "$dest/$f"
+  done
+}
 
 if [[ ! -d "$DEST/.git" ]]; then
   mkdir -p "$(dirname "$DEST")"
@@ -15,9 +32,11 @@ else
   current_tag="$(cd "$DEST" && git describe --tags --exact-match 2>/dev/null || true)"
   if [[ "$current_tag" != "$TAG" ]]; then
     echo "Updating zvec-go in $DEST to $TAG (was ${current_tag:-unknown})..." >&2
-    (cd "$DEST" && git fetch --depth 1 origin tag "$TAG" && git checkout "$TAG")
+    (cd "$DEST" && git fetch --depth 1 origin tag "$TAG" && git checkout -f "$TAG" && git clean -fd --exclude=lib)
   fi
 fi
+
+apply_zvec_acp_patch "$DEST"
 
 (cd "$DEST" && go run ./cmd/download-libs -version "$TAG" >&2)
 
