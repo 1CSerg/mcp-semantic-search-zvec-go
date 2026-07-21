@@ -24,6 +24,7 @@ func resetParentWatchTestHooks(t *testing.T) {
 		parentWatchProcessName = oldProcessName
 		parentWatchProcessAlive = oldProcessAlive
 		parentWatchProcessStart = oldProcessStart
+		resetParentWatchOnceForTest()
 	})
 }
 

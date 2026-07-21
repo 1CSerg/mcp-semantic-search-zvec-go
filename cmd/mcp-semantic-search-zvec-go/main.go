@@ -330,6 +330,10 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 		}
 	}()
 
+	if strings.TrimSpace(settings.APIToken) == "" && !isLoopbackAddr(settings.HTTPAddr) {
+		slog.Error("daemon refuses to start without API_TOKEN on a non-loopback address; set API_TOKEN or bind to 127.0.0.1", "addr", settings.HTTPAddr)
+		return 1
+	}
 	warnIfOpenHTTP(settings.HTTPAddr, settings.APIToken)
 
 	registry := daemon.NewRegistry(daemonCfg, ctx)
@@ -395,11 +399,18 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 		}
 		return 0
 	case <-ctx.Done():
-		if err := <-errCh; err != nil {
-			slog.Error("mcp proxy error", "err", err)
-			return 1
+		drainDeadline := time.After(transportDrainTimeout)
+		select {
+		case err := <-errCh:
+			if err != nil {
+				slog.Error("mcp proxy error", "err", err)
+				return 1
+			}
+			return 0
+		case <-drainDeadline:
+			slog.Warn("mcp proxy drain timeout")
+			return 0
 		}
-		return 0
 	}
 }
 

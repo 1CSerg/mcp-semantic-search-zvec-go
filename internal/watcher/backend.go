@@ -9,7 +9,7 @@ import (
 )
 
 type backend interface {
-	run(ctx context.Context, settings *config.Settings, events chan<- string) error
+	run(ctx context.Context, settings *config.Settings, events chan<- string, stopCh <-chan struct{}) error
 }
 
 func newBackend(settings *config.Settings) (string, backend, error) {

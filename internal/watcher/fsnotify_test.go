@@ -50,7 +50,7 @@ func TestFSNotifyBackendRun(t *testing.T) {
 	defer cancel()
 	events := make(chan string, 4)
 	go func() {
-		_ = newFSNotifyBackend().run(ctx, settings, events)
+		_ = newFSNotifyBackend().run(ctx, settings, events, nil)
 	}()
 
 	time.Sleep(150 * time.Millisecond)
@@ -75,7 +75,7 @@ func TestFSNotifyBackendContextCancel(t *testing.T) {
 	events := make(chan string, 1)
 	done := make(chan struct{})
 	go func() {
-		_ = newFSNotifyBackend().run(ctx, settings, events)
+		_ = newFSNotifyBackend().run(ctx, settings, events, nil)
 		close(done)
 	}()
 	cancel()
@@ -106,7 +106,7 @@ func TestFSNotifyBackendDetectsNewDirectory(t *testing.T) {
 	defer cancel()
 	events := make(chan string, 4)
 	go func() {
-		_ = newFSNotifyBackend().run(ctx, settings, events)
+		_ = newFSNotifyBackend().run(ctx, settings, events, nil)
 	}()
 
 	time.Sleep(150 * time.Millisecond)

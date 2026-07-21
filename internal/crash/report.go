@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -104,14 +105,52 @@ func SanitizeStack(stack string, roots ...string) string {
 		if root == "" {
 			continue
 		}
-		out = strings.ReplaceAll(out, root, "<redacted>")
-		out = strings.ReplaceAll(out, filepath.ToSlash(root), "<redacted>")
+		out = replacePathPrefixFold(out, root, "<redacted>")
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		out = strings.ReplaceAll(out, home, "<home>")
-		out = strings.ReplaceAll(out, filepath.ToSlash(home), "<home>")
+		out = replacePathPrefixFold(out, home, "<home>")
 	}
 	return out
+}
+
+func replacePathPrefixFold(text, prefix, placeholder string) string {
+	if prefix == "" {
+		return text
+	}
+	cleanPrefix := filepath.Clean(prefix)
+	slashPrefix := filepath.ToSlash(cleanPrefix)
+	if runtime.GOOS == "windows" {
+		return replaceAllFold(text, cleanPrefix, placeholder, slashPrefix)
+	}
+	out := strings.ReplaceAll(text, cleanPrefix, placeholder)
+	out = strings.ReplaceAll(out, slashPrefix, placeholder)
+	return out
+}
+
+func replaceAllFold(text, prefix, placeholder, slashPrefix string) string {
+	out := text
+	for _, candidate := range []string{prefix, slashPrefix} {
+		if candidate == "" {
+			continue
+		}
+		for {
+			idx := indexFold(out, candidate)
+			if idx < 0 {
+				break
+			}
+			out = out[:idx] + placeholder + out[idx+len(candidate):]
+		}
+	}
+	return out
+}
+
+func indexFold(s, prefix string) int {
+	if prefix == "" {
+		return -1
+	}
+	lowerS := strings.ToLower(s)
+	lowerP := strings.ToLower(prefix)
+	return strings.Index(lowerS, lowerP)
 }
 
 // RedactPath replaces a single path with a placeholder when redaction is enabled.
@@ -119,17 +158,41 @@ func RedactPath(path string, roots ...string) string {
 	if path == "" {
 		return ""
 	}
+	cleanPath := filepath.Clean(path)
 	for _, root := range roots {
-		if root != "" && strings.HasPrefix(filepath.Clean(path), filepath.Clean(root)) {
+		if root == "" {
+			continue
+		}
+		cleanRoot := filepath.Clean(root)
+		if pathHasPrefixFold(cleanPath, cleanRoot) {
 			return "<redacted>"
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if strings.HasPrefix(filepath.Clean(path), filepath.Clean(home)) {
+		if pathHasPrefixFold(cleanPath, filepath.Clean(home)) {
 			return "<home>"
 		}
 	}
 	return path
+}
+
+func pathHasPrefixFold(path, root string) bool {
+	if path == root {
+		return true
+	}
+	if runtime.GOOS == "windows" {
+		if strings.EqualFold(path, root) {
+			return true
+		}
+		sep := string(filepath.Separator)
+		prefix := root + sep
+		if len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix) {
+			return true
+		}
+		return false
+	}
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(path, root+sep)
 }
 
 func redactRoots(workspaceRoot string) []string {
@@ -151,7 +214,10 @@ func ProxyLogDir() string {
 	if v := strings.TrimSpace(os.Getenv("MCP_PROXY_LOG_DIR")); v != "" {
 		return v
 	}
-	return filepath.Join(os.TempDir(), "mcp-semantic-search-zvec-go-proxy")
+	if cache, err := os.UserCacheDir(); err == nil && cache != "" {
+		return filepath.Join(cache, "mcp-semantic-search-zvec-go", "proxy")
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("mcp-semantic-search-zvec-go-proxy-%d", os.Getpid()))
 }
 
 // DaemonLogDir returns the log directory for shared daemon crash reports.
@@ -161,6 +227,9 @@ func DaemonLogDir() string {
 	}
 	if v := strings.TrimSpace(os.Getenv("LOG_DIR")); v != "" {
 		return v
+	}
+	if cache, err := os.UserCacheDir(); err == nil && cache != "" {
+		return filepath.Join(cache, "mcp-semantic-search-zvec-go", "logs")
 	}
 	return filepath.Join(".", "logs")
 }

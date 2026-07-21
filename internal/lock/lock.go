@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,7 @@ const (
 type Lock struct {
 	path         string
 	staleSecs    float64
+	mu           sync.Mutex
 	file         *os.File
 	ownerContent string
 }
@@ -70,6 +72,8 @@ func (l *Lock) TryAcquire() error {
 }
 
 func (l *Lock) writeAndKeep(f *os.File) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	pid := os.Getpid()
 	startTime := processStartUnix(pid)
 	line := formatLockPayload(pid, startTime, time.Now().Unix())
@@ -91,6 +95,8 @@ func (l *Lock) writeAndKeep(f *os.File) error {
 // Heartbeat refreshes the timestamp in the lock payload for diagnostics.
 // OS-level locking does not require heartbeat for mutual exclusion.
 func (l *Lock) Heartbeat() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.file == nil {
 		return fmt.Errorf("lock not held")
 	}
@@ -112,6 +118,7 @@ func (l *Lock) Heartbeat() error {
 
 // Release closes and removes the lock file only if this instance still owns it.
 func (l *Lock) Release() error {
+	l.mu.Lock()
 	owner := l.ownerContent
 	if l.file != nil {
 		_ = unlock(l.file)
@@ -119,6 +126,7 @@ func (l *Lock) Release() error {
 		l.file = nil
 	}
 	l.ownerContent = ""
+	l.mu.Unlock()
 	if owner == "" {
 		return nil
 	}
@@ -127,7 +135,6 @@ func (l *Lock) Release() error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		// Another process may hold an OS lock; cannot verify ownership safely.
 		return nil
 	}
 	if string(data) != owner {
@@ -141,17 +148,27 @@ func (l *Lock) Release() error {
 
 // IsHeld reports whether this process holds the lock.
 func (l *Lock) IsHeld() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return l.file != nil
 }
 
-// IsLocked reports whether a lock file exists (any owner).
-func (l *Lock) IsLocked() bool {
+// LockFileExists reports whether a lock file exists on disk (any owner).
+func (l *Lock) LockFileExists() bool {
 	_, err := os.Stat(l.path)
 	return err == nil
 }
 
+// IsLocked reports whether a lock file exists (any owner).
+// Deprecated: use LockFileExists; name was misleading (stale files also exist).
+func (l *Lock) IsLocked() bool {
+	return l.LockFileExists()
+}
+
 // HolderPID returns the PID recorded in the lock file, if any.
 func (l *Lock) HolderPID() (int, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	var data []byte
 	if l.file != nil && l.ownerContent != "" {
 		data = []byte(l.ownerContent)
@@ -179,6 +196,8 @@ func (l *Lock) HolderPID() (int, bool) {
 // LiveHolder returns the PID of the current lock holder only when that process
 // is alive and matches the identity recorded in the lock file.
 func (l *Lock) LiveHolder() (int, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.file != nil && l.ownerContent != "" {
 		return l.liveHolderFromPayload(l.ownerContent)
 	}
@@ -220,7 +239,9 @@ func (l *Lock) liveHolderFromPayload(data string) (int, bool) {
 	return pid, true
 }
 
-// ReclaimStale removes an orphaned lock file when no process holds the OS lock.
+// ReclaimStale clears an orphaned lock file when no process holds the OS lock.
+// The file is truncated in place while the advisory lock is held so another
+// process cannot create a competing inode between unlock and removal.
 func (l *Lock) ReclaimStale() bool {
 	if _, err := os.Stat(l.path); err != nil {
 		return false
@@ -233,8 +254,12 @@ func (l *Lock) ReclaimStale() bool {
 		_ = f.Close()
 		return false
 	}
+	if err := f.Truncate(0); err != nil {
+		_ = unlock(f)
+		_ = f.Close()
+		return false
+	}
 	_ = unlock(f)
 	_ = f.Close()
-	_ = os.Remove(l.path)
 	return true
 }

@@ -26,8 +26,12 @@ func TestReclaimCollectionLock(t *testing.T) {
 	if !ReclaimCollectionLock(cfg) {
 		t.Fatal("expected reclaim")
 	}
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("lock still present: %v", err)
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatalf("lock file should remain after truncate reclaim: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("expected truncated lock file, size=%d", info.Size())
 	}
 }
 

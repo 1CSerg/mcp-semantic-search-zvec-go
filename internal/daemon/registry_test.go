@@ -433,6 +433,64 @@ func TestRegistryCloseWaitsForColdOpen(t *testing.T) {
 	}
 }
 
+func TestRegistryCloseDiscardsSuccessfulColdOpen(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkspaceConfig(t, root)
+	cfg := Config{Workspaces: []WorkspaceSpec{{ID: "ws", Root: root}}}
+	if err := normalizeConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRegistry(cfg, t.Context())
+
+	borrowDone := make(chan struct{})
+	go func() {
+		defer close(borrowDone)
+		_, release, err := r.BorrowService("ws")
+		if release != nil {
+			release()
+		}
+		if err != nil && !errors.Is(err, ErrRegistryClosing) && !strings.Contains(err.Error(), "context canceled") {
+			t.Errorf("unexpected borrow error after Close: %v", err)
+		}
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		_, opening := r.opening["ws"]
+		r.mu.Unlock()
+		if opening {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.mu.Lock()
+	_, opening := r.opening["ws"]
+	r.mu.Unlock()
+	if !opening {
+		t.Fatal("cold open did not start before Close")
+	}
+
+	r.Close()
+
+	select {
+	case <-borrowDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("successful cold open discard did not finish after Close")
+	}
+
+	r.mu.Lock()
+	openCount := len(r.open)
+	openingCount := len(r.opening)
+	r.mu.Unlock()
+	if openCount != 0 || openingCount != 0 {
+		t.Fatalf("orphan handles after successful cold-open discard: open=%d opening=%d", openCount, openingCount)
+	}
+}
+
 func TestRegistryCloseDuringColdOpenNoOrphan(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "proj")
 	if err := os.MkdirAll(root, 0o755); err != nil {

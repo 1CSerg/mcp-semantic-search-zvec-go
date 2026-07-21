@@ -49,8 +49,9 @@ func TestStopStdioForWorkspaceReclaimsStaleLocks(t *testing.T) {
 		t.Fatalf("stopped=%v, want none", stopped)
 	}
 	for _, name := range []string{lock.StdioLockFileName, "index.lock"} {
-		if _, err := os.Stat(filepath.Join(indexDir, name)); !os.IsNotExist(err) {
-			t.Fatalf("stale lock %q still present: err=%v", name, err)
+		l := lock.NewWithName(indexDir, name, 300)
+		if pid, ok := l.LiveHolder(); ok {
+			t.Fatalf("stale lock %q still live pid=%d", name, pid)
 		}
 	}
 }

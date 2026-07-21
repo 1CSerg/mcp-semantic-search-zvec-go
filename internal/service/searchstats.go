@@ -68,9 +68,9 @@ func (s *SearchStats) Performance(ms float64) map[string]any {
 }
 
 func (s *SearchStats) evaluate(ms float64) (degraded, slow bool, reason string) {
-	slow = ms >= s.slowThreshold*1000
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	slow = ms >= s.slowThreshold*1000
 	if len(s.samples) < s.minSamples {
 		if slow {
 			reason = "absolute_slow_threshold"

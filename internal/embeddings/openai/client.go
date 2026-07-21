@@ -131,7 +131,10 @@ func (c *Client) healthCheckOnce(ctx context.Context, base string) error {
 	for k, v := range c.profile.ExtraHeaders {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := c.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("embeddings health probe: %w", err)

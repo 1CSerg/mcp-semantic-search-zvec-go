@@ -802,6 +802,60 @@ func TestCoordinatorWaitForIdle(t *testing.T) {
 	}
 }
 
+func newTestCoordinator(t *testing.T) *Coordinator {
+	t.Helper()
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			Indexing: config.IndexingConfig{
+				LockStaleSeconds: 300,
+				StallSeconds:     3600,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	return NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+}
+
+func TestCoordinatorStartAfterClose(t *testing.T) {
+	c := newTestCoordinator(t)
+	c.Close()
+	_, err := c.Start(false)
+	if !errors.Is(err, ErrCoordinatorClosed) {
+		t.Fatalf("Start after Close: err=%v want ErrCoordinatorClosed", err)
+	}
+	c.Close()
+}
+
+func TestCoordinatorCloseConcurrentStart(t *testing.T) {
+	c := newTestCoordinator(t)
+	closeDone := make(chan struct{})
+	go func() {
+		c.Close()
+		close(closeDone)
+	}()
+	for i := 0; i < 50; i++ {
+		_, err := c.Start(false)
+		switch {
+		case errors.Is(err, ErrCoordinatorClosed):
+		case err == nil:
+			waitCoordinatorIdle(t, c)
+		case errors.Is(err, ErrAlreadyRunning):
+		}
+	}
+	<-closeDone
+	_, err := c.Start(false)
+	if !errors.Is(err, ErrCoordinatorClosed) {
+		t.Fatalf("Start after Close completed: err=%v want ErrCoordinatorClosed", err)
+	}
+}
+
 func TestManifestStatsNil(t *testing.T) {
 	files, chunks, err := manifestStats(nil)
 	if err == nil {

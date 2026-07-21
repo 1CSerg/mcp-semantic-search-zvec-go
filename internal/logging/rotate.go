@@ -9,12 +9,13 @@ import (
 
 // rotatingWriter appends to a file and rotates when maxBytes is exceeded.
 type rotatingWriter struct {
-	path        string
-	maxBytes    int
-	backupCount int
-	mu          sync.Mutex
-	file        *os.File
-	size        int64
+	path          string
+	maxBytes      int
+	backupCount   int
+	mu            sync.Mutex
+	file          *os.File
+	size          int64
+	oversizedOnce sync.Once
 }
 
 func newRotatingWriter(path string, maxBytes, backupCount int) (*rotatingWriter, error) {
@@ -54,13 +55,6 @@ func (w *rotatingWriter) open() error {
 	return nil
 }
 
-// oversizedRecordOnce guards a one-shot warning for a record larger than
-// maxBytes (e.g. a huge stacktrace). The warning goes to stderr only — NEVER
-// to this writer — because logging into rotatingWriter from inside its own
-// Write would recurse and panic. sync.Once makes the warning fire at most
-// once per process instead of spamming every oversized line.
-var oversizedRecordOnce sync.Once
-
 func (w *rotatingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -69,13 +63,9 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	// Rotate when appending would overflow the budget. A record larger than
-	// maxBytes still overflows after rotation (the rotated file is empty), but
-	// we rotate anyway so the previous content moves to .1 and the oversized
-	// entry starts a fresh segment rather than blowing past the limit silently.
 	if w.size+int64(len(p)) > int64(w.maxBytes) {
 		if int64(len(p)) > int64(w.maxBytes) {
-			oversizedRecordOnce.Do(func() {
+			w.oversizedOnce.Do(func() {
 				fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: log record larger than max_bytes (%d > %d); writing to a fresh rotated segment: %s\n",
 					len(p), w.maxBytes, w.path)
 			})
@@ -102,24 +92,45 @@ func (w *rotatingWriter) Close() error {
 
 func (w *rotatingWriter) rotateLocked() error {
 	if w.file != nil {
-		_ = w.file.Close()
+		if err := w.file.Sync(); err != nil {
+			return err
+		}
+		if err := w.file.Close(); err != nil {
+			return err
+		}
 		w.file = nil
 	}
 	for i := w.backupCount - 1; i >= 1; i-- {
 		src := fmt.Sprintf("%s.%d", w.path, i)
 		dst := fmt.Sprintf("%s.%d", w.path, i+1)
-		_ = os.Remove(dst)
+		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 		if _, err := os.Stat(src); err == nil {
-			_ = os.Rename(src, dst)
+			if err := os.Rename(src, dst); err != nil {
+				return err
+			}
 		}
 	}
 	backup := fmt.Sprintf("%s.1", w.path)
-	_ = os.Remove(backup)
+	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	if _, err := os.Stat(w.path); err == nil {
 		if err := os.Rename(w.path, backup); err != nil {
-			return err
+			if truncErr := truncateLogFile(w.path); truncErr != nil {
+				return fmt.Errorf("rotate rename: %w; truncate fallback: %v", err, truncErr)
+			}
 		}
 	}
 	w.size = 0
 	return w.open()
+}
+
+func truncateLogFile(path string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }

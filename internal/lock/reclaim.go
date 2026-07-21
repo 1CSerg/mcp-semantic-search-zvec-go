@@ -4,7 +4,7 @@ import (
 	"os"
 )
 
-// ReclaimOrphanedFile removes lockPath when no process holds an OS-level advisory lock.
+// ReclaimOrphanedFile clears lockPath when no process holds an OS-level advisory lock.
 func ReclaimOrphanedFile(lockPath string) bool {
 	if _, err := os.Stat(lockPath); err != nil {
 		return false
@@ -17,8 +17,12 @@ func ReclaimOrphanedFile(lockPath string) bool {
 		_ = f.Close()
 		return false
 	}
+	if err := f.Truncate(0); err != nil {
+		_ = unlock(f)
+		_ = f.Close()
+		return false
+	}
 	_ = unlock(f)
 	_ = f.Close()
-	_ = os.Remove(lockPath)
 	return true
 }

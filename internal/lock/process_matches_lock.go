@@ -12,9 +12,5 @@ func processMatchesLock(pid int, startTime int64) bool {
 		// Cannot verify start time; treat as non-match so stale locks are reclaimed.
 		return startTime <= 0
 	}
-	diff := got - startTime
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff <= 1
+	return got == startTime
 }

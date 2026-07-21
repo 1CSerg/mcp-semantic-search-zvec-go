@@ -4,6 +4,7 @@ package token
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings/onnx"
@@ -34,6 +35,7 @@ func (c *ONNXCounter) Count(text string) int {
 	}
 	enc, err := c.tok.EncodeSingle(text, true)
 	if err != nil {
+		slog.Debug("onnx tokenizer count failed; using rune estimate", "err", err)
 		return len([]rune(text)) / 4
 	}
 	return len(enc.Ids)

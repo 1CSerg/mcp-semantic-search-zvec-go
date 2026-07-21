@@ -32,7 +32,7 @@ func TestPollingBackendDetectsChange(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan string, 4)
-	go newPollingBackend().run(ctx, settings, events)
+	go newPollingBackend().run(ctx, settings, events, nil)
 
 	select {
 	case <-events:
@@ -81,6 +81,7 @@ func TestWatcherTriggersReindex(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	w.PrepareRun()
 	go w.Start(ctx)
 
 	time.Sleep(150 * time.Millisecond)

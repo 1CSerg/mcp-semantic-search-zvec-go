@@ -2,9 +2,12 @@
 
 package onnx
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
-func meanPool(raw []float32, batchIdx, seqLen, hidden int, mask []int64) []float32 {
+func meanPool(raw []float32, batchIdx, seqLen, hidden int, mask []int64) ([]float32, error) {
 	out := make([]float32, hidden)
 	var count float32
 	offset := batchIdx * seqLen * hidden
@@ -19,26 +22,26 @@ func meanPool(raw []float32, batchIdx, seqLen, hidden int, mask []int64) []float
 		}
 	}
 	if count == 0 {
-		count = 1
+		return nil, fmt.Errorf("mean pool: no unmasked tokens")
 	}
 	inv := 1 / count
 	for i := range out {
 		out[i] *= inv
 	}
-	return out
+	return out, nil
 }
 
-func l2Normalize(vec []float32) []float32 {
+func l2Normalize(vec []float32) ([]float32, error) {
 	var sum float64
 	for _, v := range vec {
 		sum += float64(v) * float64(v)
 	}
 	if sum == 0 {
-		return vec
+		return nil, fmt.Errorf("zero vector after mean pool")
 	}
 	inv := float32(1 / math.Sqrt(sum))
 	for i := range vec {
 		vec[i] *= inv
 	}
-	return vec
+	return vec, nil
 }

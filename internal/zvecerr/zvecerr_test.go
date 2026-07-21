@@ -33,6 +33,9 @@ func TestIsLockError(t *testing.T) {
 	if IsLockError(errors.New("collection not found")) {
 		t.Fatal("unexpected lock classification")
 	}
+	if !IsLockError(errors.New(`can't open lock file`)) {
+		t.Fatal("expected lowercase lock phrase")
+	}
 }
 
 func TestIsSkippablePerFileError(t *testing.T) {
@@ -56,5 +59,11 @@ func TestIsSkippablePerFileError(t *testing.T) {
 	}
 	if IsSkippablePerFileError(errors.New(`zvec error [INTERNAL_ERROR]: upsert failed`)) {
 		t.Fatal("generic internal_error without per-file hint should not match")
+	}
+	if !IsSkippablePerFileError(errors.New(`zvec error [internal_error]: segment file is too small: 4`)) {
+		t.Fatal("expected captured internal_error fixture")
+	}
+	if IsSkippablePerFileError(errors.New(`zvec error [internal_error]: Can't open lock file`)) {
+		t.Fatal("lock internal_error must not be skippable")
 	}
 }

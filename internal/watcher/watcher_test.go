@@ -95,6 +95,7 @@ func TestWatcherBackendFailure(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	w.PrepareRun()
 	go w.Start(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -113,7 +114,8 @@ type failingBackend struct {
 	err error
 }
 
-func (b *failingBackend) run(context.Context, *config.Settings, chan<- string) error {
+func (b *failingBackend) run(_ context.Context, _ *config.Settings, _ chan<- string, stop <-chan struct{}) error {
+	_ = stop
 	return b.err
 }
 
@@ -185,6 +187,7 @@ func TestWatcherWaitAndRetry(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	w.PrepareRun()
 	go w.Start(ctx)
 
 	time.Sleep(300 * time.Millisecond)

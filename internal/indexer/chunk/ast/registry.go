@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -158,8 +159,11 @@ func indexBoundariesWithCachedQuery(query *sitter.Query, root *sitter.Node, src 
 	var pkgScope Scope
 
 	captureNames := query.CaptureNames()
+	captures := make(map[string]string, 8)
 	for match := matches.Next(); match != nil; match = matches.Next() {
-		captures := make(map[string]string)
+		for k := range captures {
+			delete(captures, k)
+		}
 		var boundaryNode sitter.Node
 		var boundaryCapture string
 		var hasBoundary bool
@@ -220,14 +224,24 @@ func filterNestedBoundaryEntries(entries []boundaryEntry) []boundaryEntry {
 	if len(entries) < 2 {
 		return entries
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		si, sj := entries[i].node.StartByte(), entries[j].node.StartByte()
+		if si != sj {
+			return si < sj
+		}
+		return entries[i].node.EndByte() > entries[j].node.EndByte()
+	})
 	drop := make([]bool, len(entries))
 	for i := range entries {
 		if drop[i] {
 			continue
 		}
-		for j := range entries {
-			if i == j || drop[j] {
+		for j := i + 1; j < len(entries); j++ {
+			if drop[j] {
 				continue
+			}
+			if entries[j].node.StartByte() >= entries[i].node.EndByte() {
+				break
 			}
 			if shouldDropNestedBoundary(entries[i], entries[j]) {
 				drop[j] = true

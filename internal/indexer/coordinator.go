@@ -24,6 +24,9 @@ import (
 // ErrAlreadyRunning is returned when Start is called while a job is active.
 var ErrAlreadyRunning = errors.New("indexing already running")
 
+// ErrCoordinatorClosed is returned when Start is called after Close.
+var ErrCoordinatorClosed = errors.New("indexing coordinator closed")
+
 // Embedder batches text into vectors during indexing.
 type Embedder interface {
 	Embed(ctx context.Context, texts []string) ([][]float32, error)
@@ -43,6 +46,7 @@ type Coordinator struct {
 
 	mu           sync.Mutex
 	running      bool
+	closed       bool
 	curProgress  Progress
 	lifecycleCtx context.Context
 	zvecCloseMu  sync.Mutex
@@ -96,8 +100,21 @@ func (c *Coordinator) UnlockZvecForClose() {
 // Close releases native chunker resources (tree-sitter C handles). It must be
 // called only after WaitForIdle has returned and no indexing goroutine is
 // running; it is intended for process shutdown. Safe to call multiple times.
+//
+// Lock order: zvecCloseMu → mu (same as indexing goroutine teardown).
 func (c *Coordinator) Close() {
+	c.zvecCloseMu.Lock()
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		c.zvecCloseMu.Unlock()
+		slog.Warn("coordinator Close called while indexing is running; skipping native resource teardown")
+		return
+	}
+	c.closed = true
+	c.mu.Unlock()
 	chunk.CloseResources()
+	c.zvecCloseMu.Unlock()
 }
 
 // IsRunning reports whether a job is active in this process.
@@ -141,7 +158,9 @@ func (c *Coordinator) CurrentProgress() Progress {
 
 // Start launches indexing in the background. Returns initial progress snapshot.
 func (c *Coordinator) Start(force bool) (Progress, error) {
-	_ = RecoverStalledProgress(c.Settings.IndexDir, c.Settings.App.Indexing.StallSeconds, nil)
+	if err := RecoverStalledProgress(c.Settings.IndexDir, c.Settings.App.Indexing.StallSeconds, nil); err != nil {
+		slog.Warn("recover stalled indexing progress failed", "err", err)
+	}
 	_ = RecoverInterruptedProgress(c.Settings.IndexDir)
 
 	if !force {
@@ -154,6 +173,10 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return Progress{State: StateIdle, Running: false}, ErrCoordinatorClosed
+	}
 	if c.running {
 		p := c.curProgress
 		c.mu.Unlock()
@@ -166,6 +189,11 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 
 	c.mu.Lock()
+	if c.closed {
+		_ = c.lock.Release()
+		c.mu.Unlock()
+		return Progress{State: StateIdle, Running: false}, ErrCoordinatorClosed
+	}
 	if c.running {
 		_ = c.lock.Release()
 		p := c.curProgress
@@ -195,6 +223,7 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 				slog.Error("indexing goroutine panic", "panic", r)
 			}
 			_ = c.lock.Release()
+			c.zvecCloseMu.Unlock()
 			c.mu.Lock()
 			c.running = false
 			if runErr != nil {
@@ -218,7 +247,6 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 			if err := c.progress.Save(finalProgress); err != nil {
 				slog.Warn("persist final indexing progress failed", "err", err)
 			}
-			c.zvecCloseMu.Unlock()
 		}()
 
 		filesFailed, finishFiles, finishChunks, runErr = c.run(c.runContext(), force)
@@ -317,10 +345,16 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 			if isPerFileSkippable(err) {
 				if errors.Is(err, os.ErrNotExist) {
 					if purgeErr := c.purgeRemovedFile(manStore, rel); purgeErr != nil {
-						return 0, 0, 0, fmt.Errorf("%s: purge vanished file: %w", rel, purgeErr)
+						filesFailed++
+						slog.Warn("purge vanished file failed", "path", rel, "err", purgeErr)
+						c.updateProgress(func(p *Progress) {
+							p.FilesFailed = filesFailed
+							AppendFailedFile(p, rel)
+						})
+					} else {
+						delete(discovered, rel)
+						slog.Info("index file vanished during run; purged stale index", "path", rel)
 					}
-					delete(discovered, rel)
-					slog.Info("index file vanished during run; purged stale index", "path", rel)
 				} else {
 					filesFailed++
 					slog.Warn("index file skipped", "path", rel, "err", err)
@@ -411,7 +445,6 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 	contextPrefix := c.Settings.App.Indexing.Chunking.ContextPrefix
 
 	var docIDs []string
-	var upsertedDocIDs []string
 	chunkCount, err := chunk.ProcessBatches(c.Settings.WorkspaceRoot, rel, chunkOpts, counter, batchSize, func(batch []zvec.Chunk) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -429,13 +462,12 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		}
 		for _, ch := range batch {
 			docIDs = append(docIDs, ch.DocID)
-			upsertedDocIDs = append(upsertedDocIDs, ch.DocID)
 		}
 		return nil
 	})
 	if err != nil {
-		if len(upsertedDocIDs) > 0 {
-			if delErr := c.Zvec.DeleteByIDs(upsertedDocIDs); delErr != nil && !isZvecUnavailable(delErr) {
+		if len(docIDs) > 0 {
+			if delErr := c.Zvec.DeleteByIDs(docIDs); delErr != nil && !isZvecUnavailable(delErr) {
 				slog.Warn("index file rollback incomplete", "path", rel, "index_err", err, "rollback_err", delErr)
 			}
 		}

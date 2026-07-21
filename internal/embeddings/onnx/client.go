@@ -301,8 +301,14 @@ func (c *Client) embedBatch(texts []string) ([][]float32, error) {
 	raw := outputTensor.GetData()
 	vectors := make([][]float32, batch)
 	for i := 0; i < batch; i++ {
-		vec := meanPool(raw, i, maxLen, c.hiddenSize, attentionMask[i*maxLen:(i+1)*maxLen])
-		vec = l2Normalize(vec)
+		vec, err := meanPool(raw, i, maxLen, c.hiddenSize, attentionMask[i*maxLen:(i+1)*maxLen])
+		if err != nil {
+			return nil, err
+		}
+		vec, err = l2Normalize(vec)
+		if err != nil {
+			return nil, err
+		}
 		if c.profile.Dimensions > 0 && len(vec) != c.profile.Dimensions {
 			return nil, fmt.Errorf("dimension mismatch: got %d want %d", len(vec), c.profile.Dimensions)
 		}

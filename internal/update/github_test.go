@@ -251,6 +251,38 @@ func TestCheckerSingleflightDedupes(t *testing.T) {
 	}
 }
 
+func TestCheckerDoesNotCacheCanceledContext(t *testing.T) {
+	t.Setenv(envDisable, "false")
+	var calls atomic.Int32
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		<-block
+		_, _ = w.Write([]byte(`{"tag_name":"v0.2.0","html_url":"https://github.com/owner/repo/releases/tag/v0.2.0"}`))
+	}))
+	defer srv.Close()
+
+	checker := NewChecker("owner/repo")
+	checker.apiBase = srv.URL
+	checker.client = srv.Client()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		checker.Check(ctx, "0.1.0")
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+	close(block)
+
+	checker.Check(context.Background(), "0.1.0")
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls=%d want 2 (canceled fetch must not poison cache)", got)
+	}
+}
+
 func TestCheckerInvalidJSON(t *testing.T) {
 	t.Setenv(envDisable, "false")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

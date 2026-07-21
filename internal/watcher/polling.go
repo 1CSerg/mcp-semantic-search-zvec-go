@@ -21,7 +21,7 @@ type fileSnapshot struct {
 	size    int64
 }
 
-func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, events chan<- string) error {
+func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, events chan<- string, stopCh <-chan struct{}) error {
 	interval := time.Duration(settings.App.FileWatcher.PollIntervalSeconds * float64(time.Second))
 	if interval <= 0 {
 		interval = 10 * time.Second
@@ -33,6 +33,8 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 	for {
 		select {
 		case <-ctx.Done():
+			return nil
+		case <-stopCh:
 			return nil
 		case <-ticker.C:
 			curr, err := snapshot(settings)
@@ -46,6 +48,8 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 						case events <- rel:
 						case <-ctx.Done():
 							return nil
+						case <-stopCh:
+							return nil
 						}
 					}
 				}
@@ -54,6 +58,8 @@ func (b *pollingBackend) run(ctx context.Context, settings *config.Settings, eve
 						select {
 						case events <- rel:
 						case <-ctx.Done():
+							return nil
+						case <-stopCh:
 							return nil
 						}
 					}

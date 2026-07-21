@@ -231,7 +231,7 @@ Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:80
 | `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | GitHub repo for `check_update` (polls Releases API) |
 | `CHECK_UPDATE_DISABLE` | false | Set `true` to skip GitHub release polling in `check_update` |
 | `HTTP_ADDR` | `127.0.0.1:8080` (per-project); `:8080` (daemon/Docker) | HTTP bind |
-| `API_TOKEN` | — | HTTP Bearer auth. **Recommended** for shared daemon and `--stdio-proxy` when the daemon listens beyond loopback; without it, daemon HTTP redacts workspace paths in status/search/reindex (see [API.md](API.md#open-daemon-redaction)). Set in workspace or daemon `.env` |
+| `API_TOKEN` | — | HTTP Bearer auth. **Required** when the shared daemon binds beyond loopback (`:8080`, `0.0.0.0`, etc.); startup fails without it. Recommended for `--stdio-proxy` when the daemon listens beyond loopback; without it, daemon HTTP redacts workspace paths in status/search/reindex (see [API.md](API.md#open-daemon-redaction)). Set in workspace or daemon `.env` |
 | `ENV_PATH` | auto | Path to `.env` secrets file |
 | `MCP_PATH_CONTAINMENT` | `warn` | Path validation for `INDEX_DIR` / `CONFIG_PATH`: `strict` (fail startup), `warn` (log only), `off` (disable) |
 | `INDEXING_MAX_FILE_BYTES` | from yaml (`2097152`) | Override `indexing.max_file_bytes` (positive integer) |
@@ -284,7 +284,7 @@ Run daemon:
 .mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go --daemon --daemon-config /path/to/daemon.yaml --http-addr :8080
 ```
 
-Set `API_TOKEN` in the daemon process environment (or daemon host `.env`) when exposing the daemon on a network interface; pass `Authorization: Bearer <token>` from HTTP clients and configure proxy launchers accordingly.
+Set `API_TOKEN` in the daemon process environment (or daemon host `.env`) when exposing the daemon on a network interface; the daemon **refuses to start** on non-loopback addresses without `API_TOKEN`. Pass `Authorization: Bearer <token>` from HTTP clients and configure proxy launchers accordingly.
 
 Env alternative: `WORKSPACES_CONFIG=/path/to/daemon.yaml`.
 

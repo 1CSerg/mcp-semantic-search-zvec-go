@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
@@ -21,37 +22,45 @@ var (
 	parentWatchProcessName  = defaultProcessName
 	parentWatchProcessAlive = lock.ProcessAlive
 	parentWatchProcessStart = lock.ProcessStartTime
+	parentWatchOnce         sync.Once
 )
+
+func resetParentWatchOnceForTest() {
+	parentWatchOnce = sync.Once{}
+}
 
 type watchedProcess struct {
 	PID       int
 	Name      string
-	StartTime int64 // unix start time captured when the watch began; guards against pid reuse
+	StartTime int64
 }
 
 // StartParentWatch stops the process when the stdio launch-chain ancestor exits.
+// Call at most once per process; subsequent calls are ignored.
 func StartParentWatch(ctx context.Context, stop context.CancelFunc) {
-	if parentWatchDisabled() {
-		slog.Info("stdio parent watch disabled", "env", disableParentWatchEnv)
-		return
-	}
-
-	chain := launchChainProcesses()
-	if len(chain) == 0 {
-		slog.Warn("stdio parent watch skipped: no parent process found")
-		return
-	}
-
-	slog.Info("stdio parent watch started", "processes", formatWatchedProcesses(chain))
-	for _, proc := range chain {
-		if !parentWatchProcessAlive(proc.PID) {
-			slog.Warn("stdio parent already exited", "pid", proc.PID, "name", proc.Name)
-			stop()
+	parentWatchOnce.Do(func() {
+		if parentWatchDisabled() {
+			slog.Info("stdio parent watch disabled", "env", disableParentWatchEnv)
 			return
 		}
-	}
 
-	go watchParents(ctx, stop, chain)
+		chain := launchChainProcesses()
+		if len(chain) == 0 {
+			slog.Warn("stdio parent watch skipped: no parent process found")
+			return
+		}
+
+		slog.Info("stdio parent watch started", "processes", formatWatchedProcesses(chain))
+		for _, proc := range chain {
+			if !parentWatchProcessAlive(proc.PID) {
+				slog.Warn("stdio parent already exited", "pid", proc.PID, "name", proc.Name)
+				stop()
+				return
+			}
+		}
+
+		go watchParents(ctx, stop, chain)
+	})
 }
 
 func watchParents(ctx context.Context, stop context.CancelFunc, chain []watchedProcess) {
@@ -67,9 +76,6 @@ func watchParents(ctx context.Context, stop context.CancelFunc, chain []watchedP
 				if parentWatchProcessAlive(proc.PID) && sameProcess(proc.PID, proc.StartTime) {
 					continue
 				}
-				// Either the pid is gone, or the pid was recycled: the original
-				// ancestor (identified by pid+start time) no longer exists, so the
-				// launch chain is broken and the stdio server should shut down.
 				slog.Warn("stdio parent exited, shutting down", "pid", proc.PID, "name", proc.Name)
 				stop()
 				return
@@ -78,10 +84,6 @@ func watchParents(ctx context.Context, stop context.CancelFunc, chain []watchedP
 	}
 }
 
-// sameProcess reports whether pid still refers to the process that started at
-// recordedStart. A recordedStart <= 0 means start time is unavailable on this
-// platform (e.g. non-Linux/BSD unix); in that case we cannot verify identity
-// and rely on ProcessAlive alone, preserving the historical behaviour.
 func sameProcess(pid int, recordedStart int64) bool {
 	if recordedStart <= 0 {
 		return true
@@ -90,18 +92,9 @@ func sameProcess(pid int, recordedStart int64) bool {
 	if currentStart <= 0 {
 		return true
 	}
-	diff := currentStart - recordedStart
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff <= 1
+	return currentStart == recordedStart
 }
 
-// launchChainPIDSet returns self and ancestor PIDs for the current process,
-// keyed by pid to the process start time. The start time is used together with
-// the pid to avoid killing the active stdio launcher wrapper during PrepareStdio
-// AND to defend against pid reuse: a recycled pid will report a different start
-// time than the original ancestor we recorded, so it won't be wrongly excluded.
 func launchChainPIDSet() map[int]int64 {
 	set := make(map[int]int64)
 	pid := parentWatchCurrentPID()
@@ -116,10 +109,6 @@ func launchChainPIDSet() map[int]int64 {
 	return set
 }
 
-// isExcludedPID reports whether pid matches an entry in exclude by identity,
-// i.e. same pid AND (when the recorded start time is available) the same start
-// time within a 1s tolerance. If the recorded start time is 0 (unknown), it
-// falls back to a pure pid match — the historical behavior.
 func isExcludedPID(pid int, exclude map[int]int64) bool {
 	if pid <= 0 || exclude == nil {
 		return false
@@ -133,15 +122,9 @@ func isExcludedPID(pid int, exclude map[int]int64) bool {
 	}
 	currentStart := parentWatchProcessStart(pid)
 	if currentStart <= 0 {
-		// Cannot verify identity now; preserve the exclude to avoid a
-		// false-negative self-kill (safe direction).
 		return true
 	}
-	diff := currentStart - recordedStart
-	if diff < 0 {
-		diff = -diff
-	}
-	return diff <= 1
+	return currentStart == recordedStart
 }
 
 func launchChainProcesses() []watchedProcess {

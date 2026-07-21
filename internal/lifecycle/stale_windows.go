@@ -149,7 +149,7 @@ func processCommandLine(pid uint32) (string, error) {
 	)), nil
 }
 
-func terminatePID(pid int) error {
+func terminatePID(pid int, _ int64) error {
 	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE, false, uint32(pid))
 	if err != nil {
 		return err

@@ -15,8 +15,12 @@ func TestReclaimOrphanedFile(t *testing.T) {
 	if !ReclaimOrphanedFile(lockPath) {
 		t.Fatal("expected orphaned lock reclaim")
 	}
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("lock file still exists: %v", err)
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatalf("lock file should remain after truncate reclaim: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("expected truncated lock file, size=%d", info.Size())
 	}
 }
 

@@ -335,7 +335,7 @@ One HTTP process serves multiple projects via `workspace_id`. Architecture and t
 
 **Note:** `AUTO_INDEX_ON_START` from proxy install does not trigger indexing in the daemon — call MCP `reindex` per workspace after daemon start.
 
-**Security:** set `API_TOKEN` on the daemon process when it listens beyond loopback. Without it, `index_status` / `semantic_search` via proxy omit workspace paths and file-level indexing fields (`current_file`, `failed_files`); see [docs/API.md](docs/API.md#open-daemon-redaction).
+**Security:** set `API_TOKEN` on the daemon process when it listens beyond loopback — the daemon **refuses to start** on non-loopback addresses without it. Without a token on loopback, `index_status` / `semantic_search` via proxy omit workspace paths and file-level indexing fields (`current_file`, `failed_files`); see [docs/API.md](docs/API.md#open-daemon-redaction).
 
 **Windows + Docker:** use install with proxy mode (launcher script in project bin):
 

@@ -1,6 +1,7 @@
 package prose
 
 import (
+	"log/slog"
 	"strings"
 	"unicode"
 
@@ -290,6 +291,9 @@ func splitByCharsWithSpans(text string, baseOffset int, budget int, counter toke
 		if end-1 == start {
 			pieceText := string(runes[start:end])
 			byteStart := baseOffset + len(string(runes[:start]))
+			if counter.Count(pieceText) > budget {
+				slog.Debug("prose split: single token exceeds budget", "tokens", counter.Count(pieceText), "budget", budget)
+			}
 			out = append(out, TextPiece{Text: pieceText, Start: byteStart, End: byteStart + len(pieceText)})
 			start = end
 			continue

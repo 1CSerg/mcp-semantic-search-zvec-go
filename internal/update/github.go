@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,9 +17,10 @@ import (
 )
 
 const (
-	defaultCacheTTL = time.Hour
-	errorCacheTTL   = time.Minute
-	envDisable      = "CHECK_UPDATE_DISABLE"
+	defaultCacheTTL     = time.Hour
+	errorCacheTTL       = time.Minute
+	serverErrorCacheTTL = 10 * time.Second
+	envDisable          = "CHECK_UPDATE_DISABLE"
 )
 
 // Info is the check_update response payload.
@@ -38,11 +40,12 @@ type Checker struct {
 	client  *http.Client
 	ttl     time.Duration
 
-	mu           sync.Mutex
-	cached       Info
-	cachedAt     time.Time
-	cacheSuccess bool
-	sf           singleflight.Group
+	mu            sync.Mutex
+	cached        Info
+	cachedAt      time.Time
+	cacheSuccess  bool
+	cacheDuration time.Duration
+	sf            singleflight.Group
 }
 
 // NewChecker creates a GitHub release checker for owner/repo slug.
@@ -74,30 +77,85 @@ func (c *Checker) Check(ctx context.Context, installedVersion string) Info {
 			Message:          "github repo not configured",
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return Info{
+			InstalledVersion: installedVersion,
+			LatestVersion:    installedVersion,
+			UpdateAvailable:  false,
+			GitHubRepo:       c.repo,
+			Message:          fmt.Sprintf("update check failed: %v", err),
+		}
+	}
 
 	if info, ok := c.cachedInfo(installedVersion); ok {
 		return info
 	}
 
 	v, _, _ := c.sf.Do(c.repo, func() (any, error) {
-		// Another waiter may have filled the cache while we waited for the lock.
 		if info, ok := c.cachedInfo(installedVersion); ok {
 			return info, nil
 		}
-		info := c.fetch(ctx, installedVersion)
-		success := info.Message == ""
-		c.mu.Lock()
-		c.cached = info
-		c.cachedAt = time.Now()
-		c.cacheSuccess = success
-		c.mu.Unlock()
+		timeout := c.clientTimeout()
+		fetchCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		info, fetchErr := c.fetch(fetchCtx, installedVersion)
+		if shouldCacheFetch(fetchErr) {
+			success := fetchErr == nil
+			c.mu.Lock()
+			c.cached = info
+			c.cachedAt = time.Now()
+			c.cacheSuccess = success
+			c.cacheDuration = c.cacheTTLFor(success, fetchErr)
+			c.mu.Unlock()
+		}
 		info.InstalledVersion = installedVersion
 		return info, nil
 	})
 	info := v.(Info)
+	if err := ctx.Err(); err != nil {
+		return Info{
+			InstalledVersion: installedVersion,
+			LatestVersion:    installedVersion,
+			UpdateAvailable:  false,
+			GitHubRepo:       c.repo,
+			Message:          fmt.Sprintf("update check failed: %v", err),
+		}
+	}
 	info.InstalledVersion = installedVersion
 	return info
 }
+
+func (c *Checker) clientTimeout() time.Duration {
+	if c.client != nil && c.client.Timeout > 0 {
+		return c.client.Timeout
+	}
+	return 10 * time.Second
+}
+
+func shouldCacheFetch(err error) bool {
+	if err == nil {
+		return true
+	}
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+func (c *Checker) cacheTTLFor(success bool, err error) time.Duration {
+	if success {
+		return c.ttl
+	}
+	var he *httpStatusError
+	if errors.As(err, &he) && he.code >= http.StatusInternalServerError {
+		return serverErrorCacheTTL
+	}
+	return errorCacheTTL
+}
+
+type httpStatusError struct {
+	code int
+	msg  string
+}
+
+func (e *httpStatusError) Error() string { return e.msg }
 
 // cachedInfo returns a copy of the cached Info with InstalledVersion set when
 // the cache entry is still within its TTL.
@@ -107,9 +165,13 @@ func (c *Checker) cachedInfo(installedVersion string) (Info, bool) {
 	if c.cachedAt.IsZero() {
 		return Info{}, false
 	}
-	ttl := c.ttl
-	if !c.cacheSuccess {
-		ttl = errorCacheTTL
+	ttl := c.cacheDuration
+	if ttl <= 0 {
+		if c.cacheSuccess {
+			ttl = c.ttl
+		} else {
+			ttl = errorCacheTTL
+		}
 	}
 	if time.Since(c.cachedAt) >= ttl {
 		return Info{}, false
@@ -124,7 +186,7 @@ func disabled() bool {
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
-func (c *Checker) fetch(ctx context.Context, installedVersion string) Info {
+func (c *Checker) fetch(ctx context.Context, installedVersion string) (Info, error) {
 	base := Info{
 		InstalledVersion: installedVersion,
 		LatestVersion:    installedVersion,
@@ -136,7 +198,7 @@ func (c *Checker) fetch(ctx context.Context, installedVersion string) Info {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		base.Message = fmt.Sprintf("update check failed: %v", err)
-		return base
+		return base, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "mcp-semantic-search-zvec-go")
@@ -144,18 +206,18 @@ func (c *Checker) fetch(ctx context.Context, installedVersion string) Info {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		base.Message = fmt.Sprintf("update check failed: %v", err)
-		return base
+		return base, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		base.Message = fmt.Sprintf("update check failed: %v", err)
-		return base
+		return base, err
 	}
 	if resp.StatusCode != http.StatusOK {
 		base.Message = fmt.Sprintf("update check failed: GitHub HTTP %d", resp.StatusCode)
-		return base
+		return base, &httpStatusError{code: resp.StatusCode, msg: base.Message}
 	}
 
 	var payload struct {
@@ -165,7 +227,7 @@ func (c *Checker) fetch(ctx context.Context, installedVersion string) Info {
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		base.Message = fmt.Sprintf("update check failed: invalid JSON: %v", err)
-		return base
+		return base, fmt.Errorf("%s", base.Message)
 	}
 
 	latest := normalizeVersion(payload.TagName)
@@ -174,13 +236,13 @@ func (c *Checker) fetch(ctx context.Context, installedVersion string) Info {
 	}
 	if latest == "" {
 		base.Message = "update check failed: empty release tag"
-		return base
+		return base, errors.New(base.Message)
 	}
 
 	base.LatestVersion = latest
 	base.ReleaseURL = payload.HTMLURL
 	base.UpdateAvailable = versionGreater(latest, normalizeVersion(installedVersion))
-	return base
+	return base, nil
 }
 
 func normalizeVersion(v string) string {
@@ -215,26 +277,10 @@ func versionGreater(a, b string) bool {
 			return ai > bi
 		}
 	}
-	// Numeric core versions are equal. Per semver, a release (no pre-release)
-	// is greater than ANY pre-release of the same version (1.2.3 > 1.2.3-rc.1),
-	// and two pre-releases compare dot-by-dot with numeric identifiers compared
-	// as integers (1.2.3-rc.10 > 1.2.3-rc.2). build metadata never affects order.
 	return comparePrerelease(vpa, vpb) > 0
 }
 
-// splitSemver separates a normalized version into its numeric core version parts
-// and its pre-release identifiers. Build metadata (after '+') is discarded.
-//
-//	"1.2.3"         -> ([1,2,3],  nil)
-//	"1.2.3-rc.1"    -> ([1,2,3],  ["rc","1"])
-//	"1.2.3+build5"  -> ([1,2,3],  nil)
-//	"1.2.3-beta.1+a" -> ([1,2,3], ["beta","1"])
-//	"1.2"           -> ([1,2],    nil)
-//
-// A non-numeric core segment falls back to 0 for that position so that versions
-// like "1.2.x" do not crash ordering; such tags are rare for release artifacts.
 func splitSemver(v string) (core []int, prerelease []string) {
-	// Drop build metadata.
 	if i := strings.IndexByte(v, '+'); i >= 0 {
 		v = v[:i]
 	}
@@ -257,22 +303,12 @@ func splitSemver(v string) (core []int, prerelease []string) {
 	return core, prerelease
 }
 
-// comparePrerelease implements the semver §11 pre-release ordering:
-//   - A version WITHOUT a pre-release has HIGHER precedence than one WITH
-//     (release > pre-release).
-//   - Two pre-releases compare identifier-by-identifier (dot-separated). A
-//     larger set of identifiers wins if all preceding ones are equal.
-//   - Numeric identifiers (all digits) compare as integers; a numeric identifier
-//     is LOWER than an alphanumeric one.
-//   - Alphanumeric identifiers compare lexically by ASCII (semver §11.0.4).
-//
-// Returns >0 if a > b, 0 if equal, <0 if a < b.
 func comparePrerelease(a, b []string) int {
 	if len(a) == 0 && len(b) == 0 {
 		return 0
 	}
 	if len(a) == 0 {
-		return 1 // release > pre-release
+		return 1
 	}
 	if len(b) == 0 {
 		return -1
@@ -286,7 +322,6 @@ func comparePrerelease(a, b []string) int {
 			return c
 		}
 	}
-	// All shared identifiers equal: the longer pre-release wins.
 	switch {
 	case len(a) > len(b):
 		return 1
@@ -297,15 +332,16 @@ func comparePrerelease(a, b []string) int {
 	}
 }
 
-// comparePrereleaseIdentifier compares two single pre-release identifiers per
-// semver: numeric < alphanumeric, numerics as integers, alphanumerics lexically.
 func comparePrereleaseIdentifier(a, b string) int {
 	aNum := isNumericIdentifier(a)
 	bNum := isNumericIdentifier(b)
 	switch {
 	case aNum && bNum:
-		na, _ := strconv.ParseInt(a, 10, 64)
-		nb, _ := strconv.ParseInt(b, 10, 64)
+		na, errA := strconv.ParseInt(a, 10, 64)
+		nb, errB := strconv.ParseInt(b, 10, 64)
+		if errA != nil || errB != nil {
+			return strings.Compare(a, b)
+		}
 		switch {
 		case na > nb:
 			return 1
@@ -315,7 +351,7 @@ func comparePrereleaseIdentifier(a, b string) int {
 			return 0
 		}
 	case aNum && !bNum:
-		return -1 // numeric has lower precedence
+		return -1
 	case !aNum && bNum:
 		return 1
 	default:
@@ -330,8 +366,6 @@ func comparePrereleaseIdentifier(a, b string) int {
 	}
 }
 
-// isNumericIdentifier reports whether s is a non-empty string of ASCII digits
-// (semver's definition of a numeric identifier).
 func isNumericIdentifier(s string) bool {
 	if s == "" {
 		return false

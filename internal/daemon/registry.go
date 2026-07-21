@@ -172,11 +172,8 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 			}
 			close(wait.done)
 			if err == nil && h != nil {
-				// NOTE: beginDiscard re-acquires r.mu (sync.Mutex is non-reentrant),
-				// so we must release it here first to avoid self-deadlock. Mirrors the
-				// eviction path above (reserveOpenSlotLocked -> beginDiscard).
+				r.discards++
 				r.mu.Unlock()
-				r.beginDiscard()
 				r.discardHandle(h)
 			} else {
 				r.mu.Unlock()
@@ -284,15 +281,15 @@ func (r *Registry) borrowHandleLocked(h *workspaceHandle, workspaceID string) (s
 	h.refs++
 	svc := h.svc
 	r.mu.Unlock()
-	return svc, r.releaseFunc(workspaceID), nil
+	return svc, r.releaseFunc(workspaceID, h), nil
 }
 
-func (r *Registry) releaseFunc(workspaceID string) func() {
+func (r *Registry) releaseFunc(workspaceID string, h *workspaceHandle) func() {
 	return func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		h, ok := r.open[workspaceID]
-		if !ok {
+		cur, ok := r.open[workspaceID]
+		if !ok || cur != h {
 			return
 		}
 		if h.refs <= 0 {

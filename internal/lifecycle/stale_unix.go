@@ -97,7 +97,7 @@ func stopStaleStdioInstances(workspace string, selfPID int) ([]int, error) {
 	return stopped, nil
 }
 
-func terminatePID(pid int) error {
+func terminatePID(pid int, recordedStart int64) error {
 	if !lock.ProcessAlive(pid) {
 		return fmt.Errorf("process %d not found", pid)
 	}
@@ -107,7 +107,7 @@ func terminatePID(pid int) error {
 	}
 	_ = proc.Signal(syscall.SIGTERM)
 	time.Sleep(killGrace)
-	if !lock.ProcessAlive(pid) {
+	if !sameLiveProcess(pid, recordedStart) {
 		return nil
 	}
 	if err := proc.Signal(syscall.SIGKILL); err != nil {

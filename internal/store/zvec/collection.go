@@ -63,7 +63,11 @@ func (s *CollectionStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.col != nil {
-		s.col.Close()
+		if closeErr := s.col.Close(); closeErr != nil {
+			s.col = nil
+			s.open = false
+			return closeErr
+		}
 		s.col = nil
 	}
 	s.open = false
@@ -121,6 +125,9 @@ func (s *CollectionStore) UpsertChunks(chunks []Chunk, vectors [][]float32) erro
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.col == nil {
+		return ErrCollectionMissing
+	}
 	wr, err := s.col.Upsert(docs)
 	if err != nil {
 		return err
@@ -141,6 +148,9 @@ func (s *CollectionStore) DeleteByIDs(ids []string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.col == nil {
+		return ErrCollectionMissing
+	}
 	wr, err := s.col.Delete(ids)
 	if err != nil {
 		return err

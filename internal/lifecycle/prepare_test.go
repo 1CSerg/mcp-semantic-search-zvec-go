@@ -200,7 +200,7 @@ func TestPrepareStdio(t *testing.T) {
 }
 
 func TestTerminatePIDNotFound(t *testing.T) {
-	if err := terminatePID(99999999); err == nil {
+	if err := terminatePID(99999999, 0); err == nil {
 		t.Fatal("expected error for non-existent pid")
 	}
 }
@@ -212,7 +212,7 @@ func TestTerminatePIDChildProcess(t *testing.T) {
 			t.Skipf("cannot start child: %v", err)
 		}
 		defer func() { _ = cmd.Process.Kill() }()
-		if err := terminatePID(cmd.Process.Pid); err != nil {
+		if err := terminatePID(cmd.Process.Pid, 0); err != nil {
 			t.Fatalf("terminatePID: %v", err)
 		}
 		return
@@ -222,7 +222,7 @@ func TestTerminatePIDChildProcess(t *testing.T) {
 		t.Skipf("cannot start child: %v", err)
 	}
 	defer func() { _ = cmd.Process.Kill() }()
-	if err := terminatePID(cmd.Process.Pid); err != nil {
+	if err := terminatePID(cmd.Process.Pid, 0); err != nil {
 		t.Fatalf("terminatePID: %v", err)
 	}
 }
@@ -257,8 +257,8 @@ func TestPrepareStdioReclaimsStaleLockAndProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = stdioLock.Release() }()
-	if l := lock.New(indexDir, 1); l.IsLocked() {
-		t.Fatal("expected stale lock reclaimed")
+	if pid, ok := lock.New(indexDir, 1).LiveHolder(); ok {
+		t.Fatalf("expected stale index lock reclaimed, live pid=%d", pid)
 	}
 	p, err := store.Load()
 	if err != nil {
@@ -318,7 +318,11 @@ func TestPrepareStdioReclaimsZvecLock(t *testing.T) {
 		t.Fatalf("PrepareStdio: %v", err)
 	}
 	defer func() { _ = stdioLock.Release() }()
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("expected stale zvec LOCK reclaimed: %v", err)
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		t.Fatalf("expected reclaimed zvec LOCK path to exist: %v", err)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("expected truncated zvec LOCK, size=%d", info.Size())
 	}
 }

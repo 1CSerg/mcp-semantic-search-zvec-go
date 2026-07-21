@@ -174,100 +174,108 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 	e.parentMeta = parent
 	e.enclosingScope = enclosingScope
 	for i := uint(0); i < node.NamedChildCount(); i++ {
-		child := node.NamedChild(i)
-		if child == nil {
-			continue
-		}
-		if e.lang == "bsl" && (isBSLRegionEndPreprocessor(child) || isBSLRegionStartPreprocessor(child)) {
-			continue
-		}
-		if meta, ok := e.boundaries[child.Id()]; ok {
-			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
-				return err
+		if err := func() error {
+			savedParent := e.parentMeta
+			savedEnclosing := e.enclosingScope
+			defer func() {
+				e.parentMeta = savedParent
+				e.enclosingScope = savedEnclosing
+			}()
+			child := node.NamedChild(i)
+			if child == nil {
+				return nil
 			}
-			ps := parentScopeForBoundary(e.effectiveScope(scope, child), meta, e.lang)
-			budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
-			if e.tokenSize(child) <= budget {
-				if extractOnly {
-					if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
-						return err
+			if e.lang == "bsl" && (isBSLRegionEndPreprocessor(child) || isBSLRegionStartPreprocessor(child)) {
+				return nil
+			}
+			if meta, ok := e.boundaries[child.Id()]; ok {
+				if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
+					return err
+				}
+				ps := parentScopeForBoundary(e.effectiveScope(scope, child), meta, e.lang)
+				budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
+				if e.tokenSize(child) <= budget {
+					if extractOnly {
+						if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
+							return err
+						}
+						if hasBoundaryDescendant(child, e.boundaries) {
+							newScope := extendScope(scope, meta, e.lang)
+							if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
+								return err
+							}
+						}
+					} else {
+						if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
+							return err
+						}
+						if shouldDescendAfterEmit(child) && hasBoundaryDescendant(child, e.boundaries) {
+							newScope := extendScope(scope, meta, e.lang)
+							if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
+								return err
+							}
+						}
 					}
-					if hasBoundaryDescendant(child, e.boundaries) {
-						newScope := extendScope(scope, meta, e.lang)
-						if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
+				} else if isWrapperBoundaryNode(child) {
+					if !extractOnly {
+						if err := e.emitPartial(child, scope, &meta); err != nil {
 							return err
 						}
 					}
 				} else {
-					if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
-						return err
-					}
-					if shouldDescendAfterEmit(child) && hasBoundaryDescendant(child, e.boundaries) {
-						newScope := extendScope(scope, meta, e.lang)
-						if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
-							return err
-						}
-					}
-				}
-			} else if isWrapperBoundaryNode(child) {
-				if !extractOnly {
-					if err := e.emitPartial(child, scope, &meta); err != nil {
+					newScope := extendScope(scope, meta, e.lang)
+					if err := e.walkChunk(child, nil, newScope, &meta, scope, true, extractOnly); err != nil {
 						return err
 					}
 				}
+				return nil
+			}
+
+			if hasBoundaryDescendant(child, e.boundaries) {
+				if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
+					return err
+				}
+				if emitGroupPreamble && !extractOnly {
+					if err := e.emitPreambleBeforeFirstBoundary(child, scope); err != nil {
+						return err
+					}
+				}
+				return e.walkChunk(child, nil, scope, parent, enclosingScope, false, extractOnly)
+			}
+
+			if extractOnly {
+				return nil
+			}
+
+			ps := e.budgetParentScope(scope, child, parent)
+			budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
+			childSize := e.tokenSize(child)
+			if childSize > budget {
+				if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
+					return err
+				}
+				if child.NamedChildCount() == 0 || isIndivisibleStatement(child) {
+					if err := e.emitPartial(child, scope, parent); err != nil {
+						return err
+					}
+				} else if err := e.walkChunk(child, nil, scope, parent, enclosingScope, true, false); err != nil {
+					return err
+				}
+				return nil
+			}
+
+			bufSize := e.tokenSizeNodes(buffer)
+			if bufSize+childSize > budget {
+				if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
+					return err
+				}
+				buffer = append(buffer, *child)
 			} else {
-				newScope := extendScope(scope, meta, e.lang)
-				if err := e.walkChunk(child, nil, newScope, &meta, scope, true, extractOnly); err != nil {
-					return err
-				}
+				buffer = append(buffer, *child)
 			}
-			continue
-		}
-
-		if hasBoundaryDescendant(child, e.boundaries) {
-			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
-				return err
-			}
-			if emitGroupPreamble && !extractOnly {
-				if err := e.emitPreambleBeforeFirstBoundary(child, scope); err != nil {
-					return err
-				}
-			}
-			if err := e.walkChunk(child, nil, scope, parent, enclosingScope, false, extractOnly); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if extractOnly {
-			continue
-		}
-
-		ps := e.budgetParentScope(scope, child, parent)
-		budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
-		childSize := e.tokenSize(child)
-		if childSize > budget {
-			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
-				return err
-			}
-			if child.NamedChildCount() == 0 || isIndivisibleStatement(child) {
-				if err := e.emitPartial(child, scope, parent); err != nil {
-					return err
-				}
-			} else if err := e.walkChunk(child, nil, scope, parent, enclosingScope, true, false); err != nil {
-				return err
-			}
-			continue
-		}
-
-		bufSize := e.tokenSizeNodes(buffer)
-		if bufSize+childSize > budget {
-			if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
-				return err
-			}
-			buffer = append(buffer, *child)
-		} else {
-			buffer = append(buffer, *child)
+			return nil
+		}(); err != nil {
+			return err
 		}
 	}
 	if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {

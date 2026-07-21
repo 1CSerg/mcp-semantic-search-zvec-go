@@ -17,7 +17,7 @@ func newFSNotifyBackend() backend {
 	return &fsnotifyBackend{}
 }
 
-func (b *fsnotifyBackend) run(ctx context.Context, settings *config.Settings, events chan<- string) error {
+func (b *fsnotifyBackend) run(ctx context.Context, settings *config.Settings, events chan<- string, stopCh <-chan struct{}) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		slog.Error("fsnotify init failed", "err", err)
@@ -34,6 +34,8 @@ func (b *fsnotifyBackend) run(ctx context.Context, settings *config.Settings, ev
 	for {
 		select {
 		case <-ctx.Done():
+			return nil
+		case <-stopCh:
 			return nil
 		case err, ok := <-w.Errors:
 			if !ok {
@@ -55,6 +57,8 @@ func (b *fsnotifyBackend) run(ctx context.Context, settings *config.Settings, ev
 			select {
 			case events <- rel:
 			case <-ctx.Done():
+				return nil
+			case <-stopCh:
 				return nil
 			}
 			if ev.Op&fsnotify.Create != 0 {

@@ -47,6 +47,5 @@ func terminatePIDChecked(pid int, recordedStart int64) error {
 	if !sameLiveProcess(pid, recordedStart) {
 		return fmt.Errorf("process %d not found or pid reused", pid)
 	}
-	return terminatePID(pid)
+	return terminatePID(pid, recordedStart)
 }
-

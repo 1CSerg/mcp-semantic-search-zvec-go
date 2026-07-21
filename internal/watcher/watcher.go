@@ -79,6 +79,14 @@ func New(settings *config.Settings, coordinator Coordinator) (*Watcher, error) {
 	}, nil
 }
 
+// PrepareRun registers goroutines with the WaitGroup. Call before go Start(ctx).
+func (w *Watcher) PrepareRun() {
+	if w == nil || w.backend == nil {
+		return
+	}
+	w.wg.Add(2)
+}
+
 // Start runs the watcher until ctx is cancelled.
 func (w *Watcher) Start(ctx context.Context) {
 	if w == nil {
@@ -99,10 +107,9 @@ func (w *Watcher) Start(ctx context.Context) {
 	w.mu.Unlock()
 
 	events := make(chan string, 64)
-	w.wg.Add(2)
 	go func() {
 		defer w.wg.Done()
-		err := w.backend.run(ctx, w.settings, events)
+		err := w.backend.run(ctx, w.settings, events, w.stopCh)
 		close(events)
 		if err != nil && ctx.Err() == nil && !w.isStopped() {
 			w.mu.Lock()

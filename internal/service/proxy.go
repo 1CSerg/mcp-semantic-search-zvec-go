@@ -50,8 +50,8 @@ func (p *HTTPProxy) CheckUpdate(ctx context.Context) (json.RawMessage, error) {
 }
 
 func (p *HTTPProxy) Ready(ctx context.Context) error {
-	url := p.BaseURL + "/ready?workspace_id=" + urlQuery(p.WorkspaceID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	endpoint := p.BaseURL + "/ready?workspace_id=" + urlQuery(p.WorkspaceID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (p *HTTPProxy) client() *http.Client {
 	if p.Client != nil {
 		return p.Client
 	}
-	return http.DefaultClient
+	return &http.Client{Timeout: 120 * time.Second}
 }
 
 func urlQuery(v string) string {

@@ -498,6 +498,7 @@ func (p *Phase1) StartFileWatcher(ctx context.Context) {
 	p.startupMu.Lock()
 	p.watcherInst = w
 	p.startupMu.Unlock()
+	w.PrepareRun()
 	go w.Start(ctx)
 }
 
@@ -719,25 +720,28 @@ func (p *Phase1) Shutdown(ctx context.Context) error {
 		}
 
 		// closeZvec is allowed only when no goroutine can still touch the CGO
-		// collection handle: either both the indexer and searches finished
-		// cleanly, or the searches finished and we can prove the indexer is not
-		// running by acquiring zvecCloseMu (held by Coordinator.run for the
-		// whole indexing goroutine). When coordinator == nil, indexIdle stays
-		// true (the block above is skipped), so closeZvec reduces to searchesIdle
-		// and no extra branch is needed.
-		closeZvec := indexIdle && searchesIdle
-		if !closeZvec && searchesIdle && p.coordinator != nil && p.coordinator.TryLockZvecForClose() {
-			closeZvec = true
-			defer p.coordinator.UnlockZvecForClose()
+		// collection handle. When a coordinator exists, always acquire
+		// zvecCloseMu (held for the whole indexing goroutine) before closing
+		// zvec — even if WaitForIdle succeeded — so a concurrent Reindex→Start
+		// after WaitForIdle cannot race zvec.Close. When coordinator == nil,
+		// indexIdle stays true (the block above is skipped).
+		closeZvec := false
+		if p.zvec != nil && searchesIdle {
+			if p.coordinator == nil {
+				closeZvec = indexIdle
+			} else if p.coordinator.TryLockZvecForClose() {
+				closeZvec = true
+				defer p.coordinator.UnlockZvecForClose()
+			}
 		}
-		if closeZvec && p.zvec != nil {
+		if closeZvec {
 			if closeErr := p.zvec.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}
 		}
-		// Release provider-native resources (e.g. the ONNX Runtime session).
-		// For the OpenAI-compatible HTTP provider Close is a cheap no-op.
-		if p.embed != nil {
+		// Release provider-native resources (e.g. the ONNX Runtime session) only
+		// when no goroutine can still call EmbedQuery — mirror closeZvec above.
+		if searchesIdle && p.embed != nil {
 			if closeErr := p.embed.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}

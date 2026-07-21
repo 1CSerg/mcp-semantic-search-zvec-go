@@ -13,14 +13,20 @@ func TestMeanPool(t *testing.T) {
 		3, 0, 0, 0,
 	}
 	mask := []int64{1, 1}
-	vec := meanPool(raw, 0, 2, 4, mask)
+	vec, err := meanPool(raw, 0, 2, 4, mask)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if math.Abs(float64(vec[0]-2)) > 1e-5 {
 		t.Fatalf("vec[0]=%v want 2", vec[0])
 	}
 }
 
 func TestL2Normalize(t *testing.T) {
-	vec := l2Normalize([]float32{3, 4})
+	vec, err := l2Normalize([]float32{3, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var sum float64
 	for _, v := range vec {
 		sum += float64(v) * float64(v)

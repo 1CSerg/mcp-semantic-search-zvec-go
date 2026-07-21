@@ -43,7 +43,10 @@ func parseLevel(raw string) slog.Level {
 		return slog.LevelWarn
 	case "ERROR":
 		return slog.LevelError
+	case "INFO", "":
+		return slog.LevelInfo
 	default:
+		fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: unknown log level %q; using info\n", raw)
 		return slog.LevelInfo
 	}
 }

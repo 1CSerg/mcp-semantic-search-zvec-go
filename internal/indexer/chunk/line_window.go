@@ -77,7 +77,7 @@ func ReadAndChunk(root, relativePath string, opts Options) ([]zvec.Chunk, error)
 
 func streamChunkLegacy(abs, relativePath string, opts Options) ([]zvec.Chunk, error) {
 	var chunks []zvec.Chunk
-	coll := newBatchCollector(len(chunks)+1, func(batch []zvec.Chunk) error {
+	coll := newBatchCollector(32, func(batch []zvec.Chunk) error {
 		chunks = append(chunks, batch...)
 		return nil
 	})
@@ -146,14 +146,18 @@ func SlideWindowEmit(rel string, allLines []string, startLineOffset int64, meta 
 			break
 		}
 		if counter != nil && meta.MaxTokens > 0 {
-			for end > start+1 {
+			lo, hi := start+1, end
+			for lo < hi {
+				mid := lo + (hi-lo+1)/2
 				startLine := startLineOffset + int64(start)
-				if ch := chunkFromLineWindow(rel, allLines[start:end], startLine, meta); ch != nil && counter.Count(ch.Snippet) > meta.MaxTokens {
-					end--
-					continue
+				ch := chunkFromLineWindow(rel, allLines[start:mid], startLine, meta)
+				if ch != nil && counter.Count(ch.Snippet) > meta.MaxTokens {
+					hi = mid - 1
+				} else {
+					lo = mid
 				}
-				break
 			}
+			end = lo
 		}
 		startLine := startLineOffset + int64(start)
 		ch := chunkFromLineWindow(rel, allLines[start:end], startLine, meta)

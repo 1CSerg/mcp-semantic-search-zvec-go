@@ -20,7 +20,8 @@ func TestRetryDelay(t *testing.T) {
 	if retryDelay(base, 0) != base {
 		t.Fatalf("delay=%v", retryDelay(base, 0))
 	}
-	if retryDelay(base, 2) != 2*time.Second {
-		t.Fatalf("delay=%v", retryDelay(base, 2))
+	delay := retryDelay(base, 2)
+	if delay < time.Second || delay > 2*time.Second {
+		t.Fatalf("delay=%v want in [1s,2s]", delay)
 	}
 }

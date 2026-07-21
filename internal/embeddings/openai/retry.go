@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"math/rand"
 	"net/http"
 	"time"
 )
@@ -26,5 +27,9 @@ func retryDelay(base time.Duration, attempt int) time.Duration {
 	for i := 0; i < attempt; i++ {
 		delay *= 2
 	}
-	return delay
+	half := delay / 2
+	if half <= 0 {
+		return delay
+	}
+	return half + time.Duration(rand.Int63n(int64(half)+1))
 }

@@ -124,7 +124,15 @@ func TestDaemonLogDir(t *testing.T) {
 func TestDaemonLogDirDefault(t *testing.T) {
 	t.Setenv("MCP_DAEMON_LOG_DIR", "")
 	t.Setenv("LOG_DIR", "")
-	if got := DaemonLogDir(); got != filepath.Join(".", "logs") {
+	got := DaemonLogDir()
+	if cache, err := os.UserCacheDir(); err == nil && cache != "" {
+		want := filepath.Join(cache, "mcp-semantic-search-zvec-go", "logs")
+		if got != want {
+			t.Fatalf("got=%q want=%q", got, want)
+		}
+		return
+	}
+	if got != filepath.Join(".", "logs") {
 		t.Fatalf("got=%q", got)
 	}
 }

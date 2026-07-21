@@ -96,7 +96,7 @@ func IndexMetaPresent(indexDir string) bool {
 	return err == nil
 }
 
-// ReclaimCollectionLock removes orphaned zvec collection LOCK files under cfg.
+// ReclaimCollectionLock truncates orphaned zvec collection LOCK files under cfg.
 func ReclaimCollectionLock(cfg Config) bool {
 	return reclaimCollectionLockDir(CollectionPath(cfg))
 }
@@ -119,7 +119,7 @@ func reclaimCollectionLockDir(collectionPath string) bool {
 	return removed
 }
 
-// ReclaimAllCollectionLocks removes orphaned LOCK files under indexDir/zvec/*.
+// ReclaimAllCollectionLocks truncates orphaned LOCK files under indexDir/zvec/*.
 func ReclaimAllCollectionLocks(indexDir string) int {
 	zvecRoot := filepath.Join(indexDir, "zvec")
 	entries, err := os.ReadDir(zvecRoot)

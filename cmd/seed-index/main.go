@@ -45,6 +45,7 @@ func run() int {
 		Dimensions:    profile.Dimensions,
 	}
 	store := zvec.New(cfg)
+	defer func() { _ = store.Close() }()
 
 	chunks := make([]zvec.Chunk, n)
 	vectors := make([][]float32, n)

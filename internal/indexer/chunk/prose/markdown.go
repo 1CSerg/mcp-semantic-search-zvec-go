@@ -366,7 +366,7 @@ func (em *proseEmitter) emitProseLines(seg markdownSegment) error {
 	var bufStart = seg.startLine
 	lineNum := seg.startLine
 	for i, ln := range lines {
-		candidate := strings.Join(append(buf, ln), "\n")
+		candidate := strings.Join(append(append([]string(nil), buf...), ln), "\n")
 		if len(buf) > 0 && em.counter.Count(candidate) > budget {
 			text := strings.Join(buf, "\n")
 			sub := markdownSegment{
