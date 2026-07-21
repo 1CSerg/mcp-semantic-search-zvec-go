@@ -97,9 +97,9 @@ func (c *Coordinator) UnlockZvecForClose() {
 	c.zvecCloseMu.Unlock()
 }
 
-// Close releases native chunker resources (tree-sitter C handles). It must be
-// called only after WaitForIdle has returned and no indexing goroutine is
-// running; it is intended for process shutdown. Safe to call multiple times.
+// Close marks the coordinator closed so Start rejects new jobs. Tree-sitter
+// parser pools are process-lifetime resources; release them once at process
+// exit via chunk.CloseResources, not here.
 //
 // Lock order: zvecCloseMu → mu (same as indexing goroutine teardown).
 func (c *Coordinator) Close() {
@@ -109,12 +109,11 @@ func (c *Coordinator) Close() {
 		c.closed = true
 		c.mu.Unlock()
 		c.zvecCloseMu.Unlock()
-		slog.Warn("coordinator Close called while indexing is running; skipping native resource teardown")
+		slog.Warn("coordinator Close called while indexing is running")
 		return
 	}
 	c.closed = true
 	c.mu.Unlock()
-	chunk.CloseResources()
 	c.zvecCloseMu.Unlock()
 }
 

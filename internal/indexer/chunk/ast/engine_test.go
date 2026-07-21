@@ -202,6 +202,27 @@ func TestGroupedDeclBoundaries(t *testing.T) {
 	}
 }
 
+func TestCloneCaptures(t *testing.T) {
+	if got := cloneCaptures(nil); got != nil {
+		t.Fatalf("nil map: got %v want nil", got)
+	}
+	if got := cloneCaptures(map[string]string{}); got != nil {
+		t.Fatalf("empty map: got %v want nil", got)
+	}
+	src := map[string]string{"scope.receiver": "*Server", "name": "Foo"}
+	dst := cloneCaptures(src)
+	if dst == nil {
+		t.Fatal("expected non-nil copy")
+	}
+	if dst["scope.receiver"] != "*Server" || dst["name"] != "Foo" {
+		t.Fatalf("copy contents: got %+v", dst)
+	}
+	src["scope.receiver"] = "mutated"
+	if dst["scope.receiver"] != "*Server" {
+		t.Fatalf("clone must not alias source map: got %q", dst["scope.receiver"])
+	}
+}
+
 func TestBoundaryCapturesNotAliased(t *testing.T) {
 	src := []byte("package main\n\ntype Server struct{}\nfunc (s *Server) Foo() {}\nfunc Bar() {}\n")
 	spec := grammars["go"]

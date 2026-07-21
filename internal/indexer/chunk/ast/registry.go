@@ -114,17 +114,21 @@ func (g *grammarSpec) closeQuery() {
 	}
 }
 
+var closeResourcesOnce sync.Once
+
 // closeResources releases every native C handle the AST subsystem allocated
-// (parser pools and compiled queries). It must be called exactly once, after
+// (parser pools and compiled queries). It runs at most once per process, after
 // all parsing is finished (process shutdown). After it runs the package must
 // not be used again.
 func closeResources() {
-	for _, spec := range grammars {
-		if spec.pool != nil {
-			spec.pool.closeAll()
+	closeResourcesOnce.Do(func() {
+		for _, spec := range grammars {
+			if spec.pool != nil {
+				spec.pool.closeAll()
+			}
+			spec.closeQuery()
 		}
-		spec.closeQuery()
-	}
+	})
 }
 
 func indexBoundaries(root *sitter.Node, src []byte, lang, relPath string) (map[uintptr]BoundaryMeta, Scope, error) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
@@ -441,6 +442,7 @@ func (r *Registry) Close() {
 		slog.Warn("registry close: skipping zvec runtime shutdown while borrows or cold-open remain")
 		return
 	}
+	chunk.CloseResources()
 	zvec.ShutdownRuntime()
 }
 

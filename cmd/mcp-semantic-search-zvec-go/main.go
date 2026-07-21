@@ -19,6 +19,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/gui"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/logging"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
@@ -246,6 +247,7 @@ func (rt *perProjectRuntime) Close() {
 	for i := len(rt.cleanup) - 1; i >= 0; i-- {
 		rt.cleanup[i]()
 	}
+	chunk.CloseResources()
 	zvec.ShutdownRuntime()
 }
 

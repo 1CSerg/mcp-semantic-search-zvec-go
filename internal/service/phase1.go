@@ -685,11 +685,9 @@ func (p *Phase1) Shutdown(ctx context.Context) error {
 
 		indexIdle := true
 		if p.coordinator != nil {
-			// Stop the file watcher BEFORE waiting for the indexer to go idle and
-			// before releasing native chunker handles. Otherwise a save event
-			// arriving mid-shutdown could trigger coordinator.Start, which would
-			// race the tree-sitter parser Close() below (use-after-free on the C
-			// TSParser handle).
+			// Stop the file watcher before waiting for the indexer to go idle.
+			// Otherwise a save event arriving mid-shutdown could trigger
+			// coordinator.Start after Close marks the coordinator closed.
 			p.startupMu.RLock()
 			wInst := p.watcherInst
 			p.startupMu.RUnlock()
@@ -702,11 +700,6 @@ func (p *Phase1) Shutdown(ctx context.Context) error {
 				}
 				indexIdle = false
 			}
-			// Only release the native tree-sitter C handles when we know the
-			// indexer goroutine is no longer parsing. Closing them while an
-			// index job is still running would be a use-after-free on the C
-			// TSParser handle. If WaitForIdle timed out we leak the handles
-			// (acceptable at process shutdown) rather than risk a segfault.
 			if indexIdle {
 				p.coordinator.Close()
 			}

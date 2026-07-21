@@ -118,7 +118,11 @@ func TestHelperStaleStdio(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER") != "1" {
 		return
 	}
-	select {}
+	// Sleep in a loop instead of select{} so the helper stays alive without
+	// deadlocking the Go scheduler (select{} blocks without -race).
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func helperCmdlineMatchable(workspace string, pid int) bool {
