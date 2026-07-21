@@ -445,6 +445,16 @@ func TestRegistryCloseDiscardsSuccessfulColdOpen(t *testing.T) {
 	}
 	r := NewRegistry(cfg, t.Context())
 
+	openingStarted := make(chan struct{}, 1)
+	r.openingNotify = func(id string) {
+		if id == "ws" {
+			select {
+			case openingStarted <- struct{}{}:
+			default:
+			}
+		}
+	}
+
 	borrowDone := make(chan struct{})
 	go func() {
 		defer close(borrowDone)
@@ -457,20 +467,9 @@ func TestRegistryCloseDiscardsSuccessfulColdOpen(t *testing.T) {
 		}
 	}()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		r.mu.Lock()
-		_, opening := r.opening["ws"]
-		r.mu.Unlock()
-		if opening {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	r.mu.Lock()
-	_, opening := r.opening["ws"]
-	r.mu.Unlock()
-	if !opening {
+	select {
+	case <-openingStarted:
+	case <-time.After(5 * time.Second):
 		t.Fatal("cold open did not start before Close")
 	}
 

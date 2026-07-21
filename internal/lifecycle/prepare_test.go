@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,14 +83,19 @@ func startStaleHelper(t *testing.T, workspace string) *exec.Cmd {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "--stdio", workspace)
+	cmd := exec.Command(helper, "-test.run=TestHelperStaleStdio", "-test.v", "-args", "--stdio", workspace)
 	cmd.Env = testutil.HelperProcessEnv("GO_WANT_HELPER=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Skipf("start helper: %v", err)
 	}
 	if err := waitForHelperReady(cmd, 15*time.Second); err != nil {
-		_ = cmd.Process.Kill()
-		t.Fatalf("wait for helper: %v", err)
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+		t.Fatalf("wait for helper: %v (stderr: %s)", err, stderr.String())
 	}
 	return cmd
 }

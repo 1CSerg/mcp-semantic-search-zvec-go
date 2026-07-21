@@ -202,6 +202,44 @@ func TestGroupedDeclBoundaries(t *testing.T) {
 	}
 }
 
+func TestBoundaryCapturesNotAliased(t *testing.T) {
+	src := []byte("package main\n\ntype Server struct{}\nfunc (s *Server) Foo() {}\nfunc Bar() {}\n")
+	spec := grammars["go"]
+	if spec == nil {
+		t.Fatal("go grammar not registered")
+	}
+	parser := spec.pool.borrow()
+	defer spec.pool.release(parser)
+	tree := parser.Parse(src, nil)
+	if tree == nil {
+		t.Fatal("parse returned nil tree")
+	}
+	defer tree.Close()
+	root := tree.RootNode()
+	boundaries, _, err := indexBoundariesForSpec(spec, &root, src, "go", "sample.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var methodFoo, funcBar BoundaryMeta
+	for _, meta := range boundaries {
+		switch {
+		case meta.Kind == "method" && meta.Name == "Foo":
+			methodFoo = meta
+		case meta.Kind == "function" && meta.Name == "Bar":
+			funcBar = meta
+		}
+	}
+	if methodFoo.Captures == nil || funcBar.Captures == nil {
+		t.Fatalf("missing captures: method=%v function=%v", methodFoo.Captures, funcBar.Captures)
+	}
+	if methodFoo.Captures["scope.receiver"] != "*Server" {
+		t.Fatalf("method receiver=%q want *Server", methodFoo.Captures["scope.receiver"])
+	}
+	if _, ok := funcBar.Captures["scope.receiver"]; ok {
+		t.Fatalf("function Bar must not inherit method receiver: %+v", funcBar.Captures)
+	}
+}
+
 func TestReceiverScopeNormalization(t *testing.T) {
 	src := []byte("package main\n\ntype Server struct{}\nfunc (s *Server) Foo() {}\n")
 	chunks := collectGoChunks(t, src, 80)

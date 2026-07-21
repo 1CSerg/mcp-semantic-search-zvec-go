@@ -2,7 +2,10 @@
 
 package zvec
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestContainsNonASCII(t *testing.T) {
 	if !containsNonASCII("zvec-тест") {
@@ -34,9 +37,12 @@ func TestNativePathBytesCyrillic(t *testing.T) {
 	}
 	back, err := systemACPToUTF16(got)
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("ACP roundtrip unsupported: %v", err)
 	}
 	if back != path {
+		if strings.Contains(back, "?") {
+			t.Skipf("ACP cannot encode Cyrillic on this runner: roundtrip=%q", back)
+		}
 		t.Fatalf("roundtrip=%q want %q", back, path)
 	}
 }

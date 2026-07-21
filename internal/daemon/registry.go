@@ -59,6 +59,7 @@ type Registry struct {
 	closing           bool
 	discards          int
 	closeDrainTimeout time.Duration
+	openingNotify     func(workspaceID string)
 }
 
 // NewRegistry creates a workspace registry from daemon config.
@@ -146,7 +147,11 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 		}
 		wait := &openWait{done: make(chan struct{})}
 		r.opening[workspaceID] = wait
+		notify := r.openingNotify
 		r.mu.Unlock()
+		if notify != nil {
+			notify(workspaceID)
+		}
 		if evicted != nil {
 			r.beginDiscard()
 			r.discardHandle(evicted)

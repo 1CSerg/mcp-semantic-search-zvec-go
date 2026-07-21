@@ -150,6 +150,17 @@ func indexBoundariesForSpec(spec *grammarSpec, root *sitter.Node, src []byte, la
 	return boundaries, pkgScope, nil
 }
 
+func cloneCaptures(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
 func indexBoundariesWithCachedQuery(query *sitter.Query, root *sitter.Node, src []byte, lang, relPath string) (map[uintptr]BoundaryMeta, Scope, error) {
 	qc := sitter.NewQueryCursor()
 	defer qc.Close()
@@ -188,7 +199,7 @@ func indexBoundariesWithCachedQuery(query *sitter.Query, root *sitter.Node, src 
 			meta := BoundaryMeta{
 				Kind:     boundaryKindFromCapture(boundaryCapture),
 				Name:     firstCaptureName(captures),
-				Captures: captures,
+				Captures: cloneCaptures(captures),
 			}
 			meta = RefineBoundaryMeta(&boundaryNode, meta, boundaryCapture, lang, src)
 			entries = append(entries, boundaryEntry{node: boundaryNode, capture: boundaryCapture, meta: meta})

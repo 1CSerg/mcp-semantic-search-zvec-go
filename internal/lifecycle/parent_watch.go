@@ -25,10 +25,6 @@ var (
 	parentWatchOnce         sync.Once
 )
 
-func resetParentWatchOnceForTest() {
-	parentWatchOnce = sync.Once{}
-}
-
 type watchedProcess struct {
 	PID       int
 	Name      string

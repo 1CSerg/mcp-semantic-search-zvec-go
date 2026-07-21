@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func resetParentWatchTestHooks(t *testing.T) {
 		parentWatchProcessName = oldProcessName
 		parentWatchProcessAlive = oldProcessAlive
 		parentWatchProcessStart = oldProcessStart
-		resetParentWatchOnceForTest()
+		parentWatchOnce = sync.Once{}
 	})
 }
 

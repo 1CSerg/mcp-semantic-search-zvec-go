@@ -106,6 +106,7 @@ func (c *Coordinator) Close() {
 	c.zvecCloseMu.Lock()
 	c.mu.Lock()
 	if c.running {
+		c.closed = true
 		c.mu.Unlock()
 		c.zvecCloseMu.Unlock()
 		slog.Warn("coordinator Close called while indexing is running; skipping native resource teardown")
