@@ -146,16 +146,15 @@ func releasePhase1TestResources(t *testing.T, p *Phase1) {
 	if p == nil {
 		return
 	}
-	waitCoordinatorIdle(t, p)
-	if p.coordinator != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_ = p.coordinator.WaitForIdle(ctx)
-		cancel()
-		_ = p.coordinator.ReleaseLock()
-	}
-	if p.zvec != nil {
-		_ = p.zvec.Close()
-	}
+	_ = p.Close()
+}
+
+func registerPhase1TestCleanup(t *testing.T, p *Phase1) {
+	t.Helper()
+	t.Setenv("MANIFEST_WAL", "off")
+	t.Cleanup(func() {
+		releasePhase1TestResources(t, p)
+	})
 }
 
 func modelsEmbedServer(t *testing.T) *httptest.Server {
@@ -793,7 +792,7 @@ func TestStartAutoIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
+	registerPhase1TestCleanup(t, p)
 	p.StartAutoIndex()
 	if p.coordinator == nil {
 		t.Fatal("expected coordinator")
@@ -2197,7 +2196,7 @@ func TestStartAutoIndexWhenAlreadyRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { waitCoordinatorIdle(t, p) })
+	registerPhase1TestCleanup(t, p)
 	if _, err := p.coordinator.Start(true); err != nil {
 		t.Fatal(err)
 	}
