@@ -47,7 +47,8 @@ type Watcher struct {
 	debounce      *time.Timer
 	stopCh        chan struct{}
 	stopOnce      sync.Once
-	wg            sync.WaitGroup // tracks loop + backend goroutines so Stop can wait for them
+	wg            sync.WaitGroup // tracks loop + backend + retry goroutines so Stop can wait
+	debounceWg    sync.WaitGroup // tracks in-flight debounce callbacks
 	retryActive   bool
 	retryPending  bool
 	lastRetryRel  string
@@ -145,11 +146,14 @@ func (w *Watcher) finishStop() {
 	w.mu.Lock()
 	w.running = false
 	if w.debounce != nil {
-		w.debounce.Stop()
+		if w.debounce.Stop() {
+			w.debounceWg.Done()
+		}
 		w.debounce = nil
 	}
 	w.mu.Unlock()
 	w.stopOnce.Do(func() { close(w.stopCh) })
+	w.debounceWg.Wait()
 }
 
 // Stop cancels the watcher's event loop without depending on the caller's
@@ -197,9 +201,13 @@ func (w *Watcher) scheduleDebounce(ctx context.Context, debounce time.Duration, 
 	defer w.mu.Unlock()
 	w.pendingEvents++
 	if w.debounce != nil {
-		w.debounce.Stop()
+		if w.debounce.Stop() {
+			w.debounceWg.Done()
+		}
 	}
+	w.debounceWg.Add(1)
 	w.debounce = time.AfterFunc(debounce, func() {
+		defer w.debounceWg.Done()
 		w.triggerReindex(ctx, rel)
 	})
 }
@@ -234,6 +242,7 @@ func (w *Watcher) triggerReindex(ctx context.Context, rel string) {
 		w.retryActive = true
 		w.lastRetryRel = rel
 		w.mu.Unlock()
+		w.wg.Add(1)
 		go w.runRetryLoop(ctx)
 		return
 	}
@@ -241,6 +250,7 @@ func (w *Watcher) triggerReindex(ctx context.Context, rel string) {
 }
 
 func (w *Watcher) runRetryLoop(ctx context.Context) {
+	defer w.wg.Done()
 	defer func() {
 		w.mu.Lock()
 		w.retryActive = false

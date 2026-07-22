@@ -265,9 +265,29 @@ func (s *CollectionStore) openCollection(readOnly bool) error {
 		if readOnly || !s.readOnly {
 			return nil
 		}
-		s.col.Close()
+		// zvec holds an exclusive LOCK per mode: RW open fails while RO is still open.
+		oldCol := s.col
 		s.col = nil
 		s.open = false
+		if err := oldCol.Close(); err != nil {
+			s.col = oldCol
+			s.open = true
+			s.readOnly = true
+			return err
+		}
+		col, err := s.tryOpen(false)
+		if err != nil {
+			if roCol, roErr := s.tryOpen(true); roErr == nil {
+				s.col = roCol
+				s.open = true
+				s.readOnly = true
+			}
+			return err
+		}
+		s.col = col
+		s.open = true
+		s.readOnly = false
+		return nil
 	}
 
 	if err := ensureInit(); err != nil {

@@ -2,6 +2,7 @@ package httptransport
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -24,11 +25,12 @@ import (
 
 // Server exposes REST endpoints backed by the shared service layer.
 type Server struct {
-	svc      service.Service
-	registry *daemon.Registry
-	settings *config.Settings
-	mux      *http.ServeMux
-	daemon   bool
+	svc           service.Service
+	registry      *daemon.Registry
+	settings      *config.Settings
+	mux           *http.ServeMux
+	daemon        bool
+	updateChecker *update.Checker
 }
 
 // New creates an HTTP server with v1 routes and health probes (per-project mode).
@@ -45,11 +47,16 @@ func New(settings *config.Settings, svc service.Service) *Server {
 
 // NewDaemon creates an HTTP server for shared multi-workspace daemon mode.
 func NewDaemon(settings *config.Settings, registry *daemon.Registry) *Server {
+	repo := ""
+	if settings != nil {
+		repo = settings.GitHubRepo
+	}
 	s := &Server{
-		registry: registry,
-		settings: settings,
-		mux:      http.NewServeMux(),
-		daemon:   true,
+		registry:      registry,
+		settings:      settings,
+		mux:           http.NewServeMux(),
+		daemon:        true,
+		updateChecker: update.NewChecker(repo),
 	}
 	s.routes()
 	return s
@@ -93,7 +100,9 @@ func bearerAuthorized(r *http.Request, token string) bool {
 		return false
 	}
 	got := strings.TrimSpace(auth[7:])
-	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
+	gotHash := sha256.Sum256([]byte(got))
+	wantHash := sha256.Sum256([]byte(token))
+	return subtle.ConstantTimeCompare(gotHash[:], wantHash[:]) == 1
 }
 
 // ListenAndServe starts the HTTP server until ctx is cancelled.
@@ -164,12 +173,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if s.daemon {
-		repo := ""
-		if s.settings != nil {
-			repo = s.settings.GitHubRepo
-		}
-		checker := update.NewChecker(repo)
-		info := checker.Check(r.Context(), version.Version)
+		info := s.updateChecker.Check(r.Context(), version.Version)
 		writeJSON(w, http.StatusOK, info)
 		return
 	}

@@ -300,9 +300,24 @@ func (s *Settings) ActiveProfile() (EmbeddingProfile, error) {
 	return p, nil
 }
 
+// InstallDir returns the MCP install directory (parent of config.yaml).
+func (s *Settings) InstallDir() string {
+	if s.ConfigPath != "" {
+		return filepath.Dir(s.ConfigPath)
+	}
+	indexDir := filepath.Clean(s.IndexDir)
+	if strings.HasSuffix(filepath.ToSlash(indexDir), DefaultIndexSubdir) {
+		return filepath.Dir(filepath.Dir(indexDir))
+	}
+	if s.WorkspaceRoot != "" {
+		return filepath.Join(s.WorkspaceRoot, DefaultInstallDirName)
+	}
+	return filepath.Dir(indexDir)
+}
+
 // LogsDir returns the log directory under install tree.
 func (s *Settings) LogsDir() string {
-	return filepath.Join(filepath.Dir(filepath.Dir(s.IndexDir)), "logs")
+	return filepath.Join(s.InstallDir(), "logs")
 }
 
 func envOr(key, fallback string) string {

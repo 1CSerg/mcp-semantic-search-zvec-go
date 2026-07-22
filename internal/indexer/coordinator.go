@@ -188,16 +188,20 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 		return Progress{State: StateIdle, Running: false}, err
 	}
 
+	c.zvecCloseMu.Lock()
+
 	c.mu.Lock()
 	if c.closed {
 		_ = c.lock.Release()
 		c.mu.Unlock()
+		c.zvecCloseMu.Unlock()
 		return Progress{State: StateIdle, Running: false}, ErrCoordinatorClosed
 	}
 	if c.running {
 		_ = c.lock.Release()
 		p := c.curProgress
 		c.mu.Unlock()
+		c.zvecCloseMu.Unlock()
 		return p, ErrAlreadyRunning
 	}
 	c.running = true
@@ -209,12 +213,12 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 		c.mu.Lock()
 		c.running = false
 		c.mu.Unlock()
+		c.zvecCloseMu.Unlock()
 		_ = c.lock.Release()
 		return p, err
 	}
 
 	go func() {
-		c.zvecCloseMu.Lock()
 		var filesFailed, finishFiles, finishChunks int
 		var runErr error
 		defer func() {
@@ -305,6 +309,11 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	discovered := make(map[string]struct{}, len(files))
 	stallWatch := NewStallWatcher(c.Settings.App.Indexing.StallSeconds)
 
+	counter, err := token.NewCounter(c.Profile, c.Settings.WorkspaceRoot)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+
 	c.updateProgress(func(p *Progress) {
 		p.FilesTotal = len(files)
 		p.ScanMethod = scanResult.Method
@@ -338,7 +347,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		})
 		stallWatch.Touch()
 
-		if err := c.indexFile(ctx, manStore, rel, force); err != nil {
+		if err := c.indexFile(ctx, manStore, rel, force, counter); err != nil {
 			if isFatalIndexingError(err) {
 				return 0, 0, 0, fmt.Errorf("%s: %w", rel, err)
 			}
@@ -412,7 +421,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	return filesFailed, finishFiles, finishChunks, nil
 }
 
-func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool) error {
+func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool, counter token.TokenCounter) error {
 	abs, err := chunk.ResolveWithinRoot(c.Settings.WorkspaceRoot, rel)
 	if err != nil {
 		return err
@@ -437,10 +446,6 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 	batchSize := c.Profile.BatchSize
 	if batchSize <= 0 {
 		batchSize = 32
-	}
-	counter, err := token.NewCounter(c.Profile, c.Settings.WorkspaceRoot)
-	if err != nil {
-		return err
 	}
 	contextPrefix := c.Settings.App.Indexing.Chunking.ContextPrefix
 

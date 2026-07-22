@@ -856,6 +856,46 @@ func TestCoordinatorCloseConcurrentStart(t *testing.T) {
 	}
 }
 
+func TestCoordinatorStartHoldsZvecCloseMu(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.WriteFile(filepath.Join(root, "slow.go"), []byte("package main\n"+strings.Repeat("// x\n", 400)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &slowEmbedder{mockEmbedder: mockEmbedder{dims: 4}, delay: 100 * time.Millisecond}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.IsRunning() {
+			if c.TryLockZvecForClose() {
+				t.Fatal("TryLockZvecForClose succeeded while indexing is running")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("indexing did not start")
+}
+
 func TestManifestStatsNil(t *testing.T) {
 	files, chunks, err := manifestStats(nil)
 	if err == nil {

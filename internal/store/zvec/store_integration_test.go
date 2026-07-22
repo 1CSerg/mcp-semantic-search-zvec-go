@@ -143,6 +143,64 @@ func TestIntegrationSpikeChecklist(t *testing.T) {
 	}
 }
 
+func TestIntegrationOpenReadOnlyThenWrite(t *testing.T) {
+	indexDir := t.TempDir()
+	cfg := testConfig(t, indexDir)
+	store := New(cfg).(*CollectionStore)
+
+	chunks, vectors := seedChunks(3)
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks seed: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := store.Open(); err != nil {
+		t.Fatalf("Open read-only: %v", err)
+	}
+	if !store.IsOpen() {
+		t.Fatal("expected open after Open()")
+	}
+
+	hits, err := store.Search(unitVector(0, testDims), 1, "")
+	if err != nil {
+		t.Fatalf("Search read-only: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatal("Search returned no hits")
+	}
+
+	extra := []Chunk{{
+		DocID:        "doc-extra",
+		RelativePath: "pkg/extra.go",
+		StartLine:    1,
+		EndLine:      2,
+		ChunkType:    "code",
+		Name:         "Extra",
+		Snippet:      "func Extra() {}",
+	}}
+	extraVec := [][]float32{unitVector(1, testDims)}
+	if err := store.UpsertChunks(extra, extraVec); err != nil {
+		t.Fatalf("UpsertChunks after read-only Open: %v", err)
+	}
+
+	if err := store.DeleteByIDs([]string{"doc-000"}); err != nil {
+		t.Fatalf("DeleteByIDs after read-only Open: %v", err)
+	}
+
+	count, err := store.DocCount()
+	if err != nil {
+		t.Fatalf("DocCount: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("doc_count=%d want 3", count)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestIntegrationSearchReturnsSymbolFields(t *testing.T) {
 	indexDir := t.TempDir()
 	cfg := testConfig(t, indexDir)

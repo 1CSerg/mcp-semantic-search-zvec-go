@@ -299,8 +299,24 @@ func TestLoadPathContainmentOffAllowsEscape(t *testing.T) {
 }
 
 func TestLogsDir(t *testing.T) {
-	settings := &Settings{IndexDir: filepath.Join("/workspace", DefaultInstallDirName, DefaultIndexSubdir)}
-	want := filepath.Join("/workspace", DefaultInstallDirName, "logs")
+	install := filepath.Join("/workspace", DefaultInstallDirName)
+	settings := &Settings{
+		ConfigPath: filepath.Join(install, "config.yaml"),
+		IndexDir:   filepath.Join(install, DefaultIndexSubdir),
+	}
+	want := filepath.Join(install, "logs")
+	if got := settings.LogsDir(); got != want {
+		t.Fatalf("LogsDir=%q want %q", got, want)
+	}
+}
+
+func TestLogsDirCustomIndexDir(t *testing.T) {
+	install := filepath.Join("/workspace", DefaultInstallDirName)
+	settings := &Settings{
+		ConfigPath: filepath.Join(install, "config.yaml"),
+		IndexDir:   "/var/lib/mcp/index",
+	}
+	want := filepath.Join(install, "logs")
 	if got := settings.LogsDir(); got != want {
 		t.Fatalf("LogsDir=%q want %q", got, want)
 	}

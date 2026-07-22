@@ -129,6 +129,30 @@ func TestHandlerBearerAuth(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("lowercase bearer status=%d", rec.Code)
 	}
+
+	req = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer short")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-length token status=%d", rec.Code)
+	}
+}
+
+func TestDaemonVersionReusesChecker(t *testing.T) {
+	t.Setenv("CHECK_UPDATE_DISABLE", "true")
+	settings := testSettings()
+	srv := NewDaemon(settings, nil)
+	if srv.updateChecker == nil {
+		t.Fatal("expected shared update checker on daemon server")
+	}
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		srv.handleVersion(rec, httptest.NewRequest(http.MethodGet, "/v1/version", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("iteration %d status=%d body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
 }
 
 type failingService struct {

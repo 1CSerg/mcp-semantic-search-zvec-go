@@ -248,6 +248,7 @@ func TestRunRetryLoop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	go coord.setIdleAfter(400 * time.Millisecond)
+	w.wg.Add(1)
 	w.runRetryLoop(ctx)
 	if coord.Starts() == 0 {
 		t.Fatal("expected reindex after coordinator became idle")
@@ -398,6 +399,55 @@ func TestWatcherLoopTriggersReindexOnDirectoryRemove(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("starts=%d, expected reindex after directory remove", coord.Starts())
+}
+
+func TestWatcherStopWaitsForRetryLoop(t *testing.T) {
+	coord := &delayedCoordinator{}
+	w := &Watcher{
+		settings:    &config.Settings{},
+		coordinator: coord,
+		stopCh:      make(chan struct{}),
+	}
+	coord.mu.Lock()
+	coord.running = true
+	coord.mu.Unlock()
+
+	ctx := context.Background()
+	w.wg.Add(1)
+	go w.runRetryLoop(ctx)
+
+	time.Sleep(50 * time.Millisecond)
+	w.finishStop()
+	done := make(chan struct{})
+	go func() {
+		w.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not wait for retry loop")
+	}
+}
+
+func TestWatcherStopWaitsForDebounceCallback(t *testing.T) {
+	coord := &mockCoordinator{}
+	w := &Watcher{
+		settings: &config.Settings{
+			App: config.AppConfig{
+				FileWatcher: config.FileWatcherConfig{DebounceSeconds: 0.01},
+			},
+		},
+		coordinator: coord,
+		stopCh:      make(chan struct{}),
+	}
+	ctx := context.Background()
+	w.scheduleDebounce(ctx, 10*time.Millisecond, "main.go")
+	time.Sleep(5 * time.Millisecond)
+	w.finishStop()
+	if coord.Starts() != 0 {
+		t.Fatalf("debounce callback should not start reindex after stop, starts=%d", coord.Starts())
+	}
 }
 
 func TestWatcherSnapshot(t *testing.T) {
