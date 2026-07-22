@@ -20,11 +20,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          if gh release view "$tag" >/dev/null 2>&1; then
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $tag already exists; ensuring draft"
-            gh release edit "$tag" --draft=true || true
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=true || true
           else
-            gh release create "$tag" --draft --title "$tag" --generate-notes
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --title "$tag" --generate-notes
           fi
 
   build:
@@ -154,24 +154,26 @@ jobs:
             echo "No release archives in dist/"
             exit 1
           fi
-          gh release upload "${GITHUB_REF_NAME}" "${files[@]}"
+          gh release upload "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" --clobber "${files[@]}"
 
   publish_release:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Verify and publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          count="$(gh release view "$tag" --json assets -q '.assets | length')"
+          count="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets | length')"
           echo "Release assets: $count"
           if [ "$count" -lt 4 ]; then
             echo "Expected 4 platform archives, got $count"
             exit 1
           fi
-          gh release edit "$tag" --draft=false
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
 
   docker:
     runs-on: ubuntu-latest
