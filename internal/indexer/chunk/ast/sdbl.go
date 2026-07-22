@@ -195,7 +195,6 @@ func ChunkSDBLText(relativePath, queryText string, startLine int64, cfg Config, 
 			})
 		}
 		ch := &zvec.Chunk{
-			DocID:         docID(rel, line, endLine, name),
 			RelativePath:  rel,
 			StartLine:     line,
 			EndLine:       endLine,
@@ -219,7 +218,6 @@ func ChunkSDBLText(relativePath, queryText string, startLine int64, cfg Config, 
 		lines := strings.Split(packageText, "\n")
 		endLine := startLine + int64(len(lines)) - 1
 		ch := &zvec.Chunk{
-			DocID:         docID(rel, startLine, endLine, ""),
 			RelativePath:  rel,
 			StartLine:     startLine,
 			EndLine:       endLine,

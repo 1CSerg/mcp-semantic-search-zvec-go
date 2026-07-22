@@ -125,6 +125,37 @@ workspaces:
 	}
 }
 
+func TestLoadConfigExternalConfigPathWithAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "proj")
+	externalConfig := filepath.Join(dir, "shared-config.yaml")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(externalConfig, []byte("active_profile: smoke\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "daemon.yaml")
+	content := `path_containment: strict
+path_allowlist:
+  - ` + strings.ReplaceAll(externalConfig, `\`, `/`) + `
+workspaces:
+  - id: app-a
+    root: ` + strings.ReplaceAll(root, `\`, `/`) + `
+    config_path: ` + strings.ReplaceAll(externalConfig, `\`, `/`) + `
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Workspaces[0].ConfigPath != externalConfig {
+		t.Fatalf("config_path=%q want %q", cfg.Workspaces[0].ConfigPath, externalConfig)
+	}
+}
+
 func TestLoadConfigExternalIndexStrictWithoutAllowlist(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "proj")

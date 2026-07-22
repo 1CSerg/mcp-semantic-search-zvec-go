@@ -1,9 +1,6 @@
 package prose
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -60,12 +57,6 @@ func contextPrefix(relativePath, parentScope string) string {
 		return "// file: " + rel + "\n"
 	}
 	return "// file: " + rel + "\n// scope: " + parentScope + "\n"
-}
-
-func docID(relativePath string, startLine, endLine int64, symbolName string) string {
-	raw := fmt.Sprintf("%s:%d:%d:%s", relativePath, startLine, endLine, symbolName)
-	sum := sha256.Sum256([]byte(raw))
-	return "doc_" + hex.EncodeToString(sum[:])[:16]
 }
 
 func chunkTypeForPath(rel string) string {

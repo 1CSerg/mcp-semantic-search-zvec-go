@@ -30,19 +30,19 @@ func TestNativePathBytesCyrillic(t *testing.T) {
 	path := `C:\temp\zvec-тест\collection`
 	got, err := nativePathBytes(path)
 	if err != nil {
-		t.Fatal(err)
+		if !strings.Contains(err.Error(), "ACP") {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		return
 	}
 	if len(got) == 0 {
 		t.Fatal("empty native bytes")
 	}
 	back, err := systemACPToUTF16(got)
 	if err != nil {
-		t.Skipf("ACP roundtrip unsupported: %v", err)
+		t.Fatalf("roundtrip err: %v", err)
 	}
 	if back != path {
-		if strings.Contains(back, "?") {
-			t.Skipf("ACP cannot encode Cyrillic on this runner: roundtrip=%q", back)
-		}
 		t.Fatalf("roundtrip=%q want %q", back, path)
 	}
 }

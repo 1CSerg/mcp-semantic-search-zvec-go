@@ -27,7 +27,7 @@ func NewHTTPProxy(baseURL, workspaceID, apiToken string) *HTTPProxy {
 		BaseURL:     baseURL,
 		WorkspaceID: workspaceID,
 		APIToken:    apiToken,
-		Client:      &http.Client{Timeout: 120 * time.Second},
+		Client:      &http.Client{Timeout: 660 * time.Second},
 	}
 }
 
@@ -144,7 +144,7 @@ func (p *HTTPProxy) client() *http.Client {
 	if p.Client != nil {
 		return p.Client
 	}
-	return &http.Client{Timeout: 120 * time.Second}
+	return &http.Client{Timeout: 660 * time.Second}
 }
 
 func urlQuery(v string) string {

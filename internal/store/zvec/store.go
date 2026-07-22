@@ -27,6 +27,8 @@ type Chunk struct {
 	RelativePath  string
 	StartLine     int64
 	EndLine       int64
+	StartByte     int64
+	EndByte       int64
 	ChunkType     string
 	Name          string
 	Snippet       string
@@ -58,6 +60,7 @@ type Store interface {
 	IsOpen() bool
 	Close() error
 	DocCount() (int, error)
+	DocIDsPresent(ids []string) (bool, error)
 	UpsertChunks(chunks []Chunk, vectors [][]float32) error
 	DeleteByIDs(ids []string) error
 	Search(vector []float32, topK int, pathGlob string) ([]SearchHit, error)
@@ -66,24 +69,33 @@ type Store interface {
 
 // Config identifies a workspace zvec collection.
 type Config struct {
-	IndexDir      string
-	WorkspaceRoot string
-	ProfileName   string
-	Dimensions    int
+	IndexDir         string
+	WorkspaceRoot    string
+	ProfileName      string
+	Dimensions       int
+	CollectionSuffix string // e.g. "_staging" for force reindex build
 }
 
 // CollectionName derives stable zvec collection directory name.
 func CollectionName(workspaceRoot, profileName string, dimensions int) string {
+	return collectionNameWithSuffix(workspaceRoot, profileName, dimensions, "")
+}
+
+func collectionNameWithSuffix(workspaceRoot, profileName string, dimensions int, suffix string) string {
 	workspaceRoot = config.NormalizeAbsolutePath(filepath.Clean(workspaceRoot))
 	raw := fmt.Sprintf("%s:%s:%d", workspaceRoot, profileName, dimensions)
 	sum := sha256.Sum256([]byte(raw))
-	return "ws_" + hex.EncodeToString(sum[:])[:16]
+	return "ws_" + hex.EncodeToString(sum[:])[:16] + suffix
 }
 
 // CollectionPath returns the on-disk path for a workspace collection.
 func CollectionPath(cfg Config) string {
-	return filepath.Join(cfg.IndexDir, "zvec", CollectionName(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions))
+	name := collectionNameWithSuffix(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions, cfg.CollectionSuffix)
+	return filepath.Join(cfg.IndexDir, "zvec", name)
 }
+
+// StagingCollectionSuffix is appended to the active collection name during force reindex.
+const StagingCollectionSuffix = "_staging"
 
 // IndexMetaPath returns path to index_meta.json under index dir.
 func IndexMetaPath(indexDir string) string {

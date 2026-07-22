@@ -345,7 +345,7 @@ func (em *proseEmitter) emitCodeBlock(seg markdownSegment) error {
 	budget := em.cfg.bodyBudget(em.counter, em.rel, seg.parentScope)
 	text := seg.text
 	if em.counter.Count(text) <= budget {
-		return em.emitChunk(text, seg.startLine, seg.endLine, seg.symbolName, "code_block", seg.parentScope, "prose", false)
+		return em.emitChunk(text, seg.startLine, seg.endLine, seg.symbolName, "code_block", seg.parentScope, "prose", false, 0, 0)
 	}
 	lines := strings.Split(text, "\n")
 	meta := partialMeta{
@@ -422,7 +422,7 @@ func (em *proseEmitter) emitProse(seg markdownSegment) error {
 		if i > 0 {
 			skipOv = false
 		}
-		if err := em.emitChunk(body, startLine, endLine, seg.symbolName, symbolKind, seg.parentScope, "prose", skipOv); err != nil {
+		if err := em.emitChunk(body, startLine, endLine, seg.symbolName, symbolKind, seg.parentScope, "prose", skipOv, int64(piece.Start), int64(piece.End)); err != nil {
 			return err
 		}
 	}
@@ -447,7 +447,7 @@ func trimToTokenBudget(text string, budget int, counter token.TokenCounter) stri
 	return text
 }
 
-func (em *proseEmitter) emitChunk(body string, startLine, endLine int64, symbolName, symbolKind, parentScope, strategy string, skipOverlap bool) error {
+func (em *proseEmitter) emitChunk(body string, startLine, endLine int64, symbolName, symbolKind, parentScope, strategy string, skipOverlap bool, startByte, endByte int64) error {
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
@@ -467,10 +467,11 @@ func (em *proseEmitter) emitChunk(body string, startLine, endLine int64, symbolN
 		snippet = trimToTokenBudget(snippet, maxEmbed, em.counter)
 	}
 	ch := &zvec.Chunk{
-		DocID:         docID(em.rel, startLine, endLine, symbolName),
 		RelativePath:  em.rel,
 		StartLine:     startLine,
 		EndLine:       endLine,
+		StartByte:     startByte,
+		EndByte:       endByte,
 		ChunkType:     chunkTypeForPath(em.rel),
 		Name:          filepath.Base(em.rel),
 		Snippet:       snippet,
@@ -540,7 +541,6 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 		sl := startLine + int64(start)
 		el := sl + int64(end-start) - 1
 		ch := &zvec.Chunk{
-			DocID:         docID(rel, sl, el, meta.symbolName),
 			RelativePath:  filepath.ToSlash(rel),
 			StartLine:     sl,
 			EndLine:       el,

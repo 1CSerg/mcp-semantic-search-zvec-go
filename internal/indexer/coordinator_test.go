@@ -50,6 +50,16 @@ func (s *memZvec) DocCount() (int, error) {
 	defer s.mu.Unlock()
 	return len(s.chunks), nil
 }
+func (s *memZvec) DocIDsPresent(ids []string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		if _, ok := s.chunks[id]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 func (s *memZvec) UpsertChunks(chunks []zvec.Chunk, _ [][]float32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -202,6 +212,136 @@ func TestCoordinatorIndexesFile(t *testing.T) {
 	}
 	if n, _ := store.DocCount(); n == 0 {
 		t.Fatal("expected zvec chunks")
+	}
+}
+
+func TestCoordinatorReindexesWhenContentHashMissingOrChanged(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rel := "pkg/auth.go"
+	path := filepath.Join(root, rel)
+	initial := []byte("package pkg\n\nfunc Auth() {}\n")
+	if err := os.WriteFile(path, initial, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, err := man.Get(rel)
+	if err != nil {
+		t.Fatalf("manifest get: %v", err)
+	}
+	if entry.ContentHash == "" {
+		t.Fatal("expected content hash after initial index")
+	}
+	originalHash := entry.ContentHash
+
+	t.Run("legacy empty ContentHash", func(t *testing.T) {
+		if err := man.Upsert(manifest.FileEntry{
+			RelativePath: rel,
+			MtimeNs:      entry.MtimeNs,
+			Size:         entry.Size,
+			ChunkCount:   entry.ChunkCount,
+			DocIDs:       entry.DocIDs,
+			ContentHash:  "",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		calls := 0
+		embed := &countingEmbedder{mockEmbedder: mockEmbedder{dims: 4}, calls: &calls}
+		c.Embed = embed
+		if _, err := c.Start(false); err != nil {
+			t.Fatal(err)
+		}
+		waitCoordinatorIdle(t, c)
+		if calls == 0 {
+			t.Fatal("expected reindex when legacy ContentHash is empty")
+		}
+		updated, err := man.Get(rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.ContentHash == "" {
+			t.Fatal("expected ContentHash backfilled after reindex")
+		}
+		if updated.ContentHash != originalHash {
+			t.Fatalf("content hash=%q want %q", updated.ContentHash, originalHash)
+		}
+	})
+
+	t.Run("same mtime and size different bytes", func(t *testing.T) {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mtime := info.ModTime()
+		size := info.Size()
+		replacement := []byte("package pkg\n\nfunc Axth() {}\n")
+		if int64(len(replacement)) != size {
+			t.Fatalf("replacement size=%d want %d", len(replacement), size)
+		}
+		if err := os.WriteFile(path, replacement, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+		newHash, err := fileContentHash(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if newHash == originalHash {
+			t.Fatal("expected different content hash after byte swap")
+		}
+
+		calls := 0
+		embed := &countingEmbedder{mockEmbedder: mockEmbedder{dims: 4}, calls: &calls}
+		c.Embed = embed
+		if _, err := c.Start(false); err != nil {
+			t.Fatal(err)
+		}
+		waitCoordinatorIdle(t, c)
+		if calls == 0 {
+			t.Fatal("expected reindex when content changed but mtime and size match")
+		}
+		updated, err := man.Get(rel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.ContentHash != newHash {
+			t.Fatalf("content hash=%q want %q", updated.ContentHash, newHash)
+		}
+	})
+	if err := man.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1025,6 +1165,17 @@ func TestStaleDocIDs(t *testing.T) {
 	}
 }
 
+func TestRollbackNewDocIDs(t *testing.T) {
+	old := &manifest.FileEntry{DocIDs: []string{"a", "b", "c"}}
+	got := rollbackNewDocIDs([]string{"a", "b", "d"}, old)
+	if len(got) != 1 || got[0] != "d" {
+		t.Fatalf("rollbackNewDocIDs=%v", got)
+	}
+	if got := rollbackNewDocIDs([]string{"x", "y"}, nil); len(got) != 2 {
+		t.Fatalf("rollback without old=%v", got)
+	}
+}
+
 type lockErrorZvec struct {
 	memZvec
 	openErr error
@@ -1081,5 +1232,272 @@ func TestManifestZvecDesyncLockError(t *testing.T) {
 	}
 	if !need {
 		t.Fatal("expected force reindex when zvec lock fails but manifest has chunks")
+	}
+}
+
+func (s *lockErrorZvec) DocIDsPresent([]string) (bool, error) {
+	return false, s.openErr
+}
+
+func TestManifestZvecDesyncMissingManifestDoc(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manPath := filepath.Join(indexDir, "manifest.db")
+	man, err := manifest.Open(manPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := man.Upsert(manifest.FileEntry{
+		RelativePath: "a.go",
+		MtimeNs:      1,
+		Size:         10,
+		ChunkCount:   2,
+		DocIDs:       []string{"d1", "d2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := man.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newMemZvec()
+	store.chunks["d1"] = zvec.Chunk{DocID: "d1"}
+
+	c := &Coordinator{
+		Settings: &config.Settings{IndexDir: indexDir},
+		Zvec:     store,
+	}
+	need, err := c.manifestZvecDesync()
+	if err != nil {
+		t.Fatalf("manifestZvecDesync: %v", err)
+	}
+	if !need {
+		t.Fatal("expected desync when manifest doc missing from zvec")
+	}
+}
+
+func TestManifestZvecDesyncSameCountDifferentSets(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manPath := filepath.Join(indexDir, "manifest.db")
+	man, err := manifest.Open(manPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := man.Upsert(manifest.FileEntry{
+		RelativePath: "a.go",
+		MtimeNs:      1,
+		Size:         10,
+		ChunkCount:   3,
+		DocIDs:       []string{"d1", "d2", "d3"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := man.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store := newMemZvec()
+	store.chunks["d1"] = zvec.Chunk{DocID: "d1"}
+	store.chunks["d2"] = zvec.Chunk{DocID: "d2"}
+	store.chunks["orphan"] = zvec.Chunk{DocID: "orphan"}
+
+	c := &Coordinator{
+		Settings: &config.Settings{IndexDir: indexDir},
+		Zvec:     store,
+	}
+	need, err := c.manifestZvecDesync()
+	if err != nil {
+		t.Fatalf("manifestZvecDesync: %v", err)
+	}
+	if !need {
+		t.Fatal("expected desync when counts match but doc id sets differ")
+	}
+}
+
+type batchFailEmbedder struct {
+	dims      int
+	failAfter int
+	calls     int
+}
+
+func (m *batchFailEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	m.calls++
+	if m.calls >= m.failAfter {
+		return nil, fmt.Errorf("embed failed on batch %d", m.calls)
+	}
+	out := make([][]float32, len(texts))
+	for i := range texts {
+		v := make([]float32, m.dims)
+		v[0] = 1
+		out[i] = v
+	}
+	return out, nil
+}
+
+func (m *batchFailEmbedder) Dimensions() int { return m.dims }
+
+func TestCoordinatorPreservesIndexOnSecondBatchEmbedFailure(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "big.go")
+	var b strings.Builder
+	b.WriteString("package pkg\n\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&b, "func Fn%d() {}\n\n", i)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 1}
+	store := newMemZvec()
+	embed := &batchFailEmbedder{dims: 4, failAfter: 1000}
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, embed, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := man.Get("pkg/big.go")
+	if err != nil {
+		t.Fatalf("initial manifest: %v", err)
+	}
+	_ = man.Close()
+
+	if err := os.WriteFile(path, []byte(b.String()+"\nfunc Tail() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	embed.failAfter = 2
+	embed.calls = 0
+
+	if _, err := c.Start(false); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	man, err = manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	after, err := man.Get("pkg/big.go")
+	if err != nil {
+		t.Fatalf("manifest after failed reindex: %v", err)
+	}
+	if after.MtimeNs != before.MtimeNs || len(after.DocIDs) != len(before.DocIDs) {
+		t.Fatalf("manifest changed after second-batch embed failure: before=%+v after=%+v", before, after)
+	}
+
+	count, err := store.DocCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != len(before.DocIDs) {
+		t.Fatalf("doc count after embed failure=%d want %d", count, len(before.DocIDs))
+	}
+	present, err := store.DocIDsPresent(before.DocIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !present {
+		t.Fatalf("manifest doc ids missing from zvec after embed failure: %v", before.DocIDs)
+	}
+}
+
+type partialUpsertZvec struct {
+	memZvec
+}
+
+func (s *partialUpsertZvec) UpsertChunks(chunks []zvec.Chunk, vectors [][]float32) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	if err := s.memZvec.UpsertChunks(chunks[:1], vectors[:1]); err != nil {
+		return err
+	}
+	return &zvec.PartialWriteError{
+		Op:        "upsert",
+		Succeeded: []string{chunks[0].DocID},
+		Failed:    1,
+		Cause:     fmt.Errorf("partial upsert"),
+	}
+}
+
+func TestCoordinatorPartialUpsertDoesNotCommitManifest(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "auth.go")
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Auth() {}\nfunc Other() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 1}
+	store := &partialUpsertZvec{memZvec: *newMemZvec()}
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+	if p := c.CurrentProgress(); p.State != StateError {
+		t.Fatalf("expected error state, got %+v", p)
+	}
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	if _, err := man.Get("pkg/auth.go"); err == nil {
+		t.Fatal("expected no manifest row after partial upsert failure")
+	}
+	if len(store.chunks) != 0 {
+		t.Fatalf("expected zvec rollback, got %d docs", len(store.chunks))
 	}
 }

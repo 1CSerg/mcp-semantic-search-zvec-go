@@ -13,12 +13,14 @@ func TestFileChunksStableIDs(t *testing.T) {
 	if len(chunks) == 0 {
 		t.Fatal("expected chunks")
 	}
-	if chunks[0].DocID == "" || chunks[0].RelativePath != "pkg/a.go" {
-		t.Fatalf("chunk=%+v", chunks[0])
+	id1 := DocIDForChunk(&chunks[0], 1)
+	if id1 == "" || chunks[0].RelativePath != "pkg/a.go" {
+		t.Fatalf("chunk=%+v id=%q", chunks[0], id1)
 	}
 	again := FileChunks("pkg/a.go", content, Options{WindowLines: 3, OverlapLines: 1, ChunkingStrategy: "line_window"})
-	if again[0].DocID != chunks[0].DocID {
-		t.Fatalf("doc id not stable: %s vs %s", again[0].DocID, chunks[0].DocID)
+	id2 := DocIDForChunk(&again[0], 1)
+	if id2 != id1 {
+		t.Fatalf("doc id not stable: %s vs %s", id2, id1)
 	}
 }
 

@@ -96,6 +96,16 @@ func (s *keywordSearchStore) DocCount() (int, error) {
 	defer s.mu.Unlock()
 	return len(s.chunks), nil
 }
+func (s *keywordSearchStore) DocIDsPresent(ids []string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		if _, ok := s.chunks[id]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 func (s *keywordSearchStore) UpsertChunks(chunks []zvec.Chunk, vectors [][]float32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -34,7 +34,7 @@ type CollectionStore struct {
 func New(cfg Config) Store {
 	return &CollectionStore{
 		cfg:        cfg,
-		collection: CollectionName(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions),
+		collection: collectionNameWithSuffix(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions, cfg.CollectionSuffix),
 		path:       CollectionPath(cfg),
 	}
 }
@@ -62,14 +62,14 @@ func (s *CollectionStore) IsOpen() bool {
 func (s *CollectionStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.col != nil {
-		if closeErr := s.col.Close(); closeErr != nil {
-			s.col = nil
-			s.open = false
-			return closeErr
-		}
-		s.col = nil
+	if s.col == nil {
+		s.open = false
+		return nil
 	}
+	if closeErr := s.col.Close(); closeErr != nil {
+		return closeErr
+	}
+	s.col = nil
 	s.open = false
 	return nil
 }
@@ -89,6 +89,44 @@ func (s *CollectionStore) DocCount() (int, error) {
 		return 0, err
 	}
 	return int(stats.DocCount), nil
+}
+
+// DocIDsPresent reports whether every id exists in the collection.
+func (s *CollectionStore) DocIDsPresent(ids []string) (bool, error) {
+	if len(ids) == 0 {
+		return true, nil
+	}
+	if err := s.Open(); err != nil {
+		return false, err
+	}
+	const batchSize = 128
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.col == nil {
+		return false, ErrCollectionMissing
+	}
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		docs, err := s.col.Fetch(batch, &zvec.FetchOptions{})
+		if err != nil {
+			return false, err
+		}
+		found := 0
+		for _, doc := range docs {
+			if doc != nil {
+				found++
+				doc.Destroy()
+			}
+		}
+		if found < len(batch) {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // UpsertChunks inserts or updates chunks with vectors.
@@ -132,10 +170,19 @@ func (s *CollectionStore) UpsertChunks(chunks []Chunk, vectors [][]float32) erro
 	if err != nil {
 		return err
 	}
+	succeeded := docIDsFromChunks(chunks, wr.SuccessCount)
 	if wr.ErrorCount > 0 {
-		return fmt.Errorf("upsert: %d errors (success %d)", wr.ErrorCount, wr.SuccessCount)
+		return &PartialWriteError{
+			Op:        "upsert",
+			Succeeded: succeeded,
+			Failed:    wr.ErrorCount,
+			Cause:     fmt.Errorf("upsert: %d errors (success %d)", wr.ErrorCount, wr.SuccessCount),
+		}
 	}
-	return s.col.Flush()
+	if flushErr := s.col.Flush(); flushErr != nil {
+		return &FlushWriteError{Op: "upsert", Succeeded: succeeded, Cause: flushErr}
+	}
+	return nil
 }
 
 // DeleteByIDs removes documents by primary key.
@@ -155,10 +202,26 @@ func (s *CollectionStore) DeleteByIDs(ids []string) error {
 	if err != nil {
 		return err
 	}
-	if wr.ErrorCount > 0 {
-		return fmt.Errorf("delete: %d errors (success %d)", wr.ErrorCount, wr.SuccessCount)
+	succeeded := ids[:0]
+	if wr.SuccessCount > 0 {
+		if wr.SuccessCount >= len(ids) {
+			succeeded = append(succeeded, ids...)
+		} else {
+			succeeded = append(succeeded, ids[:wr.SuccessCount]...)
+		}
 	}
-	return s.col.Flush()
+	if wr.ErrorCount > 0 {
+		return &PartialWriteError{
+			Op:        "delete",
+			Succeeded: succeeded,
+			Failed:    wr.ErrorCount,
+			Cause:     fmt.Errorf("delete: %d errors (success %d)", wr.ErrorCount, wr.SuccessCount),
+		}
+	}
+	if flushErr := s.col.Flush(); flushErr != nil {
+		return &FlushWriteError{Op: "delete", Succeeded: succeeded, Cause: flushErr}
+	}
+	return nil
 }
 
 // Search runs a vector similarity query with optional path glob filter.
@@ -175,10 +238,7 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 
 	queryTopK := topK
 	if strings.TrimSpace(pathGlob) != "" {
-		queryTopK = topK * 4
-		if queryTopK < topK {
-			queryTopK = topK
-		}
+		return s.searchWithGlobExpansion(vector, topK, pathGlob)
 	}
 
 	// Hold the lock across the whole query: the underlying CGO handle can be
@@ -233,7 +293,9 @@ func (s *CollectionStore) WipeCollection() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.col != nil {
-		s.col.Close()
+		if err := s.col.Close(); err != nil {
+			return fmt.Errorf("close before wipe: %w", err)
+		}
 		s.col = nil
 	}
 	s.open = false
@@ -242,6 +304,100 @@ func (s *CollectionStore) WipeCollection() error {
 		return fmt.Errorf("remove collection: %w", err)
 	}
 	return nil
+}
+
+func docIDsFromChunks(chunks []Chunk, successCount int) []string {
+	if successCount <= 0 {
+		return nil
+	}
+	if successCount >= len(chunks) {
+		out := make([]string, len(chunks))
+		for i, ch := range chunks {
+			out[i] = ch.DocID
+		}
+		return out
+	}
+	out := make([]string, 0, successCount)
+	for i := 0; i < successCount && i < len(chunks); i++ {
+		out = append(out, chunks[i].DocID)
+	}
+	return out
+}
+
+func (s *CollectionStore) searchWithGlobExpansion(vector []float32, topK int, pathGlob string) ([]SearchHit, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.col == nil {
+		return nil, ErrCollectionMissing
+	}
+	docCount, err := s.docCountLocked()
+	if err != nil {
+		return nil, err
+	}
+	if docCount == 0 {
+		return nil, nil
+	}
+	queryTopK := topK
+	if queryTopK < topK {
+		queryTopK = topK
+	}
+	var hits []SearchHit
+	for len(hits) < topK && queryTopK <= docCount {
+		results, qErr := s.queryLocked(vector, queryTopK)
+		if qErr != nil {
+			return nil, qErr
+		}
+		hits = hits[:0]
+		for _, doc := range results {
+			if doc == nil {
+				continue
+			}
+			hit := docToSearchHit(doc)
+			if !matchPathGlob(hit.Path, pathGlob) {
+				continue
+			}
+			hits = append(hits, hit)
+			if len(hits) >= topK {
+				break
+			}
+		}
+		zvec.FreeDocs(results)
+		if len(hits) >= topK || queryTopK >= docCount {
+			break
+		}
+		next := queryTopK * 2
+		if next <= queryTopK {
+			next = docCount
+		}
+		queryTopK = next
+	}
+	return hits, nil
+}
+
+func (s *CollectionStore) docCountLocked() (int, error) {
+	stats, err := s.col.GetStats()
+	if err != nil {
+		return 0, err
+	}
+	return int(stats.DocCount), nil
+}
+
+func (s *CollectionStore) queryLocked(vector []float32, queryTopK int) ([]*zvec.Doc, error) {
+	q := zvec.NewSearchQuery()
+	defer q.Destroy()
+	if err := q.SetFieldName(fieldEmbedding); err != nil {
+		return nil, err
+	}
+	if err := q.SetTopK(queryTopK); err != nil {
+		return nil, err
+	}
+	if err := q.SetOutputFields(searchOutputFields); err != nil {
+		return nil, err
+	}
+	if err := q.SetQueryVector(vector); err != nil {
+		return nil, err
+	}
+	return s.col.Query(q)
 }
 
 func (s *CollectionStore) ensureWritable() error {

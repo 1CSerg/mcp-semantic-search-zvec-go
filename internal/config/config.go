@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -238,7 +239,7 @@ func applyAppDefaults(app *AppConfig) {
 		app.Indexing.Chunking.Strategy = "hybrid"
 	}
 	if app.Indexing.Chunking.Version == 0 {
-		app.Indexing.Chunking.Version = 1
+		app.Indexing.Chunking.Version = 2
 	}
 	if app.Indexing.Chunking.SizeMetric == "" {
 		app.Indexing.Chunking.SizeMetric = "tokens"
@@ -448,4 +449,25 @@ func ParseIntEnv(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// EmbedHTTPBudget returns an HTTP client/write timeout that covers embedding retries.
+func EmbedHTTPBudget(profile EmbeddingProfile) time.Duration {
+	timeout := time.Duration(profile.TimeoutSeconds * float64(time.Second))
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	retries := profile.MaxRetries
+	if retries <= 0 {
+		retries = DefaultEmbedMaxRetries
+	}
+	baseMS := profile.RetryBaseMS
+	if baseMS <= 0 {
+		baseMS = DefaultEmbedRetryBaseMS
+	}
+	total := timeout * time.Duration(retries)
+	if retries > 1 {
+		total += time.Duration(baseMS) * time.Millisecond * time.Duration(retries-1)
+	}
+	return total + 30*time.Second
 }

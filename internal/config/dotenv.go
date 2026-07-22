@@ -55,13 +55,13 @@ func ParseDotEnv(paths ...string) (map[string]string, error) {
 
 func loadDotEnvCandidates(workspace, configPath string) error {
 	var paths []string
-	if p := os.Getenv("ENV_PATH"); p != "" {
-		paths = append(paths, p)
-	}
 	if configPath != "" {
 		paths = append(paths, filepath.Join(filepath.Dir(configPath), ".env"))
 	}
 	paths = append(paths, filepath.Join(workspace, DefaultInstallDirName, ".env"))
+	if p := os.Getenv("ENV_PATH"); p != "" {
+		paths = append(paths, p)
+	}
 
 	parsed, err := ParseDotEnv(paths...)
 	if err != nil {

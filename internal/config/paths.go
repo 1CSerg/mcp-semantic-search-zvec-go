@@ -134,6 +134,7 @@ func validateSettingsPaths(workspace, indexDir, configPath string, mode PathCont
 		FieldName:    "CONFIG_PATH",
 		Path:         configPath,
 		AllowedRoots: roots,
+		Allowlist:    allowlist,
 	})
 }
 

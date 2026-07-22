@@ -572,6 +572,28 @@ func TestRegistryCloseSkipsShutdownWithHeldBorrow(t *testing.T) {
 		t.Fatalf("refs=%d want 1 after Close with held borrow", refs)
 	}
 	release()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		_, open := r.open["ws"]
+		discards := r.discards
+		r.mu.Unlock()
+		if !open && discards == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	r.mu.Lock()
+	if _, open := r.open["ws"]; open {
+		r.mu.Unlock()
+		t.Fatal("workspace still in open map after late release")
+	}
+	if r.discards != 0 {
+		r.mu.Unlock()
+		t.Fatalf("discards=%d want 0 after async discard finished", r.discards)
+	}
+	r.mu.Unlock()
 }
 
 func TestRegistryReleaseDoubleRelease(t *testing.T) {

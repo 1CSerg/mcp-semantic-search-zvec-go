@@ -57,12 +57,26 @@ function Apply-ZvecAcpPatch {
             "path_unix.go",
             "path_windows.go",
             "path_windows_test.go",
-            "path_windows_test_helper.go",
+            "path_windows_test_helper_test.go",
             "path_test.go",
             "collection_cyrillic_integration_test.go"
         )) {
         Copy-Item (Join-Path $AcpPatchDir $f) (Join-Path $DestDir $f) -Force
     }
+}
+
+function Test-ZvecLibSha256 {
+    param(
+        [string]$LibMarker,
+        [string]$LibDir
+    )
+    $shaFile = Join-Path $LibDir ".zvec-lib-sha256"
+    if (-not (Test-Path $LibMarker) -or -not (Test-Path $shaFile)) {
+        return $false
+    }
+    $want = (Get-Content $shaFile -Raw).Trim().ToLowerInvariant()
+    $got = (Get-FileHash -Path $LibMarker -Algorithm SHA256).Hash.ToLowerInvariant()
+    return $got -eq $want
 }
 
 $failed = $false
@@ -95,7 +109,23 @@ Apply-ZvecAcpPatch -DestDir $Dest
 
 $LibDir = Join-Path $Dest "lib\windows_amd64"
 $LibMarker = Join-Path $LibDir "zvec_c_api.dll"
-if (-not (Test-Path $LibMarker)) {
+$VersionMarker = Join-Path $LibDir ".zvec-lib-version"
+$needDownload = $true
+if ((Test-Path $LibMarker) -and (Test-Path $VersionMarker)) {
+    $markedTag = (Get-Content $VersionMarker -Raw).Trim()
+    if ($markedTag -eq $Tag) {
+        if (Test-ZvecLibSha256 -LibMarker $LibMarker -LibDir $LibDir) {
+            $needDownload = $false
+        } else {
+            Write-Host "zvec native lib SHA256 mismatch; refreshing lib..."
+            Remove-Item (Join-Path $Dest "lib") -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Write-Host "zvec native libs tag mismatch (marker=$markedTag want=$Tag); refreshing lib..."
+        Remove-Item (Join-Path $Dest "lib") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+if ($needDownload) {
     Push-Location $Dest
     try {
         if ($IsWindows -or $env:OS -eq 'Windows_NT') {
@@ -113,6 +143,11 @@ if (-not (Test-Path $LibMarker)) {
 
 if (-not (Test-Path $LibDir)) {
     throw "Expected lib dir missing: $LibDir"
+}
+Set-Content -Path $VersionMarker -Value $Tag -NoNewline -Encoding utf8
+if (Test-Path $LibMarker) {
+    $hash = (Get-FileHash -Path $LibMarker -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -Path (Join-Path $LibDir ".zvec-lib-sha256") -Value $hash -NoNewline -Encoding utf8
 }
 
 $env:ZVEC_LIB_DIR = $LibDir

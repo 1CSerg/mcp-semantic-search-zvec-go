@@ -184,8 +184,37 @@ function Merge-WindowsMcpJsonProxy {
     Write-Utf8File $Path ($obj | ConvertTo-Json -Depth 10)
 }
 
+function Get-ZvecGoTagFromRepo {
+    $gm = Join-Path $RepoRoot "go.mod"
+    if (-not (Test-Path $gm)) {
+        return "v0.6.0"
+    }
+    $m = [regex]::Match((Get-Content -Raw $gm), 'github.com/zvec-ai/zvec-go\s+(v[^\s\r\n]+)')
+    if ($m.Success) {
+        return $m.Groups[1].Value.Trim()
+    }
+    return "v0.6.0"
+}
+
 function Copy-RuntimeLibs {
-    param([string]$DestBinDir)
+    param(
+        [string]$DestBinDir,
+        [string]$InstallVersion
+    )
+
+    $zvecTag = Get-ZvecGoTagFromRepo
+    $runtimeMarker = Join-Path $DestBinDir ".install-runtime-version"
+    $expectedMarker = "${InstallVersion}:${zvecTag}"
+    $needRefresh = $true
+    if ((Test-Path $runtimeMarker) -and (Test-Path (Join-Path $DestBinDir "zvec_c_api.dll"))) {
+        $marked = (Get-Content $runtimeMarker -Raw).Trim()
+        if ($marked -eq $expectedMarker) {
+            $needRefresh = $false
+        }
+    }
+    if (-not $needRefresh -and (Test-Path (Join-Path $DestBinDir "onnxruntime.dll"))) {
+        return
+    }
 
     $repoBin = Join-Path $RepoRoot "bin"
     foreach ($name in @("zvec_c_api.dll", "onnxruntime.dll")) {
@@ -213,6 +242,8 @@ function Copy-RuntimeLibs {
             Copy-Item -Force $ortSrc (Join-Path $DestBinDir "onnxruntime.dll")
         }
     }
+
+    Write-Utf8File $runtimeMarker $expectedMarker
 }
 
 function Install-CursorRule {
@@ -378,7 +409,7 @@ if (Test-Path $srcBin) {
         Pop-Location
     }
 }
-Copy-RuntimeLibs $BinDir
+Copy-RuntimeLibs $BinDir $version
 Install-WindowsLaunchers -DestBinDir $BinDir
 $workspaceRootPath = Normalize-WindowsPath $TargetRoot
 Write-Utf8File (Join-Path $BinDir "workspace-root.txt") $workspaceRootPath

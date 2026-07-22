@@ -24,11 +24,22 @@ func assertChunksEqual(t *testing.T, inline, streamed []zvec.Chunk) {
 	if len(inline) != len(streamed) {
 		t.Fatalf("chunk count inline=%d streamed=%d\ninline=%+v\nstreamed=%+v", len(inline), len(streamed), inline, streamed)
 	}
+	inline = normalizeChunkDocIDs(inline)
+	streamed = normalizeChunkDocIDs(streamed)
 	for i := range inline {
 		if inline[i] != streamed[i] {
 			t.Fatalf("chunk[%d]\ninline=%+v\nstreamed=%+v", i, inline[i], streamed[i])
 		}
 	}
+}
+
+func normalizeChunkDocIDs(chunks []zvec.Chunk) []zvec.Chunk {
+	out := make([]zvec.Chunk, len(chunks))
+	for i, ch := range chunks {
+		out[i] = ch
+		out[i].DocID = DocIDForChunk(&ch, i+1)
+	}
+	return out
 }
 
 func TestStreamChunkMatchesFileChunks(t *testing.T) {

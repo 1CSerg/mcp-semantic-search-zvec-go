@@ -240,3 +240,51 @@ func TestIntegrationSearchReturnsSymbolFields(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+func TestIntegrationPathGlobExpansion(t *testing.T) {
+	indexDir := t.TempDir()
+	cfg := testConfig(t, indexDir)
+	store := New(cfg).(*CollectionStore)
+
+	chunks := make([]Chunk, 0, 121)
+	vectors := make([][]float32, 0, 121)
+	for i := 0; i < 120; i++ {
+		chunks = append(chunks, Chunk{
+			DocID:        fmt.Sprintf("other-%03d", i),
+			RelativePath: fmt.Sprintf("other/near_%d.go", i),
+			StartLine:    1,
+			EndLine:      2,
+			ChunkType:    "code",
+			Snippet:      fmt.Sprintf("other %d", i),
+		})
+		vectors = append(vectors, unitVector(0, testDims))
+	}
+	chunks = append(chunks, Chunk{
+		DocID:        "target-match",
+		RelativePath: "target/match.go",
+		StartLine:    1,
+		EndLine:      2,
+		ChunkType:    "code",
+		Snippet:      "target match",
+	})
+	vectors = append(vectors, unitVector(testDims-1, testDims))
+
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks: %v", err)
+	}
+
+	hits, err := store.Search(unitVector(0, testDims), 1, "target/*.go")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits=%d want 1", len(hits))
+	}
+	if hits[0].Path != "target/match.go" {
+		t.Fatalf("path=%q want target/match.go", hits[0].Path)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}

@@ -285,15 +285,67 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	if err != nil {
 		return 0, 0, 0, err
 	}
+
+	cleanupJournal, err := manifest.OpenCleanupJournal(c.Settings.IndexDir)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	c.reconcileCleanupJournal(cleanupJournal)
+
+	var zvecTarget zvec.Store = c.Zvec
+	var stagingStore zvec.Store
+	useStaging := false
+	if force {
+		stagingCfg := c.ZvecCfg
+		stagingCfg.CollectionSuffix = zvec.StagingCollectionSuffix
+		candidate := zvec.New(stagingCfg)
+		if err := candidate.Open(); err == nil {
+			useStaging = true
+			stagingStore = candidate
+			if err := stagingStore.WipeCollection(); err != nil && !isZvecUnavailable(err) {
+				return 0, 0, 0, err
+			}
+			_ = zvec.DiscardStagingManifest(c.Settings.IndexDir)
+			_ = manStore.Close()
+			stagingMan, err := manifest.Open(zvec.StagingManifestPath(c.Settings.IndexDir))
+			if err != nil {
+				return 0, 0, 0, err
+			}
+			manStore = stagingMan
+			zvecTarget = stagingStore
+			defer func() {
+				if stagingStore != nil {
+					_ = stagingStore.Close()
+				}
+			}()
+		} else if !isZvecUnavailable(err) {
+			return 0, 0, 0, err
+		} else {
+			if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
+				return 0, 0, 0, err
+			}
+			if err := manStore.Clear(); err != nil {
+				return 0, 0, 0, err
+			}
+		}
+	}
+
 	defer func() { _ = manStore.Close() }()
 
-	if force {
-		if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
-			return 0, 0, 0, err
+	promoteStaging := func() error {
+		if !useStaging {
+			return nil
 		}
-		if err := manStore.Clear(); err != nil {
-			return 0, 0, 0, err
+		if err := zvec.PromoteStagingCollection(c.ZvecCfg); err != nil {
+			_ = zvec.DiscardStagingCollection(c.ZvecCfg)
+			_ = zvec.DiscardStagingManifest(c.Settings.IndexDir)
+			return err
 		}
+		if err := zvec.PromoteStagingManifest(c.Settings.IndexDir); err != nil {
+			return err
+		}
+		_ = c.Zvec.Close()
+		return c.Zvec.Open()
 	}
 
 	scanResult, err := scan.Discover(scan.Options{
@@ -347,7 +399,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		})
 		stallWatch.Touch()
 
-		if err := c.indexFile(ctx, manStore, rel, force, counter); err != nil {
+		if err := c.indexFile(ctx, manStore, rel, force, counter, zvecTarget, cleanupJournal); err != nil {
 			if isFatalIndexingError(err) {
 				return 0, 0, 0, fmt.Errorf("%s: %w", rel, err)
 			}
@@ -418,10 +470,15 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		finishFiles = len(files)
 		slog.Warn("manifest stats at finish failed", "err", statsErr)
 	}
+	if force {
+		if err := promoteStaging(); err != nil {
+			return filesFailed, finishFiles, finishChunks, err
+		}
+	}
 	return filesFailed, finishFiles, finishChunks, nil
 }
 
-func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool, counter token.TokenCounter) error {
+func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, rel string, force bool, counter token.TokenCounter, zvecStore zvec.Store, cleanup *manifest.CleanupJournal) error {
 	abs, err := chunk.ResolveWithinRoot(c.Settings.WorkspaceRoot, rel)
 	if err != nil {
 		return err
@@ -431,6 +488,11 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		return err
 	}
 
+	contentHash, hashErr := fileContentHash(abs)
+	if hashErr != nil {
+		return hashErr
+	}
+
 	var old *manifest.FileEntry
 	if !force {
 		old, err = manStore.Get(rel)
@@ -438,7 +500,9 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 			return fmt.Errorf("manifest get %s: %w", rel, err)
 		}
 		if old != nil && old.MtimeNs == info.ModTime().UnixNano() && old.Size == info.Size() {
-			return nil
+			if old.ContentHash != "" && old.ContentHash == contentHash {
+				return nil
+			}
 		}
 	}
 
@@ -449,7 +513,7 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 	}
 	contextPrefix := c.Settings.App.Indexing.Chunking.ContextPrefix
 
-	var docIDs []string
+	var newDocIDs []string
 	chunkCount, err := chunk.ProcessBatches(c.Settings.WorkspaceRoot, rel, chunkOpts, counter, batchSize, func(batch []zvec.Chunk) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -462,17 +526,20 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		if err != nil {
 			return fatalEmbedErr(err)
 		}
-		if err := c.Zvec.UpsertChunks(batch, vectors); err != nil && !isZvecUnavailable(err) {
-			return err
+		if upsertErr := zvecStore.UpsertChunks(batch, vectors); upsertErr != nil && !isZvecUnavailable(upsertErr) {
+			if succeeded, partial := zvec.PartialWriteOutcome(upsertErr); partial {
+				newDocIDs = append(newDocIDs, succeeded...)
+			}
+			return upsertErr
 		}
 		for _, ch := range batch {
-			docIDs = append(docIDs, ch.DocID)
+			newDocIDs = append(newDocIDs, ch.DocID)
 		}
 		return nil
 	})
 	if err != nil {
-		if len(docIDs) > 0 {
-			if delErr := c.Zvec.DeleteByIDs(docIDs); delErr != nil && !isZvecUnavailable(delErr) {
+		if rollback := rollbackNewDocIDs(newDocIDs, old); len(rollback) > 0 {
+			if delErr := zvecStore.DeleteByIDs(rollback); delErr != nil && !isZvecUnavailable(delErr) {
 				slog.Warn("index file rollback incomplete", "path", rel, "index_err", err, "rollback_err", delErr)
 			}
 		}
@@ -481,7 +548,7 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 
 	if chunkCount == 0 {
 		if old != nil && len(old.DocIDs) > 0 {
-			if err := c.Zvec.DeleteByIDs(old.DocIDs); err != nil && !isZvecUnavailable(err) {
+			if err := zvecStore.DeleteByIDs(old.DocIDs); err != nil && !isZvecUnavailable(err) {
 				return err
 			}
 		}
@@ -496,28 +563,24 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		MtimeNs:      info.ModTime().UnixNano(),
 		Size:         info.Size(),
 		ChunkCount:   chunkCount,
-		DocIDs:       docIDs,
+		DocIDs:       newDocIDs,
+		ContentHash:  contentHash,
 	}); err != nil {
-		if delErr := c.Zvec.DeleteByIDs(docIDs); delErr != nil && !isZvecUnavailable(delErr) {
-			slog.Warn("manifest upsert failed; zvec rollback incomplete", "path", rel, "manifest_err", err, "rollback_err", delErr)
+		if rollback := rollbackNewDocIDs(newDocIDs, old); len(rollback) > 0 {
+			if delErr := zvecStore.DeleteByIDs(rollback); delErr != nil && !isZvecUnavailable(delErr) {
+				slog.Warn("manifest upsert failed; zvec rollback incomplete", "path", rel, "manifest_err", err, "rollback_err", delErr)
+			}
 		}
 		return fmt.Errorf("manifest upsert %s: %w", rel, err)
 	}
 
 	if old != nil && len(old.DocIDs) > 0 {
-		stale := staleDocIDs(old.DocIDs, docIDs)
+		stale := staleDocIDs(old.DocIDs, newDocIDs)
 		if len(stale) > 0 {
-			if err := c.deleteStaleVectors(stale); err != nil {
-				if delErr := c.Zvec.DeleteByIDs(docIDs); delErr != nil && !isZvecUnavailable(delErr) {
-					slog.Warn("stale vector rollback incomplete", "path", rel, "rollback_err", delErr)
-				}
-				if old != nil {
-					if upErr := manStore.Upsert(*old); upErr != nil {
-						slog.Warn("manifest rollback after stale delete failed", "path", rel, "err", upErr)
-					}
-				} else if delErr := manStore.Delete(rel); delErr != nil {
-					slog.Warn("manifest rollback delete failed", "path", rel, "err", delErr)
-				}
+			if cleanup != nil {
+				_ = cleanup.Append(stale)
+			}
+			if err := deleteStaleVectorsFrom(zvecStore, stale); err != nil {
 				return err
 			}
 		}
@@ -567,19 +630,13 @@ func (c *Coordinator) embedTexts(ctx context.Context, texts []string) ([][]float
 	return out, nil
 }
 
-func (c *Coordinator) deleteStaleVectors(ids []string) error {
-	const maxAttempts = 3
-	var lastErr error
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		err := c.Zvec.DeleteByIDs(ids)
-		if err == nil || isZvecUnavailable(err) {
-			return nil
-		}
-		lastErr = err
-		slog.Warn("stale vector delete failed", "attempt", attempt, "count", len(ids), "err", err)
-		time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+// rollbackNewDocIDs returns IDs from a failed update that are safe to delete
+// without removing vectors still referenced by the committed manifest entry.
+func rollbackNewDocIDs(newDocIDs []string, old *manifest.FileEntry) []string {
+	if old == nil || len(old.DocIDs) == 0 {
+		return newDocIDs
 	}
-	return lastErr
+	return staleDocIDs(newDocIDs, old.DocIDs)
 }
 
 // staleDocIDs returns old document IDs that are not present in the new set.
@@ -653,6 +710,13 @@ func (c *Coordinator) manifestZvecDesync() (bool, error) {
 	if chunks == 0 {
 		return false, nil
 	}
+	uniqueIDs, err := manStore.UniqueDocIDCount()
+	if err != nil {
+		return false, err
+	}
+	if uniqueIDs != chunks {
+		return true, nil
+	}
 	if !c.Zvec.IsOpen() {
 		if err := c.Zvec.Open(); err != nil {
 			if errors.Is(err, zvec.ErrCollectionMissing) || zvecerr.IsLockError(err) {
@@ -668,5 +732,25 @@ func (c *Coordinator) manifestZvecDesync() (bool, error) {
 		}
 		return false, err
 	}
-	return docCount == 0, nil
+	if docCount == 0 {
+		return true, nil
+	}
+	if uniqueIDs != docCount {
+		return true, nil
+	}
+	manifestIDs, err := manStore.AllDocIDs()
+	if err != nil {
+		return false, err
+	}
+	if len(manifestIDs) == 0 {
+		return false, nil
+	}
+	present, err := c.Zvec.DocIDsPresent(manifestIDs)
+	if err != nil {
+		if zvecerr.IsLockError(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return !present, nil
 }

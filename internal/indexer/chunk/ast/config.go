@@ -1,10 +1,7 @@
 package ast
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -58,12 +55,6 @@ func contextPrefix(relativePath, parentScope string) string {
 		return "// file: " + rel + "\n"
 	}
 	return "// file: " + rel + "\n// scope: " + parentScope + "\n"
-}
-
-func docID(relativePath string, startLine, endLine int64, symbolName string) string {
-	raw := fmt.Sprintf("%s:%d:%d:%s", relativePath, startLine, endLine, symbolName)
-	sum := sha256.Sum256([]byte(raw))
-	return "doc_" + hex.EncodeToString(sum[:])[:16]
 }
 
 func normalizeWindow(window, overlap int) (int, int) {
@@ -128,7 +119,6 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 		sl := startLine + int64(start)
 		el := sl + int64(end-start) - 1
 		ch := &zvec.Chunk{
-			DocID:         docID(rel, sl, el, meta.symbolName),
 			RelativePath:  filepath.ToSlash(rel),
 			StartLine:     sl,
 			EndLine:       el,

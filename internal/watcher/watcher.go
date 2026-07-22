@@ -10,6 +10,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/scan"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/redact"
 )
 
 // Coordinator triggers background indexing.
@@ -333,7 +334,7 @@ func (w *Watcher) Snapshot() Status {
 		RunAsDaemon:     w.settings.App.FileWatcher.RunAsDaemon,
 		DaemonSupported: false,
 		PendingEvents:   w.pendingEvents,
-		LastError:       w.lastError,
+		LastError:       redact.SanitizeErrorText(w.lastError),
 	}
 	if !w.lastEventAt.IsZero() {
 		st.LastEventAt = w.lastEventAt.Format(time.RFC3339)

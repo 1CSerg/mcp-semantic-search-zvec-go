@@ -25,6 +25,9 @@ import (
 
 var errZvecRecoverySkipped = errors.New("zvec recovery skipped: indexing active")
 
+// ErrInternalSearch is returned when semantic search hits an unexpected runtime failure.
+var ErrInternalSearch = errors.New("internal search error")
+
 // Phase1 wires manifest read, embeddings, zvec store, and the indexer.
 type Phase1 struct {
 	Settings     *config.Settings
@@ -42,7 +45,8 @@ type Phase1 struct {
 
 	zvecLockWarnMu   sync.Mutex
 	lastZvecLockWarn time.Time
-	shutdownOnce     sync.Once
+	shutdownMu       sync.Mutex
+	shutdownState    int // 0 running, 1 closing, 2 closed
 	searchWG         sync.WaitGroup
 
 	// searchMu guards searchesShuttingDown and serializes searchWG.Add with the
@@ -147,12 +151,8 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (payload
 	defer func() {
 		if rec := recover(); rec != nil {
 			slog.Error("semantic search panic", "query", req.Query, "panic", rec)
-			p, mErr := marshal(map[string]any{
-				"query":   req.Query,
-				"results": []any{},
-				"message": fmt.Sprintf("internal error: %v", rec),
-			})
-			payload, err = p, mErr
+			payload = nil
+			err = ErrInternalSearch
 		}
 	}()
 
@@ -214,6 +214,9 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (payload
 		// zvecSearchWithContext: surface a dedicated error instead of the
 		// generic "vector search failed".
 		if errors.Is(err, ErrShuttingDown) {
+			return nil, err
+		}
+		if errors.Is(err, ErrInternalSearch) {
 			return nil, err
 		}
 		if errors.Is(err, zvec.ErrCollectionMissing) {
@@ -676,71 +679,70 @@ func (p *Phase1) Close() error {
 
 // Shutdown waits for background indexing and in-flight searches to finish, then closes zvec.
 func (p *Phase1) Shutdown(ctx context.Context) error {
-	var err error
-	p.shutdownOnce.Do(func() {
-		// Stop accepting new searches BEFORE waiting, so searchWG.Wait cannot race
-		// with a concurrent searchWG.Add (sync.WaitGroup contract). In-flight
-		// searches observe their ctx and return, so Wait is bounded.
-		p.stopAcceptingSearches()
+	p.shutdownMu.Lock()
+	if p.shutdownState == 2 {
+		p.shutdownMu.Unlock()
+		return nil
+	}
+	if p.shutdownState == 0 {
+		p.shutdownState = 1
+	}
+	p.shutdownMu.Unlock()
 
-		indexIdle := true
-		if p.coordinator != nil {
-			// Stop the file watcher before waiting for the indexer to go idle.
-			// Otherwise a save event arriving mid-shutdown could trigger
-			// coordinator.Start after Close marks the coordinator closed.
-			p.startupMu.RLock()
-			wInst := p.watcherInst
-			p.startupMu.RUnlock()
-			if wInst != nil {
-				wInst.Stop()
-			}
-			if waitErr := p.coordinator.WaitForIdle(ctx); waitErr != nil {
-				if err == nil {
-					err = waitErr
-				}
-				indexIdle = false
-			}
-			if indexIdle {
-				p.coordinator.Close()
-			}
+	p.stopAcceptingSearches()
+
+	var err error
+	indexIdle := true
+	if p.coordinator != nil {
+		p.startupMu.RLock()
+		wInst := p.watcherInst
+		p.startupMu.RUnlock()
+		if wInst != nil {
+			wInst.Stop()
 		}
-		searchesIdle := true
-		if waitErr := p.waitSearches(ctx); waitErr != nil {
+		if waitErr := p.coordinator.WaitForIdle(ctx); waitErr != nil {
+			indexIdle = false
 			if err == nil {
 				err = waitErr
 			}
-			searchesIdle = false
+		} else {
+			p.coordinator.Close()
 		}
+	}
 
-		// closeZvec is allowed only when no goroutine can still touch the CGO
-		// collection handle. When a coordinator exists, always acquire
-		// zvecCloseMu (held for the whole indexing goroutine) before closing
-		// zvec — even if WaitForIdle succeeded — so a concurrent Reindex→Start
-		// after WaitForIdle cannot race zvec.Close. When coordinator == nil,
-		// indexIdle stays true (the block above is skipped).
-		closeZvec := false
-		if p.zvec != nil && searchesIdle {
-			if p.coordinator == nil {
-				closeZvec = indexIdle
-			} else if p.coordinator.TryLockZvecForClose() {
-				closeZvec = true
-				defer p.coordinator.UnlockZvecForClose()
-			}
+	searchesIdle := true
+	if waitErr := p.waitSearches(ctx); waitErr != nil {
+		if err == nil {
+			err = waitErr
 		}
-		if closeZvec {
-			if closeErr := p.zvec.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
+		searchesIdle = false
+	}
+
+	closeZvec := false
+	if p.zvec != nil && searchesIdle {
+		if p.coordinator == nil {
+			closeZvec = indexIdle
+		} else if p.coordinator.TryLockZvecForClose() {
+			closeZvec = true
+			defer p.coordinator.UnlockZvecForClose()
 		}
-		// Release provider-native resources (e.g. the ONNX Runtime session) only
-		// when no goroutine can still call EmbedQuery — mirror closeZvec above.
-		if searchesIdle && p.embed != nil {
-			if closeErr := p.embed.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
+	}
+	if closeZvec {
+		if closeErr := p.zvec.Close(); closeErr != nil && err == nil {
+			err = closeErr
 		}
+	}
+	if indexIdle && searchesIdle && p.embed != nil {
+		if closeErr := p.embed.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
+	if indexIdle && searchesIdle && closeZvec {
 		zvec.ReclaimCollectionLock(p.zvecCfg)
-	})
+		p.shutdownMu.Lock()
+		p.shutdownState = 2
+		p.shutdownMu.Unlock()
+	}
 	return err
 }
 
@@ -860,8 +862,8 @@ func (p *Phase1) zvecSearchWithContext(ctx context.Context, vector []float32, li
 		var res result
 		defer func() {
 			if r := recover(); r != nil {
-				res.err = fmt.Errorf("search panic: %v", r)
 				slog.Error("zvec search panic", "panic", r)
+				res.err = ErrInternalSearch
 			}
 			ch <- res
 		}()

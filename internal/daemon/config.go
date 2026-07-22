@@ -125,6 +125,7 @@ func normalizeConfig(cfg *Config) error {
 			FieldName:    "config_path",
 			Path:         configPath,
 			AllowedRoots: []string{root},
+			Allowlist:    allowlist,
 		}); err != nil {
 			return fmt.Errorf("workspace %q: %w", spec.ID, err)
 		}

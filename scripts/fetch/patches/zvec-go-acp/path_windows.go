@@ -53,10 +53,13 @@ func utf16ToSystemACP(path string) ([]byte, error) {
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	wideCharToMultiByte := kernel32.NewProc("WideCharToMultiByte")
 
-	const cpACP = 0
+	const (
+		cpACP            = 0
+		wcNoBestFitChars = 0x00000400
+	)
 	size, _, err := wideCharToMultiByte.Call(
 		uintptr(cpACP),
-		0,
+		uintptr(wcNoBestFitChars),
 		uintptr(unsafe.Pointer(&u16[0])),
 		uintptr(len(u16)-1),
 		0,
@@ -69,18 +72,22 @@ func utf16ToSystemACP(path string) ([]byte, error) {
 	}
 
 	buf := make([]byte, int(size))
+	var usedDefaultChar uint32
 	written, _, err := wideCharToMultiByte.Call(
 		uintptr(cpACP),
-		0,
+		uintptr(wcNoBestFitChars),
 		uintptr(unsafe.Pointer(&u16[0])),
 		uintptr(len(u16)-1),
 		uintptr(unsafe.Pointer(&buf[0])),
 		size,
 		0,
-		0,
+		uintptr(unsafe.Pointer(&usedDefaultChar)),
 	)
 	if written == 0 {
 		return nil, os.NewSyscallError("WideCharToMultiByte", err)
+	}
+	if usedDefaultChar != 0 {
+		return nil, fmt.Errorf("path contains characters not representable in system ACP")
 	}
 	return buf[:written], nil
 }

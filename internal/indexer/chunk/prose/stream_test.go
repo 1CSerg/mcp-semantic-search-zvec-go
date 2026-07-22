@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/docid"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
@@ -219,9 +220,15 @@ func TestNormalizeWindow(t *testing.T) {
 }
 
 func TestDocIDStable(t *testing.T) {
-	a := docID("a.md", 1, 2, "H")
-	b := docID("a.md", 1, 2, "H")
+	p := docid.Params{RelativePath: "a.md", StartLine: 1, EndLine: 2, SymbolName: "H", ChunkIndex: 1, Snippet: "body"}
+	a := docid.Make(p)
+	b := docid.Make(p)
 	if a != b {
 		t.Fatal("doc id not stable")
+	}
+	p2 := p
+	p2.ChunkIndex = 2
+	if a == docid.Make(p2) {
+		t.Fatal("expected different doc id for different chunk index")
 	}
 }

@@ -10,14 +10,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/redact"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/service"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/update"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
@@ -107,12 +105,18 @@ func bearerAuthorized(r *http.Request, token string) bool {
 
 // ListenAndServe starts the HTTP server until ctx is cancelled.
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
+	writeTimeout := 120 * time.Second
+	if s.settings != nil {
+		if profile, err := s.settings.ActiveProfile(); err == nil {
+			writeTimeout = config.EmbedHTTPBudget(profile)
+		}
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      120 * time.Second,
+		WriteTimeout:      writeTimeout,
 		IdleTimeout:       120 * time.Second,
 	}
 
@@ -187,8 +191,8 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req service.SearchRequest
-	if err := decodeJSON(r, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if err := decodeJSON(w, r, &req); err != nil {
+		writeDecodeError(w, err)
 		return
 	}
 	workspaceID := firstNonEmpty(req.WorkspaceID, r.Header.Get("X-Workspace-ID"), r.URL.Query().Get("workspace_id"))
@@ -231,11 +235,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReindex(w http.ResponseWriter, r *http.Request) {
 	var req service.ReindexRequest
 	if r.Body != nil && r.Body != http.NoBody {
-		if err := decodeJSON(r, &req); err != nil {
+		if err := decodeJSON(w, r, &req); err != nil {
 			if errors.Is(err, io.EOF) {
 				// Empty body is valid for incremental reindex.
 			} else {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				writeDecodeError(w, err)
 				return
 			}
 		}
@@ -299,7 +303,12 @@ func redactDaemonStatusPaths(raw json.RawMessage) json.RawMessage {
 	}
 	for _, key := range []string{"zvec_error", "message", "identity_mismatch_reason"} {
 		if v, ok := payload[key].(string); ok && v != "" {
-			payload[key] = sanitizeDaemonStatusText(v)
+			payload[key] = redact.SanitizeErrorText(v)
+		}
+	}
+	if fw, ok := payload["file_watcher"].(map[string]any); ok {
+		if v, ok := fw["last_error"].(string); ok && v != "" {
+			fw["last_error"] = redact.SanitizeErrorText(v)
 		}
 	}
 	if diag, ok := payload["diagnostics"].(map[string]any); ok {
@@ -324,34 +333,22 @@ func redactDaemonIndexingMap(idx map[string]any) {
 	delete(idx, "failed_files")
 	delete(idx, "skipped_paths")
 	if msg, ok := idx["message"].(string); ok && msg != "" {
-		idx["message"] = sanitizeDaemonStatusText(msg)
+		idx["message"] = redact.SanitizeErrorText(msg)
 	}
 	if errMsg, ok := idx["error"].(string); ok && errMsg != "" {
-		idx["error"] = sanitizeDaemonStatusText(errMsg)
+		idx["error"] = redact.SanitizeErrorText(errMsg)
 	}
 	if warnings, ok := idx["scan_warnings"].([]any); ok {
 		for i, w := range warnings {
 			if s, ok := w.(string); ok {
-				warnings[i] = sanitizeDaemonStatusText(s)
+				warnings[i] = redact.SanitizeErrorText(s)
 			}
 		}
 	}
 }
 
-var daemonStatusDrivePathRE = regexp.MustCompile(`[A-Za-z]:[\\/][^\s"',;]+`)
-var daemonStatusUnixPathRE = regexp.MustCompile(`/(?:[\w.-]+/)+[\w.-]+(?:\.[\w.-]+)?`)
-
 func sanitizeDaemonStatusText(s string) string {
-	if s == "" {
-		return s
-	}
-	out := crash.SanitizeStack(s)
-	out = daemonStatusDrivePathRE.ReplaceAllString(out, "<redacted>")
-	out = daemonStatusUnixPathRE.ReplaceAllString(out, "<redacted>")
-	if filepath.IsAbs(out) {
-		return "<redacted>"
-	}
-	return out
+	return redact.SanitizeErrorText(s)
 }
 
 func queryTruthy(v string) bool {
@@ -403,11 +400,31 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func decodeJSON(r *http.Request, v any) error {
+func writeDecodeError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request body too large"})
+		return
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	defer func() { _ = r.Body.Close() }()
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected trailing JSON")
+		}
+		return err
+	}
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -446,6 +463,10 @@ func writeError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, service.ErrInvalidSearchLimit):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	case errors.Is(err, service.ErrInternalSearch):
+		slog.Error("request failed", "err", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 		return
 	}
 	// Log the detailed error server-side; return a generic message so internal

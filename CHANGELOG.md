@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Breaking:** `indexing.chunking.version` default is **2** — DocIDs now include byte offsets, chunk index, strategy/type, and content fingerprint. Run `reindex` with `force: true` after upgrade.
+- Fix: eliminate DocID collisions (manifest/zvec count desync); copy-on-write file updates with cleanup journal; partial native upsert/delete handling; staged force reindex (active index kept until staging succeeds).
+- Fix: manifest/zvec desync detection via unique DocID counts and per-ID presence checks in zvec.
+- Fix: `Phase1.Shutdown` retryable after timeout; daemon late `release` closes workspace; search panic → HTTP 500 / MCP tool error (no panic text).
+- Fix: strict JSON body parsing (`MaxBytesReader`, trailing JSON rejected); `.env` path priority; `path_allowlist` on `CONFIG_PATH`; content hash in manifest; path redaction in `file_watcher.last_error`.
+- Fix: Windows ACP path conversion fails on lossy character substitution; fetch scripts version-marker + SHA256 for native libs; install scripts refresh runtime via `.install-runtime-version`.
 - Change: bump zvec-go pin to published tag `v0.6.0`; installed indexes with older `zvec_go_version` will reset and require force reindex.
 
 ## v0.3.0

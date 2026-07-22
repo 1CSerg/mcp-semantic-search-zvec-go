@@ -13,10 +13,12 @@ import (
 type BatchFunc func(chunks []zvec.Chunk) error
 
 type batchCollector struct {
-	size  int
-	acc   []zvec.Chunk
-	emit  BatchFunc
-	total int
+	size    int
+	acc     []zvec.Chunk
+	emit    BatchFunc
+	total   int
+	ordinal int
+	docIDs  []string
 }
 
 func newBatchCollector(batchSize int, fn BatchFunc) *batchCollector {
@@ -24,9 +26,10 @@ func newBatchCollector(batchSize int, fn BatchFunc) *batchCollector {
 		batchSize = 32
 	}
 	return &batchCollector{
-		size: batchSize,
-		acc:  make([]zvec.Chunk, 0, batchSize),
-		emit: fn,
+		size:   batchSize,
+		acc:    make([]zvec.Chunk, 0, batchSize),
+		emit:   fn,
+		docIDs: make([]string, 0, batchSize),
 	}
 }
 
@@ -34,7 +37,11 @@ func (b *batchCollector) add(ch *zvec.Chunk) error {
 	if ch == nil {
 		return nil
 	}
-	b.acc = append(b.acc, *ch)
+	b.ordinal++
+	chCopy := *ch
+	chCopy.DocID = DocIDForChunk(&chCopy, b.ordinal)
+	b.docIDs = append(b.docIDs, chCopy.DocID)
+	b.acc = append(b.acc, chCopy)
 	if len(b.acc) >= b.size {
 		return b.flush()
 	}
@@ -106,6 +113,9 @@ func ProcessBatches(root, relativePath string, opts Options, counter token.Token
 	}
 	if err := coll.flush(); err != nil {
 		return coll.totalChunks(), err
+	}
+	if err := AssertUniqueDocIDs(coll.docIDs); err != nil {
+		return coll.totalChunks(), fmt.Errorf("%s: %w", relativePath, err)
 	}
 	return coll.totalChunks(), nil
 }

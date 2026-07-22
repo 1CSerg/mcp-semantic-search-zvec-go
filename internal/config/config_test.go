@@ -436,7 +436,7 @@ func TestApplyAppDefaultsChunking(t *testing.T) {
 	if app.Indexing.Chunking.MinChunkTokens != 10 {
 		t.Fatalf("min_chunk_tokens=%d", app.Indexing.Chunking.MinChunkTokens)
 	}
-	if app.Indexing.Chunking.Version != 1 {
+	if app.Indexing.Chunking.Version != 2 {
 		t.Fatalf("version=%d", app.Indexing.Chunking.Version)
 	}
 	if got := app.Profiles["onnx"].MaxInputTokens; got != 256 {

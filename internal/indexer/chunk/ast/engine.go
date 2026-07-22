@@ -337,7 +337,6 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 		}
 	}
 	ch := &zvec.Chunk{
-		DocID:         docID(e.rel, start, end, symbolName),
 		RelativePath:  e.rel,
 		StartLine:     start,
 		EndLine:       end,
@@ -404,7 +403,6 @@ func (e *engine) emitPreambleBeforeFirstBoundary(node *sitter.Node, scope Scope)
 		end = start
 	}
 	ch := &zvec.Chunk{
-		DocID:         docID(e.rel, start, end, ""),
 		RelativePath:  e.rel,
 		StartLine:     start,
 		EndLine:       end,
@@ -552,7 +550,6 @@ func (e *engine) chunkFromNodes(nodes []sitter.Node, scope Scope, symbolKind, sy
 		}, e.lang)
 	}
 	return &zvec.Chunk{
-		DocID:         docID(e.rel, int64(start), int64(end), symbolName),
 		RelativePath:  e.rel,
 		StartLine:     int64(start),
 		EndLine:       int64(end),

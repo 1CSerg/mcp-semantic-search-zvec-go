@@ -305,6 +305,12 @@ func (r *Registry) releaseFunc(workspaceID string, h *workspaceHandle) func() {
 		h.refs--
 		if h.refs == 0 {
 			h.lastUsed = time.Now()
+			if r.closing {
+				delete(r.open, workspaceID)
+				r.discards++
+				go r.discardHandle(h)
+				return
+			}
 		}
 	}
 }

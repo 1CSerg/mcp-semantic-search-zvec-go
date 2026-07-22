@@ -113,8 +113,14 @@ func TestWarnPlaintextAPIKeys(t *testing.T) {
 
 func TestDotEnvCandidatePathsWithEnvPath(t *testing.T) {
 	paths := dotEnvCandidatePaths("/ws", "/ws/config.yaml", "/custom/.env")
-	if len(paths) != 3 || paths[0] != "/custom/.env" {
+	if len(paths) != 3 {
 		t.Fatalf("paths=%v", paths)
+	}
+	if paths[0] != filepath.Join(filepath.Dir("/ws/config.yaml"), ".env") {
+		t.Fatalf("paths[0]=%q", paths[0])
+	}
+	if paths[len(paths)-1] != "/custom/.env" {
+		t.Fatalf("paths last=%q", paths[len(paths)-1])
 	}
 }
 

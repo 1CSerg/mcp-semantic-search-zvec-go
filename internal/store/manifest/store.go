@@ -92,10 +92,15 @@ func (s *Store) ensureSchema() error {
 			mtime_ns INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			chunk_count INTEGER NOT NULL DEFAULT 0,
-			doc_ids TEXT NOT NULL DEFAULT '[]'
+			doc_ids TEXT NOT NULL DEFAULT '[]',
+			content_hash TEXT NOT NULL DEFAULT ''
 		)
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(`ALTER TABLE file_manifest ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''`)
+	return nil
 }
 
 // Stats returns aggregate manifest counts.
@@ -122,17 +127,18 @@ type FileEntry struct {
 	Size         int64
 	ChunkCount   int
 	DocIDs       []string
+	ContentHash  string
 }
 
 // Get returns manifest entry for path.
 func (s *Store) Get(relativePath string) (*FileEntry, error) {
 	row := s.db.QueryRow(`
-		SELECT relative_path, mtime_ns, size, chunk_count, doc_ids
+		SELECT relative_path, mtime_ns, size, chunk_count, doc_ids, content_hash
 		FROM file_manifest WHERE relative_path = ?
 	`, relativePath)
 	var e FileEntry
 	var docIDsJSON string
-	if err := row.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON); err != nil {
+	if err := row.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON, &e.ContentHash); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal([]byte(docIDsJSON), &e.DocIDs); err != nil {
@@ -148,14 +154,15 @@ func (s *Store) Upsert(e FileEntry) error {
 		return err
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO file_manifest (relative_path, mtime_ns, size, chunk_count, doc_ids)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO file_manifest (relative_path, mtime_ns, size, chunk_count, doc_ids, content_hash)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(relative_path) DO UPDATE SET
 			mtime_ns = excluded.mtime_ns,
 			size = excluded.size,
 			chunk_count = excluded.chunk_count,
-			doc_ids = excluded.doc_ids
-	`, e.RelativePath, e.MtimeNs, e.Size, e.ChunkCount, string(docIDs))
+			doc_ids = excluded.doc_ids,
+			content_hash = excluded.content_hash
+	`, e.RelativePath, e.MtimeNs, e.Size, e.ChunkCount, string(docIDs), e.ContentHash)
 	return err
 }
 
@@ -168,7 +175,7 @@ func (s *Store) Delete(relativePath string) error {
 // List returns all manifest entries.
 func (s *Store) List() ([]FileEntry, error) {
 	rows, err := s.db.Query(`
-		SELECT relative_path, mtime_ns, size, chunk_count, doc_ids
+		SELECT relative_path, mtime_ns, size, chunk_count, doc_ids, content_hash
 		FROM file_manifest ORDER BY relative_path
 	`)
 	if err != nil {
@@ -179,7 +186,7 @@ func (s *Store) List() ([]FileEntry, error) {
 	for rows.Next() {
 		var e FileEntry
 		var docIDsJSON string
-		if err := rows.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON); err != nil {
+		if err := rows.Scan(&e.RelativePath, &e.MtimeNs, &e.Size, &e.ChunkCount, &docIDsJSON, &e.ContentHash); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(docIDsJSON), &e.DocIDs); err != nil {
@@ -188,6 +195,47 @@ func (s *Store) List() ([]FileEntry, error) {
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// AllDocIDs returns distinct non-empty document IDs recorded in the manifest.
+func (s *Store) AllDocIDs() ([]string, error) {
+	entries, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	for _, e := range entries {
+		for _, id := range e.DocIDs {
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// UniqueDocIDCount returns the number of distinct doc ids recorded in the manifest.
+func (s *Store) UniqueDocIDCount() (int, error) {
+	entries, err := s.List()
+	if err != nil {
+		return 0, err
+	}
+	seen := make(map[string]struct{})
+	for _, e := range entries {
+		for _, id := range e.DocIDs {
+			if id == "" {
+				continue
+			}
+			seen[id] = struct{}{}
+		}
+	}
+	return len(seen), nil
 }
 
 // Clear removes all manifest rows.

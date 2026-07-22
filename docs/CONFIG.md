@@ -13,7 +13,7 @@ Reference copy in repo root: [config.yaml](../config.yaml).
 | Path | `.mcp-semantic-search-zvec-go/.env` next to `config.yaml` |
 | Template | [templates/env.example](../templates/env.example) |
 | Override path | `ENV_PATH` env var |
-| Load order | `ENV_PATH` → `dirname(CONFIG_PATH)/.env` → `WORKSPACE_ROOT/.mcp-semantic-search-zvec-go/.env` |
+| Load order | `dirname(CONFIG_PATH)/.env` → `WORKSPACE_ROOT/.mcp-semantic-search-zvec-go/.env` → `ENV_PATH` (last) |
 | Priority | Variables already set (MCP `env`, shell) are **not** overwritten by `.env` |
 | Custom keys | Any `KEY=VALUE` is allowed; match `api_key_env` in `config.yaml` |
 
@@ -137,7 +137,7 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | Key | Code fallback | Description |
 |-----|---------------|-------------|
 | `strategy` | `hybrid` | `hybrid` or `line_window` (legacy slideWindow). Shipped `-tags "zvec,onnx,treesitter"` binary: prose extensions → prose chunker; enabled code langs → AST; legacy `-tags "zvec,onnx"` fallback → `line_window` for code |
-| `version` | `1` | Chunking schema version stored in `index_meta.json`; mismatch triggers `identity_mismatch` |
+| `version` | `2` | Chunking schema version stored in `index_meta.json`; bump invalidates DocIDs — run `reindex` with `force: true` after upgrade |
 | `size_metric` | `tokens` | Chunk size unit (only `tokens` is implemented; reserved for future metrics) |
 | `min_chunk_tokens` | `10` | Minimum chunk size (tokens); chunks below this are dropped |
 | `prose_overlap_ratio` | `0.12` | Overlap ratio (0–1) between adjacent prose chunks; used by prose/Markdown chunker (`internal/indexer/chunk/prose`) |
@@ -238,7 +238,7 @@ Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:80
 | `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES` | from yaml (`262144`) | Override `indexing.stream_chunk_threshold_bytes` (positive integer) |
 | `INDEXING_MAX_LINE_BYTES` | from yaml (`1048576`) | Override `indexing.max_line_bytes` (positive integer) |
 | `CHUNKING_STRATEGY` | from yaml (`hybrid`) | Override `indexing.chunking.strategy` (`hybrid`, `line_window`) |
-| `CHUNKING_VERSION` | from yaml (`1`) | Override `indexing.chunking.version` (integer) |
+| `CHUNKING_VERSION` | from yaml (`2`) | Override `indexing.chunking.version` (integer) |
 | `EMBED_MAX_INPUT_TOKENS` | from yaml / provider default | Override `max_input_tokens` on **active** profile (positive integer) |
 | `MANIFEST_WAL` | `auto` | SQLite manifest journal: `auto` (WAL off on cloud-sync paths), `on`, `off` |
 | `MCP_CRASH_REDACT_PATHS` | `true` | Redact absolute paths in `last_crash.json` stack |

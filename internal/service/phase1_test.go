@@ -47,7 +47,22 @@ func (m *mockZvecStore) Close() error {
 	m.open = false
 	return nil
 }
-func (m *mockZvecStore) DocCount() (int, error)                       { return len(m.hits), nil }
+func (m *mockZvecStore) DocCount() (int, error) { return len(m.hits), nil }
+func (m *mockZvecStore) DocIDsPresent(ids []string) (bool, error) {
+	for _, id := range ids {
+		found := false
+		for _, h := range m.hits {
+			if h.DocID == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 func (m *mockZvecStore) UpsertChunks([]zvec.Chunk, [][]float32) error { return nil }
 func (m *mockZvecStore) DeleteByIDs([]string) error                   { return nil }
 func (m *mockZvecStore) WipeCollection() error {
@@ -669,6 +684,36 @@ func TestSemanticSearchZvecGenericError(t *testing.T) {
 	}
 	if payload["message"] == nil {
 		t.Fatalf("payload=%v", payload)
+	}
+}
+
+type panicSearchZvecStore struct {
+	mockZvecStore
+}
+
+func (s *panicSearchZvecStore) Search([]float32, int, string) ([]zvec.SearchHit, error) {
+	panic("zvec internal failure")
+}
+
+func TestSemanticSearchZvecPanicReturnsInternalError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 0, "embedding": []float64{0.1, 0.2, 0.3}}},
+		})
+	}))
+	defer srv.Close()
+	p, err := NewPhase1(phase1Settings(t, srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.zvec = &panicSearchZvecStore{}
+
+	_, err = p.SemanticSearch(context.Background(), SearchRequest{Query: "x"})
+	if !errors.Is(err, ErrInternalSearch) {
+		t.Fatalf("err=%v want ErrInternalSearch", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "zvec internal failure") {
+		t.Fatalf("panic text leaked to client: %v", err)
 	}
 }
 
@@ -2091,6 +2136,118 @@ func TestPhase1ShutdownWaitsAfterSearchCancelDuringZvec(t *testing.T) {
 	if store.closeCalls != 1 {
 		t.Fatalf("closeCalls=%d, want 1", store.closeCalls)
 	}
+}
+
+func TestPhase1ShutdownRetryAfterIndexTimeout(t *testing.T) {
+	embedGate := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			w.WriteHeader(http.StatusOK)
+		case "/v1/embeddings":
+			select {
+			case <-embedGate:
+			case <-r.Context().Done():
+				return
+			}
+			var req struct {
+				Input []any `json:"input"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			n := len(req.Input)
+			if n == 0 {
+				n = 1
+			}
+			data := make([]map[string]any, n)
+			for i := 0; i < n; i++ {
+				data[i] = map[string]any{"index": i, "embedding": []float64{0.1, 0.2, 0.3}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	settings := phase1Settings(t, srv.URL+"/v1")
+	settings.App.Indexing.Extensions = []string{".go"}
+	p, err := NewPhase1(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracking := &closeTrackingZvec{}
+	p.coordinator.Zvec = tracking
+	p.zvec = tracking
+
+	if err := os.MkdirAll(p.Settings.WorkspaceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Settings.WorkspaceRoot, "slow.go"), []byte("package main\n"+strings.Repeat("func F() {}\n", 200)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := zvec.EnsureIndexMeta(p.Settings.IndexDir, zvec.IndexIdentity{
+		WorkspaceID:      p.Settings.WorkspaceID,
+		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		Profile:          p.Settings.App.ActiveProfile,
+		Dimensions:       3,
+		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.Reindex(context.Background(), ReindexRequest{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if p.coordinator.IsRunning() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !p.coordinator.IsRunning() {
+		t.Fatal("expected indexing to block on embeddings")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err = p.Shutdown(shutdownCtx)
+	cancel()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first Shutdown err=%v want context.DeadlineExceeded", err)
+	}
+	p.shutdownMu.Lock()
+	state := p.shutdownState
+	p.shutdownMu.Unlock()
+	if state == 2 {
+		t.Fatal("shutdown marked complete after indexer wait timeout")
+	}
+
+	close(embedGate)
+	waitCoordinatorIdle(t, p)
+
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatalf("second Shutdown: %v", err)
+	}
+	p.shutdownMu.Lock()
+	state = p.shutdownState
+	p.shutdownMu.Unlock()
+	if state != 2 {
+		t.Fatalf("shutdownState=%d want 2 after successful retry", state)
+	}
+	if tracking.closeCalls != 1 {
+		t.Fatalf("closeCalls=%d want 1", tracking.closeCalls)
+	}
+}
+
+type closeTrackingZvec struct {
+	mockZvecStore
+	closeCalls int
+}
+
+func (s *closeTrackingZvec) Close() error {
+	s.closeCalls++
+	return s.mockZvecStore.Close()
 }
 
 func TestSemanticSearchNegativeLimit(t *testing.T) {

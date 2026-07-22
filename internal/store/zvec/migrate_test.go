@@ -21,6 +21,7 @@ func (s *wipeTrackingStore) Close() error { return nil }
 func (s *wipeTrackingStore) DocCount() (int, error) {
 	return 0, nil
 }
+func (s *wipeTrackingStore) DocIDsPresent([]string) (bool, error)    { return true, nil }
 func (s *wipeTrackingStore) UpsertChunks([]Chunk, [][]float32) error { return nil }
 func (s *wipeTrackingStore) DeleteByIDs([]string) error              { return nil }
 func (s *wipeTrackingStore) Search([]float32, int, string) ([]SearchHit, error) {

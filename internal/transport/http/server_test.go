@@ -167,6 +167,14 @@ func (failingService) SemanticSearch(context.Context, service.SearchRequest) (js
 	return nil, errors.New("search failed")
 }
 
+type internalSearchErrorService struct {
+	service.Service
+}
+
+func (internalSearchErrorService) SemanticSearch(context.Context, service.SearchRequest) (json.RawMessage, error) {
+	return nil, service.ErrInternalSearch
+}
+
 func (failingService) GetIndexStatus(context.Context) (json.RawMessage, error) {
 	return nil, errors.New("status failed")
 }
@@ -319,6 +327,20 @@ func TestHandlerServiceErrors(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusInternalServerError {
 			t.Fatalf("status=%d", rec.Code)
+		}
+	})
+
+	t.Run("search internal error", func(t *testing.T) {
+		srv := New(settings, internalSearchErrorService{Service: service.NewStub(settings)})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/search", bytes.NewReader([]byte(`{"query":"x"}`)))
+		req.Header.Set("Content-Type", "application/json")
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "panic") {
+			t.Fatalf("unexpected panic text: %s", rec.Body.String())
 		}
 	})
 
@@ -739,4 +761,44 @@ func TestHandleReindexChunkedBody(t *testing.T) {
 	if !cap.called || !cap.force {
 		t.Fatalf("called=%v force=%v", cap.called, cap.force)
 	}
+}
+
+func TestHandlerJSONBodyStrict(t *testing.T) {
+	settings := testSettings()
+	srv := New(settings, service.NewStub(settings))
+	handler := srv.Handler()
+
+	t.Run("trailing json object", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(`{"query":"x"}{"query":"y"}`))
+		req.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "unexpected trailing JSON") {
+			t.Fatalf("body=%s", rec.Body.String())
+		}
+	})
+
+	t.Run("trailing garbage", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader(`{"query":"x"}garbage`))
+		req.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("body too large", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		body := strings.NewReader(`{"query":"` + strings.Repeat("a", 1<<20) + `"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/search", body)
+		req.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
 }

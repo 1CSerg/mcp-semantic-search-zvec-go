@@ -34,6 +34,12 @@ func Load() (*Settings, error) {
 	workspace := ResolveWorkspaceRoot(os.Getenv("WORKSPACE_ROOT"))
 	workspaceID := envOr("WORKSPACE_ID", workspace)
 
+	if err := loadDotEnvCandidates(workspace, filepath.Join(workspace, DefaultInstallDirName, "config.yaml")); err != nil {
+		return nil, err
+	}
+
+	workspace = ResolveWorkspaceRoot(envOr("WORKSPACE_ROOT", workspace))
+
 	indexRaw := envOr("INDEX_DIR", filepath.Join(workspace, DefaultInstallDirName, DefaultIndexSubdir))
 	indexDir, err := absPath(indexRaw, workspace)
 	if err != nil {
@@ -43,10 +49,6 @@ func Load() (*Settings, error) {
 	configRaw := envOr("CONFIG_PATH", filepath.Join(workspace, DefaultInstallDirName, "config.yaml"))
 	configPath, err := absPath(configRaw, workspace)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := loadDotEnvCandidates(workspace, configPath); err != nil {
 		return nil, err
 	}
 
@@ -170,13 +172,13 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 
 func dotEnvCandidatePaths(workspace, configPath, envPath string) []string {
 	var paths []string
-	if envPath != "" {
-		paths = append(paths, envPath)
-	}
 	if configPath != "" {
 		paths = append(paths, filepath.Join(filepath.Dir(configPath), ".env"))
 	}
 	paths = append(paths, filepath.Join(workspace, DefaultInstallDirName, ".env"))
+	if envPath != "" {
+		paths = append(paths, envPath)
+	}
 	return paths
 }
 
@@ -186,9 +188,7 @@ func mergeDotEnvIntoMap(secrets map[string]string, paths []string) error {
 		return err
 	}
 	for k, v := range parsed {
-		if _, exists := secrets[k]; !exists {
-			secrets[k] = v
-		}
+		secrets[k] = v
 	}
 	return nil
 }

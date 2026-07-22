@@ -23,7 +23,36 @@ echo "Installing mcp-semantic-search-zvec-go v${VERSION} into ${INSTALL_DIR}"
 
 copy_runtime_libs() {
   local bin_dir="$1"
+  local install_version="$2"
   local repo_bin="$REPO_ROOT/bin"
+  local zvec_tag
+  zvec_tag="$(grep 'github.com/zvec-ai/zvec-go' "$REPO_ROOT/go.mod" | awk '{print $2}')"
+  if [[ -z "$zvec_tag" ]]; then
+    zvec_tag="v0.6.0"
+  fi
+  local runtime_marker="$bin_dir/.install-runtime-version"
+  local expected_marker="${install_version}:${zvec_tag}"
+  local need_refresh=1
+  local lib_present=0
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) [[ -f "$bin_dir/zvec_c_api.dll" ]] && lib_present=1 ;;
+    Linux*) [[ -f "$bin_dir/libzvec_c_api.so" ]] && lib_present=1 ;;
+    Darwin*) [[ -f "$bin_dir/libzvec_c_api.dylib" ]] && lib_present=1 ;;
+  esac
+  if [[ -f "$runtime_marker" && "$lib_present" -eq 1 ]]; then
+    marked="$(tr -d '\r\n' < "$runtime_marker")"
+    if [[ "$marked" == "$expected_marker" ]]; then
+      need_refresh=0
+    fi
+  fi
+  if [[ "$need_refresh" -eq 0 ]]; then
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*) [[ -f "$bin_dir/onnxruntime.dll" ]] && return 0 ;;
+      Linux*) [[ -f "$bin_dir/libonnxruntime.so" || -f "$bin_dir/onnxruntime.dll" ]] && return 0 ;;
+      Darwin*) [[ -f "$bin_dir/libonnxruntime.dylib" || -f "$bin_dir/onnxruntime.dll" ]] && return 0 ;;
+    esac
+  fi
+
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
       for f in zvec_c_api.dll onnxruntime.dll; do
@@ -65,6 +94,8 @@ copy_runtime_libs() {
     . "$REPO_ROOT/.deps/onnxruntime.env"
     cp -f "$ONNXRUNTIME_SHARED_LIBRARY_PATH" "$bin_dir/" 2>/dev/null || true
   fi
+
+  printf '%s' "$expected_marker" > "$runtime_marker"
 }
 
 mkdir -p "$BIN_DIR" "$INSTALL_DIR/data/index" "$INSTALL_DIR/data/logs" "$INSTALL_DIR/models"
@@ -119,7 +150,7 @@ else
       go build -tags "zvec,onnx,treesitter" -o "$DST_BIN" ./cmd/mcp-semantic-search-zvec-go
   )
 fi
-copy_runtime_libs "$BIN_DIR"
+copy_runtime_libs "$BIN_DIR" "$VERSION"
 
 printf '%s\n' "$(cd "$TARGET_ROOT" && pwd)" > "$BIN_DIR/workspace-root.txt"
 

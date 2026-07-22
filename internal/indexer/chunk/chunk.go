@@ -2,13 +2,12 @@ package chunk
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/docid"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
 
@@ -123,11 +122,36 @@ func normalizeLineEndings(content []byte) []byte {
 	return bytes.ReplaceAll(content, []byte("\r"), []byte("\n"))
 }
 
-// DocID derives a stable document id including symbol name for AST chunks.
-func DocID(relativePath string, startLine, endLine int64, symbolName string) string {
-	raw := fmt.Sprintf("%s:%d:%d:%s", relativePath, startLine, endLine, symbolName)
-	sum := sha256.Sum256([]byte(raw))
-	return "doc_" + hex.EncodeToString(sum[:])[:16]
+// DocIDParams mirrors docid.Params for callers in the chunk package.
+type DocIDParams = docid.Params
+
+// DocID derives a stable unique document id (chunking v2).
+func DocID(p DocIDParams) string {
+	return docid.Make(p)
+}
+
+// DocIDForChunk assigns a v2 doc id using chunk fields and a per-file ordinal.
+func DocIDForChunk(ch *zvec.Chunk, ordinal int) string {
+	if ch == nil {
+		return ""
+	}
+	return docid.Make(docid.Params{
+		RelativePath:  ch.RelativePath,
+		StartLine:     ch.StartLine,
+		EndLine:       ch.EndLine,
+		StartByte:     ch.StartByte,
+		EndByte:       ch.EndByte,
+		ChunkIndex:    ordinal,
+		ChunkStrategy: ch.ChunkStrategy,
+		ChunkType:     ch.ChunkType,
+		SymbolName:    ch.SymbolName,
+		Snippet:       ch.Snippet,
+	})
+}
+
+// AssertUniqueDocIDs fails when ids contains duplicates or empty values.
+func AssertUniqueDocIDs(ids []string) error {
+	return docid.AssertUnique(ids)
 }
 
 func chunkTypeForPath(rel string) string {
@@ -163,7 +187,6 @@ func chunkFromLineWindow(rel string, lines []string, startLine int64, meta Slide
 	}
 	symbolName := meta.SymbolName
 	return &zvec.Chunk{
-		DocID:         DocID(rel, startLine, endLine, symbolName),
 		RelativePath:  filepath.ToSlash(rel),
 		StartLine:     startLine,
 		EndLine:       endLine,
