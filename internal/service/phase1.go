@@ -785,11 +785,12 @@ func (p *Phase1) waitSearches(ctx context.Context) error {
 		// well past the deadline (large collection, slow disk). Blocking would
 		// hang Shutdown indefinitely and defeat the point of the timeout.
 		//
-		// The Wait() goroutine above is not leaked: Shutdown runs under
-		// shutdownOnce (so waitSearches is invoked at most once), and once
-		// stopAcceptingSearches ran no new searches register on searchWG, so the
-		// remaining in-flight searches will eventually finish and the goroutine
-		// will exit on its own.
+		// On timeout the Wait() goroutine above may outlive this call until
+		// in-flight searches finish (stopAcceptingSearches already ran, so no
+		// new work joins searchWG). That is intentional: Shutdown uses a
+		// retryable shutdownState machine (running → closing → closed), not
+		// sync.Once, so a later Shutdown retry may call waitSearches again
+		// while the previous Wait goroutine is still draining.
 		return ctx.Err()
 	}
 }

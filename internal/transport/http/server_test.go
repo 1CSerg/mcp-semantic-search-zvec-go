@@ -791,9 +791,25 @@ func TestHandlerJSONBodyStrict(t *testing.T) {
 		}
 	})
 
+	t.Run("trailing whitespace", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/search", strings.NewReader("{\"query\":\"x\"}  \n\t"))
+		req.Header.Set("Content-Type", "application/json")
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
 	t.Run("body too large", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		body := strings.NewReader(`{"query":"` + strings.Repeat("a", 1<<20) + `"}`)
+		// MaxBytesReader limit is 1<<20; send a valid JSON body of exactly limit+1
+		// bytes so Decode must read past the limit (raw garbage fails earlier).
+		const limit = 1 << 20
+		prefix := `{"query":"`
+		suffix := `"}`
+		pad := limit + 1 - len(prefix) - len(suffix)
+		body := strings.NewReader(prefix + strings.Repeat("a", pad) + suffix)
 		req := httptest.NewRequest(http.MethodPost, "/v1/search", body)
 		req.Header.Set("Content-Type", "application/json")
 		handler.ServeHTTP(rec, req)

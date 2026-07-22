@@ -366,9 +366,6 @@ func (s *CollectionStore) searchWithGlobExpansion(vector []float32, topK int, pa
 		return nil, nil
 	}
 	queryTopK := topK
-	if queryTopK < topK {
-		queryTopK = topK
-	}
 	var hits []SearchHit
 	for len(hits) < topK && queryTopK <= docCount {
 		results, qErr := s.queryLocked(vector, queryTopK)

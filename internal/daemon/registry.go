@@ -54,13 +54,15 @@ type Registry struct {
 	closeCtx    context.Context
 	closeCancel context.CancelFunc
 
-	mu                sync.Mutex
-	open              map[string]*workspaceHandle
-	opening           map[string]*openWait
-	closing           bool
-	discards          int
-	closeDrainTimeout time.Duration
-	openingNotify     func(workspaceID string)
+	mu                  sync.Mutex
+	open                map[string]*workspaceHandle
+	opening             map[string]*openWait
+	closing             bool
+	discards            int
+	runtimeShutdownDone bool
+	closeDrainTimeout   time.Duration
+	openingNotify       func(workspaceID string)
+	onRuntimeShutdown   func() // test hook; called once after CloseResources + ShutdownRuntime
 }
 
 // NewRegistry creates a workspace registry from daemon config.
@@ -352,6 +354,7 @@ func (r *Registry) discardHandle(h *workspaceHandle) {
 		r.mu.Lock()
 		r.discards--
 		r.mu.Unlock()
+		r.tryShutdownRuntimeAfterDrain()
 	}()
 	if h.cancel != nil {
 		h.cancel()
@@ -370,6 +373,28 @@ func (r *Registry) discardHandle(h *workspaceHandle) {
 				Dimensions:    profile.Dimensions,
 			})
 		}
+	}
+}
+
+// tryShutdownRuntimeAfterDrain runs global runtime teardown once the registry is
+// closing and every open/opening/borrow/discard has drained. Safe if Close already
+// shut down (runtimeShutdownDone + idempotent CloseResources/ShutdownRuntime).
+func (r *Registry) tryShutdownRuntimeAfterDrain() {
+	r.mu.Lock()
+	if !r.closing || r.runtimeShutdownDone ||
+		len(r.open) != 0 || len(r.opening) != 0 ||
+		r.discards != 0 || r.hasBusyHandlesLocked() {
+		r.mu.Unlock()
+		return
+	}
+	r.runtimeShutdownDone = true
+	hook := r.onRuntimeShutdown
+	r.mu.Unlock()
+
+	chunk.CloseResources()
+	zvec.ShutdownRuntime()
+	if hook != nil {
+		hook()
 	}
 }
 
@@ -448,8 +473,7 @@ func (r *Registry) Close() {
 		slog.Warn("registry close: skipping zvec runtime shutdown while borrows or cold-open remain")
 		return
 	}
-	chunk.CloseResources()
-	zvec.ShutdownRuntime()
+	r.tryShutdownRuntimeAfterDrain()
 }
 
 func (r *Registry) hasBusyHandles() bool {

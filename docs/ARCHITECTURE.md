@@ -70,7 +70,7 @@ One long-running HTTP server serves multiple workspaces via `workspace_id`.
 
 When `max_open_workspaces` is exceeded, LRU evicts idle handles from the map, then **`discardHandle` runs asynchronously** (cancel workspace ctx → `Phase1.Close()`). A `discards` counter tracks in-flight evictions.
 
-`Close()` sets `closing`, cancels the registry context, drains borrows, cold-opens, and **async evictions** (`discards`) (default 30 s), then closes remaining idle handles and shuts down the zvec runtime. While closing, new `BorrowService` calls return `ErrRegistryClosing` → HTTP **503** `registry is closing`.
+`Close()` sets `closing`, cancels the registry context, drains borrows, cold-opens, and **async evictions** (`discards`) (default 30 s), then closes remaining idle handles and shuts down the zvec runtime. If `Close` skips runtime shutdown because borrows remain, global teardown (`chunk.CloseResources` + `zvec.ShutdownRuntime`) runs after the last late `release` drains through `discardHandle`. While closing, new `BorrowService` calls return `ErrRegistryClosing` → HTTP **503** `registry is closing`.
 
 ## Package layout
 

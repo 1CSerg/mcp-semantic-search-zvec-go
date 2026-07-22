@@ -544,6 +544,9 @@ func TestRegistryCloseSkipsShutdownWithHeldBorrow(t *testing.T) {
 	r := NewRegistry(cfg, t.Context())
 	r.closeDrainTimeout = 100 * time.Millisecond
 
+	var shutdownCalls atomicInt
+	r.onRuntimeShutdown = func() { shutdownCalls.Add(1) }
+
 	_, release, err := r.BorrowService("ws")
 	if err != nil {
 		t.Fatal(err)
@@ -567,9 +570,13 @@ func TestRegistryCloseSkipsShutdownWithHeldBorrow(t *testing.T) {
 	if h != nil {
 		refs = h.refs
 	}
+	shutdownDone := r.runtimeShutdownDone
 	r.mu.Unlock()
 	if refs != 1 {
 		t.Fatalf("refs=%d want 1 after Close with held borrow", refs)
+	}
+	if shutdownDone || shutdownCalls.Load() != 0 {
+		t.Fatal("runtime shutdown ran while borrow still held")
 	}
 	release()
 
@@ -578,8 +585,9 @@ func TestRegistryCloseSkipsShutdownWithHeldBorrow(t *testing.T) {
 		r.mu.Lock()
 		_, open := r.open["ws"]
 		discards := r.discards
+		doneShutdown := r.runtimeShutdownDone
 		r.mu.Unlock()
-		if !open && discards == 0 {
+		if !open && discards == 0 && doneShutdown {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -593,7 +601,129 @@ func TestRegistryCloseSkipsShutdownWithHeldBorrow(t *testing.T) {
 		r.mu.Unlock()
 		t.Fatalf("discards=%d want 0 after async discard finished", r.discards)
 	}
+	if !r.runtimeShutdownDone {
+		r.mu.Unlock()
+		t.Fatal("runtime shutdown did not run after late release drained")
+	}
 	r.mu.Unlock()
+	if got := shutdownCalls.Load(); got != 1 {
+		t.Fatalf("onRuntimeShutdown calls=%d want 1", got)
+	}
+}
+
+func TestRegistryDeferredShutdownAfterLastOfMultipleBorrows(t *testing.T) {
+	dir := t.TempDir()
+	rootA := filepath.Join(dir, "a")
+	rootB := filepath.Join(dir, "b")
+	for _, root := range []string{rootA, rootB} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeWorkspaceConfig(t, root)
+	}
+	cfg := Config{
+		MaxOpenWorkspaces: 2,
+		Workspaces: []WorkspaceSpec{
+			{ID: "ws-a", Root: rootA},
+			{ID: "ws-b", Root: rootB},
+		},
+	}
+	if err := normalizeConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRegistry(cfg, t.Context())
+	r.closeDrainTimeout = 100 * time.Millisecond
+
+	var shutdownCalls atomicInt
+	r.onRuntimeShutdown = func() { shutdownCalls.Add(1) }
+
+	_, releaseA, err := r.BorrowService("ws-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, releaseB, err := r.BorrowService("ws-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		r.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close blocked longer than drain timeout")
+	}
+	if shutdownCalls.Load() != 0 {
+		t.Fatal("runtime shutdown ran while borrows still held")
+	}
+
+	releaseA()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		_, openA := r.open["ws-a"]
+		discards := r.discards
+		r.mu.Unlock()
+		if !openA && discards == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	r.mu.Lock()
+	_, openB := r.open["ws-b"]
+	shutdownDone := r.runtimeShutdownDone
+	r.mu.Unlock()
+	if !openB {
+		t.Fatal("ws-b should remain open until its borrow is released")
+	}
+	if shutdownDone || shutdownCalls.Load() != 0 {
+		t.Fatal("runtime shutdown ran before the last discard")
+	}
+
+	releaseB()
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		openCount := len(r.open)
+		discards := r.discards
+		doneShutdown := r.runtimeShutdownDone
+		r.mu.Unlock()
+		if openCount == 0 && discards == 0 && doneShutdown {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	r.mu.Lock()
+	openCount := len(r.open)
+	discards := r.discards
+	doneShutdown := r.runtimeShutdownDone
+	r.mu.Unlock()
+	if openCount != 0 || discards != 0 || !doneShutdown {
+		t.Fatalf("after last release: open=%d discards=%d shutdownDone=%v", openCount, discards, doneShutdown)
+	}
+	if got := shutdownCalls.Load(); got != 1 {
+		t.Fatalf("onRuntimeShutdown calls=%d want 1", got)
+	}
+}
+
+// atomicInt is a tiny test helper to avoid importing sync/atomic in older style.
+type atomicInt struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (a *atomicInt) Add(delta int) {
+	a.mu.Lock()
+	a.n += delta
+	a.mu.Unlock()
+}
+
+func (a *atomicInt) Load() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.n
 }
 
 func TestRegistryReleaseDoubleRelease(t *testing.T) {
