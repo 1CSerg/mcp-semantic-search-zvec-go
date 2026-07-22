@@ -6,6 +6,7 @@
 
 - Fix: align `internal/version/version.go` `Version` with git tag `v0.3.0` (release workflow gate).
 - Fix: revert zvec-go pin to published tag `v0.5.1` (premature `v0.6.0` was not released upstream).
+- Change: drop GitHub Release `darwin/amd64` (Intel Mac); zvec-go v0.5.1 ships prebuilts for Apple Silicon only; `macos-13` runner retired Dec 2025.
 
 ## v0.2.0
 

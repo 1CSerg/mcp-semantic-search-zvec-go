@@ -42,9 +42,7 @@ jobs:
           - goos: windows
             goarch: amd64
             runner: windows-latest
-          - goos: darwin
-            goarch: amd64
-            runner: macos-13
+          # macOS release is arm64-only (zvec-go prebuilts; macos-13 retired).
           - goos: darwin
             goarch: arm64
             runner: macos-14
@@ -169,8 +167,8 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           count="$(gh release view "$tag" --json assets -q '.assets | length')"
           echo "Release assets: $count"
-          if [ "$count" -lt 5 ]; then
-            echo "Expected 5 platform archives, got $count"
+          if [ "$count" -lt 4 ]; then
+            echo "Expected 4 platform archives, got $count"
             exit 1
           fi
           gh release edit "$tag" --draft=false
