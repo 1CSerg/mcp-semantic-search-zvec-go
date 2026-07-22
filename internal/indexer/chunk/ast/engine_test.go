@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/docid"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 
@@ -503,6 +504,65 @@ func TestModuleLevelAssignmentFilter(t *testing.T) {
 		}
 	}
 	walk(tree.RootNode())
+}
+
+func TestASTSameLineMultiSymbolDocIDsUnique(t *testing.T) {
+	// Tiny budget forces partial line windows over a long single-line body.
+	long := []byte("package p\n\nfunc Mega() { " + strings.Repeat("x++; ", 80) + "}\n")
+	var chunks []zvec.Chunk
+	err := ChunkGo("same_line.go", long, Config{
+		MinChunkTokens:   1,
+		MaxInputTokens:   20,
+		EmbedBudgetRatio: 1.0,
+		WindowLines:      1,
+		OverlapLines:     0,
+	}, token.CharCounter{}, func(ch *zvec.Chunk) error {
+		if ch != nil {
+			chunks = append(chunks, *ch)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChunkGo: %v", err)
+	}
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple partial chunks, got %d", len(chunks))
+	}
+	ids := make([]string, 0, len(chunks))
+	for i, ch := range chunks {
+		if ch.StartByte == 0 && ch.EndByte == 0 {
+			t.Fatalf("chunk %d missing byte offsets: %+v", i, ch)
+		}
+		ids = append(ids, docid.Make(docid.Params{
+			RelativePath:  ch.RelativePath,
+			StartLine:     ch.StartLine,
+			EndLine:       ch.EndLine,
+			StartByte:     ch.StartByte,
+			EndByte:       ch.EndByte,
+			ChunkIndex:    i + 1,
+			ChunkStrategy: ch.ChunkStrategy,
+			ChunkType:     ch.ChunkType,
+			SymbolName:    ch.SymbolName,
+			Snippet:       ch.Snippet,
+		}))
+	}
+	if err := docid.AssertUnique(ids); err != nil {
+		t.Fatal(err)
+	}
+	sameLine := 0
+	for i := 0; i < len(chunks); i++ {
+		for j := i + 1; j < len(chunks); j++ {
+			if chunks[i].StartLine == chunks[j].StartLine {
+				sameLine++
+				if chunks[i].StartByte == chunks[j].StartByte && chunks[i].EndByte == chunks[j].EndByte {
+					t.Fatalf("same-line chunks share byte range: %+v vs %+v", chunks[i], chunks[j])
+				}
+			}
+		}
+	}
+	if sameLine == 0 {
+		t.Fatal("expected at least one same-line chunk pair from partial windows")
+	}
 }
 
 func TestPackageScopeEmpty(t *testing.T) {

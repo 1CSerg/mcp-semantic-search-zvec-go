@@ -50,6 +50,11 @@ type Coordinator struct {
 	curProgress  Progress
 	lifecycleCtx context.Context
 	zvecCloseMu  sync.Mutex
+
+	// forceStagingOpen, when set, replaces zvec.New+Open for force staging (tests).
+	forceStagingOpen func(cfg zvec.Config) (zvec.Store, error)
+	// forcePromoteStaging, when set, replaces filesystem promote for force staging (tests).
+	forcePromoteStaging func(staging zvec.Store) error
 }
 
 // NewCoordinator creates an indexing coordinator.
@@ -285,6 +290,12 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	if err != nil {
 		return 0, 0, 0, err
 	}
+	manClose := true
+	defer func() {
+		if manClose {
+			_ = manStore.Close()
+		}
+	}()
 
 	cleanupJournal, err := manifest.OpenCleanupJournal(c.Settings.IndexDir)
 	if err != nil {
@@ -292,14 +303,21 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	}
 	c.reconcileCleanupJournal(cleanupJournal)
 
-	var zvecTarget zvec.Store = c.Zvec
+	var zvecTarget = c.Zvec
 	var stagingStore zvec.Store
 	useStaging := false
 	if force {
 		stagingCfg := c.ZvecCfg
 		stagingCfg.CollectionSuffix = zvec.StagingCollectionSuffix
-		candidate := zvec.New(stagingCfg)
-		if err := candidate.Open(); err == nil {
+		var candidate zvec.Store
+		var openErr error
+		if c.forceStagingOpen != nil {
+			candidate, openErr = c.forceStagingOpen(stagingCfg)
+		} else {
+			candidate = zvec.New(stagingCfg)
+			openErr = candidate.Open()
+		}
+		if openErr == nil {
 			useStaging = true
 			stagingStore = candidate
 			if err := stagingStore.WipeCollection(); err != nil && !isZvecUnavailable(err) {
@@ -307,19 +325,21 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 			}
 			_ = zvec.DiscardStagingManifest(c.Settings.IndexDir)
 			_ = manStore.Close()
+			manClose = false
 			stagingMan, err := manifest.Open(zvec.StagingManifestPath(c.Settings.IndexDir))
 			if err != nil {
 				return 0, 0, 0, err
 			}
 			manStore = stagingMan
+			manClose = true
 			zvecTarget = stagingStore
 			defer func() {
 				if stagingStore != nil {
 					_ = stagingStore.Close()
 				}
 			}()
-		} else if !isZvecUnavailable(err) {
-			return 0, 0, 0, err
+		} else if !isZvecUnavailable(openErr) {
+			return 0, 0, 0, openErr
 		} else {
 			if err := c.Zvec.WipeCollection(); err != nil && !isZvecUnavailable(err) {
 				return 0, 0, 0, err
@@ -330,10 +350,15 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		}
 	}
 
-	defer func() { _ = manStore.Close() }()
-
 	promoteStaging := func() error {
 		if !useStaging {
+			return nil
+		}
+		if c.forcePromoteStaging != nil {
+			if err := c.forcePromoteStaging(stagingStore); err != nil {
+				_ = zvec.DiscardStagingManifest(c.Settings.IndexDir)
+				return err
+			}
 			return nil
 		}
 		if err := zvec.PromoteStagingCollection(c.ZvecCfg); err != nil {
@@ -471,6 +496,9 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		slog.Warn("manifest stats at finish failed", "err", statsErr)
 	}
 	if force {
+		// Close staging manifest before rename promote (required on Windows).
+		_ = manStore.Close()
+		manClose = false
 		if err := promoteStaging(); err != nil {
 			return filesFailed, finishFiles, finishChunks, err
 		}
@@ -558,6 +586,15 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		return nil
 	}
 
+	var stale []string
+	if old != nil && len(old.DocIDs) > 0 {
+		stale = staleDocIDs(old.DocIDs, newDocIDs)
+	}
+
+	// Commit manifest before journaling stale IDs. Journaling first is unsafe: a
+	// later manifest failure would leave still-live DocIDs in cleanup.jsonl, and
+	// reconcileCleanupJournal would delete vectors the committed manifest still
+	// references.
 	if err := manStore.Upsert(manifest.FileEntry{
 		RelativePath: rel,
 		MtimeNs:      info.ModTime().UnixNano(),
@@ -574,15 +611,19 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 		return fmt.Errorf("manifest upsert %s: %w", rel, err)
 	}
 
-	if old != nil && len(old.DocIDs) > 0 {
-		stale := staleDocIDs(old.DocIDs, newDocIDs)
-		if len(stale) > 0 {
-			if cleanup != nil {
-				_ = cleanup.Append(stale)
-			}
-			if err := deleteStaleVectorsFrom(zvecStore, stale); err != nil {
-				return err
-			}
+	if len(stale) > 0 && cleanup != nil {
+		if err := cleanup.Append(stale); err != nil {
+			// Manifest already points at newDocIDs — do not roll them back.
+			// Journal is crash insurance before delete; continue with best-effort
+			// stale removal so a transient journal failure does not leave orphans
+			// permanently (next incremental pass may skip an unchanged file).
+			slog.Warn("cleanup journal append failed; deleting stale without journal", "path", rel, "err", err)
+		}
+	}
+
+	if len(stale) > 0 {
+		if err := deleteStaleVectorsFrom(zvecStore, stale); err != nil {
+			return err
 		}
 	}
 	return nil

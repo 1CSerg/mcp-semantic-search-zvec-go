@@ -15,4 +15,10 @@ func TestPartialWriteOutcome(t *testing.T) {
 	if partial {
 		t.Fatal("expected non-partial")
 	}
+
+	flushErr := &FlushWriteError{Op: "upsert", Succeeded: []string{"x", "y"}, Cause: errors.New("flush")}
+	ids, partial = PartialWriteOutcome(flushErr)
+	if !partial || len(ids) != 2 || ids[0] != "x" {
+		t.Fatalf("flush partial=%v ids=%v", partial, ids)
+	}
 }

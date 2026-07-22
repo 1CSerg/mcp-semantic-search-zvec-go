@@ -28,6 +28,8 @@ type CollectionStore struct {
 	readOnly   bool
 	collection string
 	path       string
+	// closeHook, when set, replaces col.Close (tests).
+	closeHook func() error
 }
 
 // New creates a zvec-backed store.
@@ -62,16 +64,26 @@ func (s *CollectionStore) IsOpen() bool {
 func (s *CollectionStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.col == nil {
+	if s.col == nil && s.closeHook == nil {
 		s.open = false
 		return nil
 	}
-	if closeErr := s.col.Close(); closeErr != nil {
+	if closeErr := s.closeCollectionLocked(); closeErr != nil {
 		return closeErr
 	}
 	s.col = nil
 	s.open = false
 	return nil
+}
+
+func (s *CollectionStore) closeCollectionLocked() error {
+	if s.closeHook != nil {
+		return s.closeHook()
+	}
+	if s.col == nil {
+		return nil
+	}
+	return s.col.Close()
 }
 
 // DocCount returns the number of documents in the collection.
@@ -170,13 +182,15 @@ func (s *CollectionStore) UpsertChunks(chunks []Chunk, vectors [][]float32) erro
 	if err != nil {
 		return err
 	}
-	succeeded := docIDsFromChunks(chunks, wr.SuccessCount)
-	if wr.ErrorCount > 0 {
+	successCount := clampUint64ToInt(wr.SuccessCount)
+	errorCount := clampUint64ToInt(wr.ErrorCount)
+	succeeded := docIDsFromChunks(chunks, successCount)
+	if errorCount > 0 {
 		return &PartialWriteError{
 			Op:        "upsert",
 			Succeeded: succeeded,
-			Failed:    wr.ErrorCount,
-			Cause:     fmt.Errorf("upsert: %d errors (success %d)", wr.ErrorCount, wr.SuccessCount),
+			Failed:    errorCount,
+			Cause:     fmt.Errorf("upsert: %d errors (success %d)", errorCount, successCount),
 		}
 	}
 	if flushErr := s.col.Flush(); flushErr != nil {
@@ -202,20 +216,22 @@ func (s *CollectionStore) DeleteByIDs(ids []string) error {
 	if err != nil {
 		return err
 	}
+	successCount := clampUint64ToInt(wr.SuccessCount)
+	errorCount := clampUint64ToInt(wr.ErrorCount)
 	succeeded := ids[:0]
-	if wr.SuccessCount > 0 {
-		if wr.SuccessCount >= len(ids) {
+	if successCount > 0 {
+		if successCount >= len(ids) {
 			succeeded = append(succeeded, ids...)
 		} else {
-			succeeded = append(succeeded, ids[:wr.SuccessCount]...)
+			succeeded = append(succeeded, ids[:successCount]...)
 		}
 	}
-	if wr.ErrorCount > 0 {
+	if errorCount > 0 {
 		return &PartialWriteError{
 			Op:        "delete",
 			Succeeded: succeeded,
-			Failed:    wr.ErrorCount,
-			Cause:     fmt.Errorf("delete: %d errors (success %d)", wr.ErrorCount, wr.SuccessCount),
+			Failed:    errorCount,
+			Cause:     fmt.Errorf("delete: %d errors (success %d)", errorCount, successCount),
 		}
 	}
 	if flushErr := s.col.Flush(); flushErr != nil {
@@ -292,8 +308,8 @@ func (s *CollectionStore) Search(vector []float32, topK int, pathGlob string) ([
 func (s *CollectionStore) WipeCollection() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.col != nil {
-		if err := s.col.Close(); err != nil {
+	if s.col != nil || s.closeHook != nil {
+		if err := s.closeCollectionLocked(); err != nil {
 			return fmt.Errorf("close before wipe: %w", err)
 		}
 		s.col = nil
@@ -324,6 +340,18 @@ func docIDsFromChunks(chunks []Chunk, successCount int) []string {
 	return out
 }
 
+func clampUint64ToInt(n uint64) int {
+	const maxInt = int(^uint(0) >> 1)
+	if n > uint64(maxInt) {
+		return maxInt
+	}
+	return int(n)
+}
+
+// searchWithGlobExpansion filters hits in Go after querying with an expanded topK.
+// Native SearchQuery.SetFilter is not used: path_glob supports ** / nested globs whose
+// semantics are implemented by matchPathGlob; expanding topK until enough matches
+// (or the collection is exhausted) preserves recall without a native glob filter API.
 func (s *CollectionStore) searchWithGlobExpansion(vector []float32, topK int, pathGlob string) ([]SearchHit, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -186,10 +186,14 @@ func chunkFromLineWindow(rel string, lines []string, startLine int64, meta Slide
 		strategy = "line_window"
 	}
 	symbolName := meta.SymbolName
+	startByte := meta.ContentStartByte
+	endByte := startByte + int64(len(snippet))
 	return &zvec.Chunk{
 		RelativePath:  filepath.ToSlash(rel),
 		StartLine:     startLine,
 		EndLine:       endLine,
+		StartByte:     startByte,
+		EndByte:       endByte,
 		ChunkType:     chunkTypeForPath(rel),
 		Name:          filepath.Base(rel),
 		Snippet:       snippet,

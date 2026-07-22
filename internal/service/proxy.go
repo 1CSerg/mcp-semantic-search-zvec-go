@@ -10,7 +10,11 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 )
+
+const defaultProxyHTTPTimeout = 660 * time.Second
 
 // HTTPProxy implements Service by forwarding requests to a shared daemon HTTP API.
 type HTTPProxy struct {
@@ -20,14 +24,27 @@ type HTTPProxy struct {
 	Client      *http.Client
 }
 
-// NewHTTPProxy creates an MCP stdio proxy client for daemon mode.
+// NewHTTPProxy creates an MCP stdio proxy client for daemon mode (660s timeout fallback).
 func NewHTTPProxy(baseURL, workspaceID, apiToken string) *HTTPProxy {
+	return NewHTTPProxyWithTimeout(baseURL, workspaceID, apiToken, 0)
+}
+
+// NewHTTPProxyForProfile sets the HTTP client timeout from config.EmbedHTTPBudget(profile).
+func NewHTTPProxyForProfile(baseURL, workspaceID, apiToken string, profile config.EmbeddingProfile) *HTTPProxy {
+	return NewHTTPProxyWithTimeout(baseURL, workspaceID, apiToken, config.EmbedHTTPBudget(profile))
+}
+
+// NewHTTPProxyWithTimeout creates a proxy with an explicit client timeout (0 → 660s fallback).
+func NewHTTPProxyWithTimeout(baseURL, workspaceID, apiToken string, timeout time.Duration) *HTTPProxy {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if timeout <= 0 {
+		timeout = defaultProxyHTTPTimeout
+	}
 	return &HTTPProxy{
 		BaseURL:     baseURL,
 		WorkspaceID: workspaceID,
 		APIToken:    apiToken,
-		Client:      &http.Client{Timeout: 660 * time.Second},
+		Client:      &http.Client{Timeout: timeout},
 	}
 }
 
@@ -144,7 +161,7 @@ func (p *HTTPProxy) client() *http.Client {
 	if p.Client != nil {
 		return p.Client
 	}
-	return &http.Client{Timeout: 660 * time.Second}
+	return &http.Client{Timeout: defaultProxyHTTPTimeout}
 }
 
 func urlQuery(v string) string {

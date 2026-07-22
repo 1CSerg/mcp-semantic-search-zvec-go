@@ -120,6 +120,20 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// SetQueryOnlyForTest toggles SQLite query_only so writes fail while reads still
+// work. Intended for coordinator regression tests only.
+func (s *Store) SetQueryOnlyForTest(on bool) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("manifest store is nil")
+	}
+	val := "OFF"
+	if on {
+		val = "ON"
+	}
+	_, err := s.db.Exec(`PRAGMA query_only = ` + val)
+	return err
+}
+
 // FileEntry is one manifest row.
 type FileEntry struct {
 	RelativePath string

@@ -320,13 +320,16 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 	chunkScope := e.partialParentScope(scope, node, parent)
 	budget := e.cfg.bodyBudget(e.counter, e.rel, budgetScope)
 	if e.counter.Count(tail) > budget {
-		lines := strings.Split(strings.TrimLeft(tail, "\n"), "\n")
+		trimmed := strings.TrimLeft(tail, "\n")
+		lines := strings.Split(trimmed, "\n")
+		contentStart := int64(tailStart) + int64(len(tail)-len(trimmed))
 		return emitPartialWindows(e.rel, lines, start, e.cfg, e.counter, partialMeta{
 			chunkStrategy: "partial",
 			symbolKind:    symbolKind,
 			symbolName:    symbolName,
 			parentScope:   chunkScope,
 			budgetScope:   budgetScope,
+			contentStart:  contentStart,
 		}, e.emit)
 	}
 	end := int64(node.EndPosition().Row) + 1
@@ -336,13 +339,17 @@ func (e *engine) emitTailAfterChildren(node *sitter.Node, scope Scope, parent *B
 			strategy = "partial"
 		}
 	}
+	snippet := strings.TrimLeft(tail, "\n")
+	startByte := int64(tailStart) + int64(len(tail)-len(snippet))
 	ch := &zvec.Chunk{
 		RelativePath:  e.rel,
 		StartLine:     start,
 		EndLine:       end,
+		StartByte:     startByte,
+		EndByte:       int64(node.EndByte()),
 		ChunkType:     "code",
 		Name:          filepath.Base(e.rel),
-		Snippet:       strings.TrimLeft(tail, "\n"),
+		Snippet:       snippet,
 		SymbolName:    symbolName,
 		SymbolKind:    symbolKind,
 		ParentScope:   chunkScope,
@@ -391,10 +398,12 @@ func (e *engine) emitPreambleBeforeFirstBoundary(node *sitter.Node, scope Scope)
 	parentScope := e.budgetParentScope(scope, node, nil)
 	budget := e.cfg.bodyBudget(e.counter, e.rel, parentScope)
 	if e.counter.Count(pre) > budget {
-		lines := strings.Split(strings.TrimRight(pre, "\n"), "\n")
+		trimmed := strings.TrimRight(pre, "\n")
+		lines := strings.Split(trimmed, "\n")
 		return emitPartialWindows(e.rel, lines, int64(node.StartPosition().Row)+1, e.cfg, e.counter, partialMeta{
 			chunkStrategy: "partial",
 			parentScope:   parentScope,
+			contentStart:  int64(node.StartByte()),
 		}, e.emit)
 	}
 	start := int64(node.StartPosition().Row) + 1
@@ -402,13 +411,16 @@ func (e *engine) emitPreambleBeforeFirstBoundary(node *sitter.Node, scope Scope)
 	if end < start {
 		end = start
 	}
+	snippet := strings.TrimRight(pre, "\n")
 	ch := &zvec.Chunk{
 		RelativePath:  e.rel,
 		StartLine:     start,
 		EndLine:       end,
+		StartByte:     int64(node.StartByte()),
+		EndByte:       int64(node.StartByte()) + int64(len(snippet)),
 		ChunkType:     "code",
 		Name:          filepath.Base(e.rel),
-		Snippet:       strings.TrimRight(pre, "\n"),
+		Snippet:       snippet,
 		SymbolName:    symbolNameFromText(pre),
 		SymbolKind:    "comment",
 		ParentScope:   scope.String(),
@@ -469,6 +481,7 @@ func (e *engine) flushBuffer(buffer *[]sitter.Node, scope Scope, parent *Boundar
 			symbolName:    symbolName,
 			parentScope:   e.partialParentScope(scope, &nodes[0], parent),
 			budgetScope:   parentScope,
+			contentStart:  int64(nodes[0].StartByte()),
 		}, e.emit)
 	}
 	symbolKind := symbolKindForBufferNodes(nodes, e.src)
@@ -527,6 +540,7 @@ func (e *engine) emitPartial(node *sitter.Node, scope Scope, parent *BoundaryMet
 		symbolName:    parentName,
 		parentScope:   e.partialParentScope(scope, node, parent),
 		budgetScope:   budgetScope,
+		contentStart:  int64(node.StartByte()),
 	}, e.emit)
 }
 
@@ -549,10 +563,14 @@ func (e *engine) chunkFromNodes(nodes []sitter.Node, scope Scope, symbolKind, sy
 			Captures: e.boundaries[nodes[0].Id()].Captures,
 		}, e.lang)
 	}
+	startByte := int64(nodes[0].StartByte())
+	endByte := int64(nodes[len(nodes)-1].EndByte())
 	return &zvec.Chunk{
 		RelativePath:  e.rel,
 		StartLine:     int64(start),
 		EndLine:       int64(end),
+		StartByte:     startByte,
+		EndByte:       endByte,
 		ChunkType:     "code",
 		Name:          filepath.Base(e.rel),
 		Snippet:       text,

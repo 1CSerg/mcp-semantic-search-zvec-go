@@ -347,10 +347,6 @@ func redactDaemonIndexingMap(idx map[string]any) {
 	}
 }
 
-func sanitizeDaemonStatusText(s string) string {
-	return redact.SanitizeErrorText(s)
-}
-
 func queryTruthy(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes":

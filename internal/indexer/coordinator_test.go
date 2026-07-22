@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
@@ -1499,5 +1500,373 @@ func TestCoordinatorPartialUpsertDoesNotCommitManifest(t *testing.T) {
 	}
 	if len(store.chunks) != 0 {
 		t.Fatalf("expected zvec rollback, got %d docs", len(store.chunks))
+	}
+}
+
+type flushFailZvec struct {
+	memZvec
+}
+
+func (s *flushFailZvec) UpsertChunks(chunks []zvec.Chunk, vectors [][]float32) error {
+	if err := s.memZvec.UpsertChunks(chunks, vectors); err != nil {
+		return err
+	}
+	ids := make([]string, len(chunks))
+	for i, ch := range chunks {
+		ids[i] = ch.DocID
+	}
+	return &zvec.FlushWriteError{Op: "upsert", Succeeded: ids, Cause: fmt.Errorf("flush failed")}
+}
+
+func TestCoordinatorFlushWriteErrorDoesNotCommitManifest(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "auth.go")
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Auth() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 1}
+	store := &flushFailZvec{memZvec: *newMemZvec()}
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+	if p := c.CurrentProgress(); p.State != StateError {
+		t.Fatalf("expected error state, got %+v", p)
+	}
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	if _, err := man.Get("pkg/auth.go"); err == nil {
+		t.Fatal("expected no manifest row after flush failure")
+	}
+	if len(store.chunks) != 0 {
+		t.Fatalf("expected zvec rollback after flush failure, got %d docs", len(store.chunks))
+	}
+}
+
+func TestCoordinatorForceReindexPreservesActiveOnEmbedFailure(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "keep.go")
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Keep() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 1}
+	active := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, active, cfg)
+	c.forceStagingOpen = func(zvec.Config) (zvec.Store, error) {
+		return newMemZvec(), nil
+	}
+	c.forcePromoteStaging = func(staging zvec.Store) error {
+		st, ok := staging.(*memZvec)
+		if !ok {
+			return fmt.Errorf("unexpected staging store %T", staging)
+		}
+		st.mu.Lock()
+		copied := make(map[string]zvec.Chunk, len(st.chunks))
+		for k, v := range st.chunks {
+			copied[k] = v
+		}
+		st.mu.Unlock()
+		active.mu.Lock()
+		active.chunks = copied
+		active.mu.Unlock()
+		return zvec.PromoteStagingManifest(indexDir)
+	}
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+	if p := c.CurrentProgress(); p.State != StateIdle {
+		t.Fatalf("first force reindex failed: %+v", p)
+	}
+	beforeCount, err := active.DocCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeCount == 0 {
+		t.Fatal("expected active index docs after first force reindex")
+	}
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := man.Get("pkg/keep.go")
+	_ = man.Close()
+	if err != nil {
+		t.Fatalf("manifest before failed force: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Keep() {}\nfunc Extra() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.Embed = &batchFailEmbedder{dims: 4, failAfter: 0}
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+	if p := c.CurrentProgress(); p.State != StateError {
+		t.Fatalf("expected failed force reindex, got %+v", p)
+	}
+	afterCount, err := active.DocCount()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterCount != beforeCount {
+		t.Fatalf("active docs changed after failed force: before=%d after=%d", beforeCount, afterCount)
+	}
+	present, err := active.DocIDsPresent(before.DocIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !present {
+		t.Fatal("active index doc ids missing after failed force reindex")
+	}
+	man, err = manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer man.Close()
+	after, err := man.Get("pkg/keep.go")
+	if err != nil {
+		t.Fatalf("active manifest missing after failed force: %v", err)
+	}
+	if after.MtimeNs != before.MtimeNs || len(after.DocIDs) != len(before.DocIDs) {
+		t.Fatalf("active manifest changed: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestCoordinatorJournalAppendFailureStillDeletesStale(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "file.go")
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc One() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 8}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := man.Get("pkg/file.go")
+	if err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+
+	cleanup, err := manifest.OpenCleanupJournal(indexDir)
+	if err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(indexDir, "cleanup.jsonl")
+	if err := os.Remove(journalPath); err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(journalPath, 0o755); err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(journalPath) })
+
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc One() {}\nfunc Two() {}\n"), 0o644); err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	if err := c.indexFile(context.Background(), man, "pkg/file.go", false, token.CharCounter{}, store, cleanup); err != nil {
+		_ = man.Close()
+		t.Fatalf("indexFile should succeed with direct stale delete after journal append failure: %v", err)
+	}
+
+	present, err := store.DocIDsPresent(before.DocIDs)
+	if err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	if present {
+		_ = man.Close()
+		t.Fatal("stale vectors must be deleted even when cleanup journal append fails")
+	}
+	after, err := man.Get("pkg/file.go")
+	_ = man.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MtimeNs == before.MtimeNs && len(after.DocIDs) == len(before.DocIDs) {
+		t.Fatalf("manifest must commit new DocIDs before journal append: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestCoordinatorManifestUpsertFailureDoesNotJournalDeleteLiveDocs(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "file.go")
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc One() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := &config.Settings{
+		WorkspaceRoot: root,
+		WorkspaceID:   "test-ws",
+		IndexDir:      indexDir,
+		App: config.AppConfig{
+			ActiveProfile: "test",
+			Indexing: config.IndexingConfig{
+				Extensions:       []string{".go"},
+				LockStaleSeconds: 300,
+			},
+		},
+	}
+	profile := config.EmbeddingProfile{Provider: "openai_compatible", Dimensions: 4, BatchSize: 8}
+	store := newMemZvec()
+	cfg := zvec.Config{IndexDir: indexDir, WorkspaceRoot: root, ProfileName: "test", Dimensions: 4}
+	c := NewCoordinator(settings, profile, &mockEmbedder{dims: 4}, store, cfg)
+	registerCoordinatorTestCleanup(t, c)
+
+	if _, err := c.Start(true); err != nil {
+		t.Fatal(err)
+	}
+	waitCoordinatorIdle(t, c)
+
+	man, err := manifest.Open(filepath.Join(indexDir, "manifest.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := man.Get("pkg/file.go")
+	if err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	if len(before.DocIDs) == 0 {
+		_ = man.Close()
+		t.Fatal("expected indexed DocIDs")
+	}
+
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc One() {}\nfunc Two() {}\n"), 0o644); err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	if err := man.SetQueryOnlyForTest(true); err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	cleanup, err := manifest.OpenCleanupJournal(indexDir)
+	if err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+
+	err = c.indexFile(context.Background(), man, "pkg/file.go", false, token.CharCounter{}, store, cleanup)
+	if err == nil {
+		_ = man.Close()
+		t.Fatal("expected manifest upsert failure")
+	}
+	if !strings.Contains(err.Error(), "manifest upsert") {
+		_ = man.Close()
+		t.Fatalf("expected manifest upsert error, got %v", err)
+	}
+
+	pending, err := cleanup.Pending()
+	if err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		_ = man.Close()
+		t.Fatalf("cleanup journal must stay empty on manifest failure, got %v", pending)
+	}
+
+	if err := man.SetQueryOnlyForTest(false); err != nil {
+		_ = man.Close()
+		t.Fatal(err)
+	}
+	after, err := man.Get("pkg/file.go")
+	_ = man.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.MtimeNs != before.MtimeNs || len(after.DocIDs) != len(before.DocIDs) {
+		t.Fatalf("committed manifest must retain live DocIDs: before=%+v after=%+v", before, after)
+	}
+
+	c.reconcileCleanupJournal(cleanup)
+	present, err := store.DocIDsPresent(before.DocIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !present {
+		t.Fatal("live DocIDs must survive manifest upsert failure and journal reconcile")
 	}
 }

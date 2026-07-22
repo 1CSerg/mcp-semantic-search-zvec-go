@@ -11,15 +11,16 @@ import (
 
 // SlideWindowMeta carries metadata for line-window emission (including partial AST fallback).
 type SlideWindowMeta struct {
-	Window        int
-	Overlap       int
-	ChunkStrategy string
-	SymbolKind    string
-	SymbolName    string
-	ParentScope   string
-	MaxTokens     int
-	Counter       token.TokenCounter
-	MinTokens     int
+	Window           int
+	Overlap          int
+	ChunkStrategy    string
+	SymbolKind       string
+	SymbolName       string
+	ParentScope      string
+	MaxTokens        int
+	Counter          token.TokenCounter
+	MinTokens        int
+	ContentStartByte int64 // absolute StartByte of allLines[0] (0 for whole-file windows)
 }
 
 // NormalizeWindowLines returns effective window and overlap sizes.
@@ -137,6 +138,15 @@ func SlideWindowEmit(rel string, allLines []string, startLineOffset int64, meta 
 	}
 	counter := meta.Counter
 	minTokens := meta.MinTokens
+	lineOffsets := make([]int64, len(allLines))
+	off := meta.ContentStartByte
+	for i, line := range allLines {
+		lineOffsets[i] = off
+		off += int64(len(line))
+		if i < len(allLines)-1 {
+			off++
+		}
+	}
 	for start := 0; start < len(allLines); {
 		end := start + window
 		if end > len(allLines) {
@@ -145,12 +155,14 @@ func SlideWindowEmit(rel string, allLines []string, startLineOffset int64, meta 
 		if start >= end {
 			break
 		}
+		windowMeta := meta
+		windowMeta.ContentStartByte = lineOffsets[start]
 		if counter != nil && meta.MaxTokens > 0 {
 			lo, hi := start+1, end
 			for lo < hi {
 				mid := lo + (hi-lo+1)/2
 				startLine := startLineOffset + int64(start)
-				ch := chunkFromLineWindow(rel, allLines[start:mid], startLine, meta)
+				ch := chunkFromLineWindow(rel, allLines[start:mid], startLine, windowMeta)
 				if ch != nil && counter.Count(ch.Snippet) > meta.MaxTokens {
 					hi = mid - 1
 				} else {
@@ -160,7 +172,7 @@ func SlideWindowEmit(rel string, allLines []string, startLineOffset int64, meta 
 			end = lo
 		}
 		startLine := startLineOffset + int64(start)
-		ch := chunkFromLineWindow(rel, allLines[start:end], startLine, meta)
+		ch := chunkFromLineWindow(rel, allLines[start:end], startLine, windowMeta)
 		if ch != nil {
 			if counter != nil && minTokens > 0 && counter.Count(ch.Snippet) < minTokens {
 				if end == len(allLines) {

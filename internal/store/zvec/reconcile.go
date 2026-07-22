@@ -1,12 +1,10 @@
 package zvec
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
@@ -50,21 +48,20 @@ func RemoveCollectionDir(indexDir, collectionName string) error {
 	return os.RemoveAll(filepath.Join(indexDir, "zvec", collectionName))
 }
 
-// ResetIndexForIdentityChange wipes stale collections and manifest, then writes fresh index_meta.
+// ResetIndexForIdentityChange prepares for a force rebuild after identity mismatch.
+// It writes fresh index_meta and removes an orphaned previous collection directory when the
+// collection name changed (workspace root / profile / dimensions move). It does not wipe the
+// still-serving same-name collection or clear the active manifest — force reindex rebuilds via
+// staging and promotes on success.
 func ResetIndexForIdentityChange(indexDir string, oldMeta *IndexMeta, store Store, newIdentity IndexIdentity) error {
 	if oldMeta == nil {
 		oldMeta = &IndexMeta{}
 	}
-	if err := RemoveCollectionDir(indexDir, oldMeta.CollectionName); err != nil {
-		return err
-	}
-	if store != nil {
-		if err := store.WipeCollection(); err != nil && !errors.Is(err, ErrNotLinked) {
+	newName := CollectionName(newIdentity.WorkspaceRoot, newIdentity.Profile, newIdentity.Dimensions)
+	if oldMeta.CollectionName != "" && oldMeta.CollectionName != newName {
+		if err := RemoveCollectionDir(indexDir, oldMeta.CollectionName); err != nil {
 			return err
 		}
-	}
-	if err := clearManifest(indexDir); err != nil {
-		return err
 	}
 	return WriteIndexMeta(indexDir, indexMetaFromIdentity(newIdentity, version.ZvecGoVersion))
 }
@@ -102,23 +99,4 @@ func ReconcileIndex(indexDir string, identity IndexIdentity, force bool, store S
 		return EnsureIndexMeta(indexDir, identity)
 	}
 	return nil
-}
-
-func clearManifest(indexDir string) error {
-	manifestPath := filepath.Join(indexDir, "manifest.db")
-	if _, err := os.Stat(manifestPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	manStore, err := manifest.Open(manifestPath)
-	if err != nil {
-		return err
-	}
-	if err := manStore.Clear(); err != nil {
-		_ = manStore.Close()
-		return err
-	}
-	return manStore.Close()
 }

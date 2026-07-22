@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const minimalConfigYAML = `active_profile: test
@@ -436,7 +437,7 @@ func TestApplyAppDefaultsChunking(t *testing.T) {
 	if app.Indexing.Chunking.MinChunkTokens != 10 {
 		t.Fatalf("min_chunk_tokens=%d", app.Indexing.Chunking.MinChunkTokens)
 	}
-	if app.Indexing.Chunking.Version != 2 {
+	if app.Indexing.Chunking.Version != 3 {
 		t.Fatalf("version=%d", app.Indexing.Chunking.Version)
 	}
 	if got := app.Profiles["onnx"].MaxInputTokens; got != 256 {
@@ -547,6 +548,31 @@ func TestApplyEnvOverridesIgnoresInvalidValues(t *testing.T) {
 	}
 	if app.Profiles["test"].MaxInputTokens != 512 {
 		t.Fatalf("max_input_tokens=%d", app.Profiles["test"].MaxInputTokens)
+	}
+}
+
+func TestEmbedHTTPBudget(t *testing.T) {
+	got := EmbedHTTPBudget(EmbeddingProfile{
+		TimeoutSeconds: 200,
+		MaxRetries:     3,
+		RetryBaseMS:    500,
+	})
+	want := 200*time.Second*3 + 500*time.Millisecond*2 + 30*time.Second
+	if got != want {
+		t.Fatalf("got %v want %v", got, want)
+	}
+
+	defaults := EmbedHTTPBudget(EmbeddingProfile{})
+	wantDefaults := 60*time.Second*time.Duration(DefaultEmbedMaxRetries) +
+		time.Duration(DefaultEmbedRetryBaseMS)*time.Millisecond*time.Duration(DefaultEmbedMaxRetries-1) +
+		30*time.Second
+	if defaults != wantDefaults {
+		t.Fatalf("defaults got %v want %v", defaults, wantDefaults)
+	}
+
+	single := EmbedHTTPBudget(EmbeddingProfile{TimeoutSeconds: 10, MaxRetries: 1, RetryBaseMS: 1000})
+	if single != 10*time.Second+30*time.Second {
+		t.Fatalf("single retry got %v", single)
 	}
 }
 

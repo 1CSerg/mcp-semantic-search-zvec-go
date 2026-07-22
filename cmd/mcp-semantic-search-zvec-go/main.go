@@ -369,6 +369,16 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 	return 0
 }
 
+func newStdioProxyService(daemonURL, workspaceID, apiToken string) *service.HTTPProxy {
+	settings, err := config.Load()
+	if err == nil {
+		if profile, perr := settings.ActiveProfile(); perr == nil {
+			return service.NewHTTPProxyForProfile(daemonURL, workspaceID, apiToken, profile)
+		}
+	}
+	return service.NewHTTPProxy(daemonURL, workspaceID, apiToken)
+}
+
 func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 	defer func() {
 		if r := recover(); r != nil {
@@ -384,7 +394,7 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 		daemonURL = "http://127.0.0.1:8080"
 	}
 	apiToken := os.Getenv("API_TOKEN")
-	svc := service.NewHTTPProxy(daemonURL, workspaceID, apiToken)
+	svc := newStdioProxyService(daemonURL, workspaceID, apiToken)
 	slog.Info("starting mcp stdio proxy", "version", version.Version, "workspace_id", workspaceID, "daemon_url", daemonURL)
 
 	errCh := make(chan error, 1)

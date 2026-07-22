@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/docid"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk/token"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
 )
@@ -320,5 +321,42 @@ func TestSplitSentences(t *testing.T) {
 	parts := splitSentences("Hello world. Next sentence! And third?")
 	if len(parts) < 2 {
 		t.Fatalf("parts=%v", parts)
+	}
+}
+
+func TestProseSameLineMultiPartDocIDsUnique(t *testing.T) {
+	// One long line forced into multiple recursive parts with a tiny budget.
+	line := strings.Repeat("word ", 120)
+	content := "# Title\n\n" + line + "\n"
+	cfg := Config{
+		MaxInputTokens:    40,
+		EmbedBudgetRatio:  1.0,
+		ProseOverlapRatio: 0.1,
+		MinChunkTokens:    1,
+	}
+	chunks := collectChunks(t, "longline.md", []byte(content), cfg)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multi-part split of one line, got %d", len(chunks))
+	}
+	ids := make([]string, 0, len(chunks))
+	for i, ch := range chunks {
+		if ch.StartByte == ch.EndByte {
+			t.Fatalf("chunk %d empty byte range: %+v", i, ch)
+		}
+		ids = append(ids, docid.Make(docid.Params{
+			RelativePath:  ch.RelativePath,
+			StartLine:     ch.StartLine,
+			EndLine:       ch.EndLine,
+			StartByte:     ch.StartByte,
+			EndByte:       ch.EndByte,
+			ChunkIndex:    i + 1,
+			ChunkStrategy: ch.ChunkStrategy,
+			ChunkType:     ch.ChunkType,
+			SymbolName:    ch.SymbolName,
+			Snippet:       ch.Snippet,
+		}))
+	}
+	if err := docid.AssertUnique(ids); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -239,7 +239,7 @@ func applyAppDefaults(app *AppConfig) {
 		app.Indexing.Chunking.Strategy = "hybrid"
 	}
 	if app.Indexing.Chunking.Version == 0 {
-		app.Indexing.Chunking.Version = 2
+		app.Indexing.Chunking.Version = 3
 	}
 	if app.Indexing.Chunking.SizeMetric == "" {
 		app.Indexing.Chunking.SizeMetric = "tokens"

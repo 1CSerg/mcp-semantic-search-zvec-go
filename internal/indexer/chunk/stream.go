@@ -28,6 +28,7 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 	meta := SlideWindowMeta{Window: window, Overlap: overlap, ChunkStrategy: "line_window"}
 	buf := make([]string, 0, window)
 	start := 0
+	var bytePos int64
 
 	for {
 		if len(buf) < window {
@@ -39,6 +40,7 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 				if len(buf) == 0 {
 					return nil
 				}
+				meta.ContentStartByte = bytePos
 				if ch := chunkFromLineWindow(relativePath, buf, int64(start+1), meta); ch != nil {
 					return coll.add(ch)
 				}
@@ -51,6 +53,7 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 			continue
 		}
 
+		meta.ContentStartByte = bytePos
 		ch := chunkFromLineWindow(relativePath, buf[:window], int64(start+1), meta)
 		if ch != nil {
 			if err := coll.add(ch); err != nil {
@@ -68,6 +71,9 @@ func streamChunkBatched(abs, relativePath string, opts Options, coll *batchColle
 		}
 
 		step := window - overlap
+		for i := 0; i < step && i < len(buf); i++ {
+			bytePos += int64(len(buf[i])) + 1
+		}
 		start += step
 		buf = append(buf[step:window], line)
 	}

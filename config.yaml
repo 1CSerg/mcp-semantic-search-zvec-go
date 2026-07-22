@@ -205,7 +205,7 @@ indexing:
     # hybrid | line_window (line_window — legacy slideWindow)
     strategy: hybrid
     # Версия схемы чанкинга; mismatch с index_meta → reindex force
-    version: 2
+    version: 3
     size_metric: tokens
     min_chunk_tokens: 10
     prose_overlap_ratio: 0.12  # overlap между соседними prose-чанками (Phase 1e)

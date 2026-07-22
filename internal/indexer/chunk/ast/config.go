@@ -76,6 +76,7 @@ type partialMeta struct {
 	symbolName    string
 	parentScope   string
 	budgetScope   string // bodyBudget scope; defaults to parentScope when empty
+	contentStart  int64  // absolute StartByte of lines[0] in the source file (0 if unknown)
 }
 
 func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config, counter token.TokenCounter, meta partialMeta, emit EmitFunc) error {
@@ -89,6 +90,7 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 		budgetScope = meta.budgetScope
 	}
 	maxTokens := cfg.bodyBudget(counter, rel, budgetScope)
+	lineOffsets := lineByteOffsets(lines, meta.contentStart)
 	for start := 0; start < len(lines); {
 		end := start + window
 		if end > len(lines) {
@@ -118,10 +120,13 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 		}
 		sl := startLine + int64(start)
 		el := sl + int64(end-start) - 1
+		startByte, endByte := windowByteRange(lineOffsets, lines, start, end)
 		ch := &zvec.Chunk{
 			RelativePath:  filepath.ToSlash(rel),
 			StartLine:     sl,
 			EndLine:       el,
+			StartByte:     startByte,
+			EndByte:       endByte,
 			ChunkType:     "code",
 			Name:          filepath.Base(rel),
 			Snippet:       snippet,
@@ -143,4 +148,27 @@ func emitPartialWindows(rel string, lines []string, startLine int64, cfg Config,
 		start = next
 	}
 	return nil
+}
+
+func lineByteOffsets(lines []string, contentStart int64) []int64 {
+	offsets := make([]int64, len(lines))
+	off := contentStart
+	for i, line := range lines {
+		offsets[i] = off
+		off += int64(len(line))
+		if i < len(lines)-1 {
+			off++ // newline separator used by strings.Join
+		}
+	}
+	return offsets
+}
+
+func windowByteRange(lineOffsets []int64, lines []string, start, end int) (int64, int64) {
+	if start < 0 || start >= len(lineOffsets) || end <= start {
+		return 0, 0
+	}
+	startByte := lineOffsets[start]
+	last := end - 1
+	endByte := lineOffsets[last] + int64(len(lines[last]))
+	return startByte, endByte
 }

@@ -210,6 +210,10 @@ Shipped Release/install binary uses `-tags "zvec,onnx,treesitter"`: prose extens
 | Crash-safe deletion rows | Reindex/purge deletes zvec chunks before SQLite manifest rows so a crash cannot orphan vectors with no manifest trail |
 | Indexing lifecycle | Background `Coordinator.run` uses process/workspace ctx; stops on shutdown/eviction, not on reindex client disconnect |
 
+### Indexer durability (incremental file update)
+
+Incremental reindex for a changed file uses **upsert-new → manifest commit → cleanup journal → delete-stale** (not a per-file generation / copy-on-write collection). Safe rollback deletes only newly written DocIDs that are absent from the previously committed manifest entry. The cleanup journal is appended only after a successful manifest upsert so a failed commit cannot mark still-live DocIDs for deletion on the next `reconcileCleanupJournal`. A crash between zvec upsert and manifest commit can leave orphan vectors in zvec (search reads zvec directly) while the committed manifest still lists prior DocIDs; there is no per-file generation staging. Force reindex uses collection-level staging instead.
+
 ### Windows Cyrillic INDEX_DIR
 
 - zvec collections remain on disk under `INDEX_DIR/zvec/ws_<hash>/`; do **not** relocate them to user cache for non-ASCII paths.
