@@ -336,7 +336,7 @@ With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile w
 - **Matrix (OS × build tags):** stub (no tags), `zvec,onnx` / `zvec,!treesitter`, `zvec,onnx,treesitter` on Ubuntu/Windows; optional `macos-latest` treesitter job (`continue-on-error`)
 - **`treesitter-chunk` job:** AST chunk tests, blocking `BENCH_FULL=1` hybrid benchmark gate (1000/200/200 fixtures, ≤2× `line_window`), **≥80% coverage** on `internal/indexer/chunk` and `internal/indexer/chunk/ast` with `-tags "zvec,onnx,treesitter"`
 - **`merge-config` job:** `python -m unittest scripts/install/merge-config_test.py`
-- `.github/workflows/release.yml` — tag `v*` → binaries + Docker
+- `.github/workflows/release.yml` — tag `v*` → binaries + Docker; platform archives upload directly to draft GitHub Release assets (not Actions artifacts)
 
 ## Testing MCP locally
 
