@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## v0.3.0
+
+- Fix: align `internal/version/version.go` `Version` with git tag `v0.3.0` (release workflow gate).
+- Fix: revert zvec-go pin to published tag `v0.5.1` (premature `v0.6.0` was not released upstream).
+
 ## v0.2.0
 
 - Fix: shared daemon `WorkspaceRegistry` — two-phase cold-open, `Close()` drain, `ErrRegistryClosing` → HTTP 503 during shutdown.

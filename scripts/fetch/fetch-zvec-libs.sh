@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Clone zvec-ai/zvec-go v0.6.0 into .deps/ and download pre-built native libs.
+# Clone zvec-ai/zvec-go v0.5.1 into .deps/ and download pre-built native libs.
 # Prints ZVEC_LIB_DIR=... for CI (append >> $GITHUB_ENV) or: eval "$(bash scripts/fetch/fetch-zvec-libs.sh)"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="$ROOT/.deps/zvec-go"
-TAG="${ZVEC_GO_TAG:-v0.6.0}"
+TAG="${ZVEC_GO_TAG:-v0.5.1}"
 ACP_PATCH_DIR="$ROOT/scripts/fetch/patches/zvec-go-acp"
 
 apply_zvec_acp_patch() {
