@@ -1,11 +1,8 @@
 diff --git a/collection.go b/collection.go
-index 9adbca5..3e5652c 100644
+index 4d89290..1cc9798 100644
 --- a/collection.go
 +++ b/collection.go
-@@ -81,8 +81,11 @@ type Collection struct {
- // CreateAndOpen creates a new collection and opens it.
- // The caller is responsible for calling Close() when done.
- func CreateAndOpen(path string, schema *CollectionSchema, options *CollectionOptions) (*Collection, error) {
+@@ -94,2 +94,5 @@ func CreateAndOpen(path string, schema *CollectionSchema, options *CollectionOpt
 -	cPath := C.CString(path)
 -	defer C.free(unsafe.Pointer(cPath))
 +	cPath, freePath, err := cStringPath(path)
@@ -13,23 +10,11 @@ index 9adbca5..3e5652c 100644
 +		return nil, err
 +	}
 +	defer freePath()
- 
- 	var cOptions *C.zvec_collection_options_t
- 	if options != nil {
-@@ -90,8 +93,7 @@ func CreateAndOpen(path string, schema *CollectionSchema, options *CollectionOpt
- 	}
- 
- 	var cCollection *C.zvec_collection_t
+@@ -103,2 +106 @@ func CreateAndOpen(path string, schema *CollectionSchema, options *CollectionOpt
 -	err := toError(C.zvec_collection_create_and_open(cPath, schema.handle, cOptions, &cCollection))
 -	if err != nil {
 +	if err := toError(C.zvec_collection_create_and_open(cPath, schema.handle, cOptions, &cCollection)); err != nil {
- 		return nil, err
- 	}
- 	return &Collection{handle: cCollection}, nil
-@@ -100,8 +102,11 @@ func CreateAndOpen(path string, schema *CollectionSchema, options *CollectionOpt
- // Open opens an existing collection.
- // The caller is responsible for calling Close() when done.
- func Open(path string, options *CollectionOptions) (*Collection, error) {
+@@ -113,2 +115,5 @@ func Open(path string, options *CollectionOptions) (*Collection, error) {
 -	cPath := C.CString(path)
 -	defer C.free(unsafe.Pointer(cPath))
 +	cPath, freePath, err := cStringPath(path)
@@ -37,16 +22,7 @@ index 9adbca5..3e5652c 100644
 +		return nil, err
 +	}
 +	defer freePath()
- 
- 	var cOptions *C.zvec_collection_options_t
- 	if options != nil {
-@@ -109,8 +114,7 @@ func Open(path string, options *CollectionOptions) (*Collection, error) {
- 	}
- 
- 	var cCollection *C.zvec_collection_t
+@@ -122,2 +127 @@ func Open(path string, options *CollectionOptions) (*Collection, error) {
 -	err := toError(C.zvec_collection_open(cPath, cOptions, &cCollection))
 -	if err != nil {
 +	if err := toError(C.zvec_collection_open(cPath, cOptions, &cCollection)); err != nil {
- 		return nil, err
- 	}
- 	return &Collection{handle: cCollection}, nil

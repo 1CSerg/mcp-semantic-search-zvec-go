@@ -104,7 +104,7 @@ templates/                          # MCP fragments
 
 ## zvec-go
 
-Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.5.1 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) bundled with that release). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
+Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.6.0 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) bundled with that release). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
 
 ### Build tags
 
@@ -123,7 +123,7 @@ make fetch-zvec-libs
 # writes .deps/zvec-lib.env with ZVEC_LIB_DIR
 ```
 
-Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.5.1` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.6.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
 
 ### tree-sitter (hybrid AST chunking)
 
@@ -412,7 +412,7 @@ Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model по
 |-------|------------|
 | `go.mod` | `require github.com/zvec-ai/zvec-go vX.Y.Z` и `replace => ./.deps/zvec-go` |
 | `internal/version/version.go` | `ZvecGoVersion` (тег `vX.Y.Z`, вшит в бинарник) |
-| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.5.1`) |
+| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.6.0`) |
 | `scripts/fetch/fetch-zvec-libs.ps1` | то же |
 | `docker/Dockerfile` | `ARG ZVEC_GO_TAG=vX.Y.Z` |
 

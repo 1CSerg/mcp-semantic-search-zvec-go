@@ -1,10 +1,10 @@
-# Clone zvec-ai/zvec-go v0.5.1 and download pre-built vendor libs into .deps/zvec-go.
+# Clone zvec-ai/zvec-go v0.6.0 and download pre-built vendor libs into .deps/zvec-go.
 $ErrorActionPreference = "Stop"
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Invoke-RemoteFile.ps1')
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Dest = Join-Path $RepoRoot ".deps\zvec-go"
-$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.5.1" }
+$Tag = if ($env:ZVEC_GO_TAG) { $env:ZVEC_GO_TAG } else { "v0.6.0" }
 $AcpPatchDir = Join-Path $RepoRoot "scripts\fetch\patches\zvec-go-acp"
 
 function Get-NormalizedZvecTag {
@@ -46,7 +46,7 @@ function Apply-ZvecAcpPatch {
         Write-Host "Applying zvec-go ACP Unicode path patch..."
         Push-Location $DestDir
         try {
-            git apply (Join-Path $AcpPatchDir "collection.go.patch")
+            git apply --unidiff-zero (Join-Path $AcpPatchDir "collection.go.patch")
             if ($LASTEXITCODE -ne 0) { throw "git apply collection.go.patch failed" }
         } finally {
             Pop-Location

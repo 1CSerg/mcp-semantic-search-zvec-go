@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Clone zvec-ai/zvec-go v0.5.1 into .deps/ and download pre-built native libs.
+# Clone zvec-ai/zvec-go v0.6.0 into .deps/ and download pre-built native libs.
 # Prints ZVEC_LIB_DIR=... for CI (append >> $GITHUB_ENV) or: eval "$(bash scripts/fetch/fetch-zvec-libs.sh)"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="$ROOT/.deps/zvec-go"
-TAG="${ZVEC_GO_TAG:-v0.5.1}"
+TAG="${ZVEC_GO_TAG:-v0.6.0}"
 ACP_PATCH_DIR="$ROOT/scripts/fetch/patches/zvec-go-acp"
 
 apply_zvec_acp_patch() {
@@ -16,7 +16,7 @@ apply_zvec_acp_patch() {
   fi
   if ! grep -q 'cStringPath' "$dest/collection.go"; then
     echo "Applying zvec-go ACP Unicode path patch..." >&2
-    (cd "$dest" && git apply "$ACP_PATCH_DIR/collection.go.patch")
+    (cd "$dest" && git apply --unidiff-zero "$ACP_PATCH_DIR/collection.go.patch")
   fi
   local f
   for f in cpath.go path_unix.go path_windows.go path_windows_test.go path_windows_test_helper.go path_test.go collection_cyrillic_integration_test.go; do

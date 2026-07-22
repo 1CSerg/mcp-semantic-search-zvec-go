@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Change: bump zvec-go pin to published tag `v0.6.0`; installed indexes with older `zvec_go_version` will reset and require force reindex.
+
 ## v0.3.0
 
 - Fix: align `internal/version/version.go` `Version` with git tag `v0.3.0` (release workflow gate).

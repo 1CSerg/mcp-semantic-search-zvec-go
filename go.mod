@@ -15,7 +15,7 @@ require (
 	github.com/tree-sitter/tree-sitter-python v0.23.6
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	github.com/yalue/onnxruntime_go v1.31.0
-	github.com/zvec-ai/zvec-go v0.5.1
+	github.com/zvec-ai/zvec-go v0.6.0
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.42.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -27,6 +27,7 @@ require (
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect

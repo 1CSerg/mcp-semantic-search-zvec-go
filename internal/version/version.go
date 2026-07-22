@@ -6,5 +6,5 @@ const (
 
 	// ZvecGoVersion must match go.mod require github.com/zvec-ai/zvec-go (tag vX.Y.Z).
 	// Windows Unicode index paths: ACP patch applied by fetch-zvec-libs (scripts/fetch/patches/zvec-go-acp).
-	ZvecGoVersion = "v0.5.1"
+	ZvecGoVersion = "v0.6.0"
 )
