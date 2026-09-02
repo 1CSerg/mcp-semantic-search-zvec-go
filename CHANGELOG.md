@@ -2,7 +2,9 @@
 
 ## Unreleased
 
-- **Breaking:** `indexing.chunking.version` default is **3** — DocIDs include byte offsets (AST/line_window/prose), chunk index, strategy/type, and content fingerprint. Run `reindex` with `force: true` after upgrade (v2 indexes built before AST offsets also need force reindex).
+- **Breaking:** `indexing.chunking.version` default is **4** — tighter `min_chunk_tokens` (24), `context_prefix` default **true**, AST boundaries honor min-token coalesce. Run `reindex` with `force: true` after upgrade.
+- Search quality: over-fetch ANN results before rerank; stronger path/symbol boosts and demote of docs/testdata/micro-chunks; drop standalone tiny AST `const`/`var` boundaries below `min_chunk_tokens`.
+- **Breaking (prior):** `indexing.chunking.version` **3** — DocIDs include byte offsets (AST/line_window/prose), chunk index, strategy/type, and content fingerprint.
 - Fix: eliminate DocID collisions (manifest/zvec count desync); copy-on-write file updates with cleanup journal; partial native upsert/delete handling; staged force reindex (active index kept until staging succeeds).
 - Fix: manifest/zvec desync detection via unique DocID counts and per-ID presence checks in zvec.
 - Fix: `Phase1.Shutdown` retryable after timeout; daemon late `release` closes workspace; search panic → HTTP 500 / MCP tool error (no panic text).

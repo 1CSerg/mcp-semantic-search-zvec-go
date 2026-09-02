@@ -189,12 +189,36 @@ func (e *engine) walkChunk(node *sitter.Node, buffer []sitter.Node, scope Scope,
 				return nil
 			}
 			if meta, ok := e.boundaries[child.Id()]; ok {
+				ps := parentScopeForBoundary(e.effectiveScope(scope, child), meta, e.lang)
+				budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
+				childSize := e.tokenSize(child)
+				// Tiny boundaries (single-line const/var) pollute ANN search; coalesce
+				// into the sibling buffer instead of emitting a standalone chunk.
+				if childSize < e.minTokens {
+					if !extractOnly {
+						bufSize := e.tokenSizeNodes(buffer)
+						if bufSize+childSize > budget && len(buffer) > 0 {
+							if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
+								return err
+							}
+						}
+						buffer = append(buffer, *child)
+					}
+					if hasBoundaryDescendant(child, e.boundaries) {
+						if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
+							return err
+						}
+						newScope := extendScope(scope, meta, e.lang)
+						if err := e.walkChunk(child, nil, newScope, &meta, scope, true, true); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
 				if err := e.flushBuffer(&buffer, scope, parent, ""); err != nil {
 					return err
 				}
-				ps := parentScopeForBoundary(e.effectiveScope(scope, child), meta, e.lang)
-				budget := e.cfg.bodyBudget(e.counter, e.rel, ps)
-				if e.tokenSize(child) <= budget {
+				if childSize <= budget {
 					if extractOnly {
 						if err := e.emitBoundary(child, meta, scope, "ast"); err != nil {
 							return err
@@ -506,6 +530,9 @@ func (e *engine) effectiveScope(scope Scope, node *sitter.Node) Scope {
 }
 
 func (e *engine) emitBoundary(node *sitter.Node, meta BoundaryMeta, scope Scope, strategy string) error {
+	if e.tokenSize(node) < e.minTokens {
+		return nil
+	}
 	scope = e.effectiveScope(scope, node)
 	ch := e.chunkFromNodes([]sitter.Node{*node}, scope, meta.Kind, meta.Name, strategy)
 	if ch == nil {

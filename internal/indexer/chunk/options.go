@@ -45,7 +45,7 @@ func OptionsFromConfig(idx config.IndexingConfig, profile config.EmbeddingProfil
 		ChunkingStrategy:     idx.Chunking.Strategy,
 		MinChunkTokens:       idx.Chunking.MinChunkTokens,
 		ProseOverlapRatio:    idx.Chunking.ProseOverlapRatio,
-		ContextPrefix:        idx.Chunking.ContextPrefix,
+		ContextPrefix:        idx.Chunking.ContextPrefixEnabled(),
 		MaxInputTokens:       profile.MaxInputTokens,
 		EmbedBudgetRatio:     profile.EmbedBudgetRatio,
 		Languages:            langs,

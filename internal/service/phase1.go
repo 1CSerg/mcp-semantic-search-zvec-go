@@ -194,17 +194,21 @@ func (p *Phase1) SemanticSearch(ctx context.Context, req SearchRequest) (payload
 		return nil, err
 	}
 
-	hits, err := p.zvecSearchWithContext(ctx, vector, limit, derefString(req.PathGlob))
+	fetchLimit := searchOverFetchLimit(limit)
+	hits, err := p.zvecSearchWithContext(ctx, vector, fetchLimit, derefString(req.PathGlob))
 	if err != nil && lifecycle.IsZvecLockError(err) {
 		recErr := p.recoverZvecLock()
 		if recErr == nil {
-			hits, err = p.zvecSearchWithContext(ctx, vector, limit, derefString(req.PathGlob))
+			hits, err = p.zvecSearchWithContext(ctx, vector, fetchLimit, derefString(req.PathGlob))
 		} else if !errors.Is(recErr, errZvecRecoverySkipped) {
 			err = fmt.Errorf("zvec lock recovery failed: %w (search: %w)", recErr, err)
 		}
 	}
 	if err == nil {
 		hits = rerankSearchHits(hits, req.Query)
+		if len(hits) > limit {
+			hits = hits[:limit]
+		}
 	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

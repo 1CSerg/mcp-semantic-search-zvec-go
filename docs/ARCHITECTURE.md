@@ -184,10 +184,11 @@ flowchart LR
 Config key `languages.typescript.enabled` also enables `.jsx` and `.tsx` (router maps `tsx` lang to the typescript toggle).
 
 **SDBL note:** query text from `.dcs`, embedded BSL strings, or standalone SDBL is chunked by **heuristic** split on `;` and `ВЫБРАТЬ`/`SELECT` boundaries — not by tree-sitter (the BSL grammar bundle does not expose SDBL query nodes in v0.1.6).
-4. **cAST emit:** chunks stream through `emit func(*zvec.Chunk) error` → `batchCollector.add` (no per-file `[]Chunk` slice in production).
-5. **Context prefix:** optional `indexing.chunking.context_prefix` prepends `// file:` / `// scope:` to **embed input only**; stored `snippet` is raw source.
+4. **cAST emit:** chunks stream through `emit func(*zvec.Chunk) error` → `batchCollector.add` (no per-file `[]Chunk` slice in production). AST **boundaries below `min_chunk_tokens`** are coalesced into the sibling buffer (not emitted as standalone one-line `const`/`var` chunks).
+5. **Context prefix:** `indexing.chunking.context_prefix` defaults to **true** — prepends `// file:` / `// scope:` to **embed input only**; stored `snippet` is raw source.
 6. **Partial fallback:** oversized AST nodes split via `line_window` inside the parent scope; `chunk_strategy: partial`.
 7. **Identity:** `index_meta.json` stores `chunking_version` / `chunking_strategy`; mismatch → `identity_mismatch` → `reindex` with `force: true`.
+8. **Search ranking:** `SemanticSearch` over-fetches ANN hits (`limit×5`, clamped 40–100), then `rerankSearchHits` (path/symbol boosts; demote `docs/` / markdown / `testdata/` / micro-snippets; slight AST preference), then truncates to `limit`.
 
 Shipped Release/install binary uses `-tags "zvec,onnx,treesitter"`: prose extensions → prose chunker; enabled code langs → AST cAST; legacy `-tags "zvec,onnx"` fallback → `line_window` for code. See [CONFIG.md](CONFIG.md#indexingchunking) and [DEVELOPMENT.md](DEVELOPMENT.md#tree-sitter-hybrid-ast-chunking).
 

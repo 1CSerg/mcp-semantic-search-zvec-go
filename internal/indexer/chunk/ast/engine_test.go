@@ -203,6 +203,56 @@ func TestGroupedDeclBoundaries(t *testing.T) {
 	}
 }
 
+func TestTinyConstBoundariesCoalescedUnderMinTokens(t *testing.T) {
+	// CharCounter: minTokens counts runes. Short decls stay below the floor;
+	// Keep() body is long enough to emit as its own AST boundary.
+	src := []byte(`package main
+
+const X = 1
+var y int
+
+func Keep() int {
+	sum := 0
+	for i := 0; i < 10; i++ {
+		sum += i
+	}
+	return sum
+}
+`)
+	var out []zvec.Chunk
+	cfg := Config{
+		MinChunkTokens:   20,
+		MaxInputTokens:   400,
+		EmbedBudgetRatio: 1.0,
+		WindowLines:      5,
+		OverlapLines:     1,
+	}
+	err := ChunkGo("tiny.go", src, cfg, token.CharCounter{}, func(ch *zvec.Chunk) error {
+		if ch != nil {
+			out = append(out, *ch)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ChunkGo: %v", err)
+	}
+	for _, ch := range out {
+		if ch.SymbolName == "X" || ch.SymbolName == "y" {
+			t.Fatalf("tiny boundary %q must not be a standalone chunk: %+v", ch.SymbolName, toGolden(out))
+		}
+	}
+	foundKeep := false
+	for _, ch := range out {
+		if ch.SymbolName == "Keep" {
+			foundKeep = true
+			break
+		}
+	}
+	if !foundKeep {
+		t.Fatalf("expected Keep function chunk, got %+v", toGolden(out))
+	}
+}
+
 func TestCloneCaptures(t *testing.T) {
 	if got := cloneCaptures(nil); got != nil {
 		t.Fatalf("nil map: got %v want nil", got)

@@ -539,7 +539,7 @@ func (c *Coordinator) indexFile(ctx context.Context, manStore *manifest.Store, r
 	if batchSize <= 0 {
 		batchSize = 32
 	}
-	contextPrefix := c.Settings.App.Indexing.Chunking.ContextPrefix
+	contextPrefix := c.Settings.App.Indexing.Chunking.ContextPrefixEnabled()
 
 	var newDocIDs []string
 	chunkCount, err := chunk.ProcessBatches(c.Settings.WorkspaceRoot, rel, chunkOpts, counter, batchSize, func(batch []zvec.Chunk) error {

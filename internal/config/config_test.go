@@ -434,11 +434,14 @@ func TestApplyAppDefaultsChunking(t *testing.T) {
 	if app.Indexing.Chunking.Strategy != "hybrid" {
 		t.Fatalf("strategy=%q", app.Indexing.Chunking.Strategy)
 	}
-	if app.Indexing.Chunking.MinChunkTokens != 10 {
+	if app.Indexing.Chunking.MinChunkTokens != 24 {
 		t.Fatalf("min_chunk_tokens=%d", app.Indexing.Chunking.MinChunkTokens)
 	}
-	if app.Indexing.Chunking.Version != 3 {
+	if app.Indexing.Chunking.Version != 4 {
 		t.Fatalf("version=%d", app.Indexing.Chunking.Version)
+	}
+	if !app.Indexing.Chunking.ContextPrefixEnabled() {
+		t.Fatal("context_prefix default should be true")
 	}
 	if got := app.Profiles["onnx"].MaxInputTokens; got != 256 {
 		t.Fatalf("onnx max_input_tokens=%d want 256", got)

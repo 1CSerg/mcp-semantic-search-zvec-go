@@ -21,6 +21,8 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 type keywordTestEmbedder struct {
 	dims int
 }
@@ -263,7 +265,7 @@ func hybridChunkingSettings(t *testing.T, workspaceRoot, indexDir, embedURL stri
 				Chunking: config.ChunkingConfig{
 					Strategy:          "hybrid",
 					Version:           version,
-					ContextPrefix:     false,
+					ContextPrefix:     boolPtr(false),
 					ProseOverlapRatio: 0.12,
 					Languages: map[string]config.LanguageConfig{
 						"go":         {Enabled: true},

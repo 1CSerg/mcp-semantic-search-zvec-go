@@ -90,14 +90,23 @@ type IndexingConfig struct {
 }
 
 type ChunkingConfig struct {
-	Strategy          string                    `yaml:"strategy"` // hybrid | line_window
-	Version           int                       `yaml:"version"`
-	SizeMetric        string                    `yaml:"size_metric"` // tokens
-	MinChunkTokens    int                       `yaml:"min_chunk_tokens"`
-	ProseOverlapRatio float64                   `yaml:"prose_overlap_ratio"`
-	ContextPrefix     bool                      `yaml:"context_prefix"`
-	LineWindow        LineWindowConfig          `yaml:"line_window"`
-	Languages         map[string]LanguageConfig `yaml:"languages"`
+	Strategy          string  `yaml:"strategy"` // hybrid | line_window
+	Version           int     `yaml:"version"`
+	SizeMetric        string  `yaml:"size_metric"` // tokens
+	MinChunkTokens    int     `yaml:"min_chunk_tokens"`
+	ProseOverlapRatio float64 `yaml:"prose_overlap_ratio"`
+	// ContextPrefix is optional so absent YAML keys default to true (see ContextPrefixEnabled).
+	ContextPrefix *bool                     `yaml:"context_prefix"`
+	LineWindow    LineWindowConfig          `yaml:"line_window"`
+	Languages     map[string]LanguageConfig `yaml:"languages"`
+}
+
+// ContextPrefixEnabled reports whether embed context prefixes are on (default true).
+func (c ChunkingConfig) ContextPrefixEnabled() bool {
+	if c.ContextPrefix == nil {
+		return true
+	}
+	return *c.ContextPrefix
 }
 
 type LineWindowConfig struct {
@@ -239,13 +248,13 @@ func applyAppDefaults(app *AppConfig) {
 		app.Indexing.Chunking.Strategy = "hybrid"
 	}
 	if app.Indexing.Chunking.Version == 0 {
-		app.Indexing.Chunking.Version = 3
+		app.Indexing.Chunking.Version = 4
 	}
 	if app.Indexing.Chunking.SizeMetric == "" {
 		app.Indexing.Chunking.SizeMetric = "tokens"
 	}
 	if app.Indexing.Chunking.MinChunkTokens == 0 {
-		app.Indexing.Chunking.MinChunkTokens = 10
+		app.Indexing.Chunking.MinChunkTokens = 24
 	}
 	if app.Indexing.Chunking.ProseOverlapRatio == 0 {
 		app.Indexing.Chunking.ProseOverlapRatio = 0.12

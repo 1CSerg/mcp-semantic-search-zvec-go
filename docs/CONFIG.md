@@ -137,11 +137,12 @@ Tables use two default columns: **Code fallback** (key omitted in YAML) and **In
 | Key | Code fallback | Description |
 |-----|---------------|-------------|
 | `strategy` | `hybrid` | `hybrid` or `line_window` (legacy slideWindow). Shipped `-tags "zvec,onnx,treesitter"` binary: prose extensions → prose chunker; enabled code langs → AST; legacy `-tags "zvec,onnx"` fallback → `line_window` for code |
-| `version` | `3` | Chunking schema version stored in `index_meta.json`; bump invalidates DocIDs — run `reindex` with `force: true` after upgrade |
+| `version` | `4` | Chunking schema version stored in `index_meta.json`; bump invalidates DocIDs — run `reindex` with `force: true` after upgrade |
 | `size_metric` | `tokens` | Chunk size unit (only `tokens` is implemented; reserved for future metrics) |
-| `min_chunk_tokens` | `10` | Minimum chunk size (tokens); chunks below this are dropped |
+| `min_chunk_tokens` | `24` | Minimum chunk size (tokens); AST boundaries and buffered chunks below this are coalesced or dropped (reduces one-line `const`/`var` ANN noise) |
 | `prose_overlap_ratio` | `0.12` | Overlap ratio (0–1) between adjacent prose chunks; used by prose/Markdown chunker (`internal/indexer/chunk/prose`) |
-| `context_prefix` | `false` | When `true`, prepend `// file: …` and `// scope: …` to **embed input only**; `snippet` stored in zvec stays raw source (prefix rebuilt at embed time from path + `parent_scope`) |
+| `context_prefix` | `true` | When `true` (default), prepend `// file: …` and `// scope: …` to **embed input only**; `snippet` stored in zvec stays raw source (prefix rebuilt at embed time from path + `parent_scope`). Omit the key or set `true`/`false` explicitly |
+
 | `line_window.window_lines` | `40` | Legacy line window size |
 | `line_window.overlap_lines` | `8` | Legacy line overlap |
 | `languages` | go, python, js/ts, bsl | Per-language AST toggles. With `treesitter` binary: `go`, `python`, `javascript`, `typescript` (`enabled: true`) route matching extensions through AST; `typescript` also covers `.jsx` and `.tsx`. **`bsl`** — see [languages.bsl](#languagesbsl-1c) below |
@@ -183,6 +184,8 @@ Env overrides: `INDEXING_STALL_SECONDS`, `INDEXING_MAX_FILE_BYTES`, `INDEXING_ST
 | `degrade_ratio` | 2.0 | current > median × ratio |
 | `stats_window` | 20 | Rolling metrics window |
 | `stats_min_samples` | 5 | Min samples before degrade compare |
+
+Search always over-fetches ANN candidates (`limit×5`, clamped 40–100), applies lightweight rerank (path/symbol boosts; demote docs/testdata/micro-chunks), then returns `limit` hits. Not configurable via YAML.
 
 Env overrides: `SEARCH_SLOW_THRESHOLD_SECONDS`, `SEARCH_DEGRADE_RATIO`, `SEARCH_STATS_WINDOW`.
 
@@ -238,7 +241,7 @@ Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:80
 | `INDEXING_STREAM_CHUNK_THRESHOLD_BYTES` | from yaml (`262144`) | Override `indexing.stream_chunk_threshold_bytes` (positive integer) |
 | `INDEXING_MAX_LINE_BYTES` | from yaml (`1048576`) | Override `indexing.max_line_bytes` (positive integer) |
 | `CHUNKING_STRATEGY` | from yaml (`hybrid`) | Override `indexing.chunking.strategy` (`hybrid`, `line_window`) |
-| `CHUNKING_VERSION` | from yaml (`3`) | Override `indexing.chunking.version` (integer) |
+| `CHUNKING_VERSION` | from yaml (`4`) | Override `indexing.chunking.version` (integer) |
 | `EMBED_MAX_INPUT_TOKENS` | from yaml / provider default | Override `max_input_tokens` on **active** profile (positive integer) |
 | `MANIFEST_WAL` | `auto` | SQLite manifest journal: `auto` (WAL off on cloud-sync paths), `on`, `off` |
 | `MCP_CRASH_REDACT_PATHS` | `true` | Redact absolute paths in `last_crash.json` stack |

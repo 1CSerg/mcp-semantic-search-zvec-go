@@ -46,9 +46,9 @@ indexing:
     strategy: hybrid
     version: 1
     size_metric: tokens
-    min_chunk_tokens: 10
+    min_chunk_tokens: 24
     prose_overlap_ratio: 0.12
-    context_prefix: false
+    context_prefix: true
     line_window:
       window_lines: 40
       overlap_lines: 8

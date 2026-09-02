@@ -9,17 +9,21 @@ import (
 )
 
 func TestOptionsFromConfig(t *testing.T) {
+	prefix := true
 	opts := OptionsFromConfig(config.IndexingConfig{
 		Chunking: config.ChunkingConfig{
 			Strategy:       "hybrid",
 			MinChunkTokens: 5,
-			ContextPrefix:  true,
+			ContextPrefix:  &prefix,
 			LineWindow:     config.LineWindowConfig{WindowLines: 10, OverlapLines: 2},
 		},
 		MaxFileBytes: 1000,
 	}, config.EmbeddingProfile{MaxInputTokens: 512, EmbedBudgetRatio: 0.5})
 	if opts.ChunkingStrategy != "hybrid" || opts.WindowLines != 10 || opts.MaxInputTokens != 512 {
 		t.Fatalf("opts=%+v", opts)
+	}
+	if !opts.ContextPrefix {
+		t.Fatal("ContextPrefix should be true")
 	}
 }
 
