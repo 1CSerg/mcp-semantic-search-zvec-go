@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,54 +13,47 @@ func TestResolveRunMode(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		in      runMode
-		goos    string
-		nflag   int
 		want    runMode
 		wantErr error
 	}{
 		{
-			name: "windows no flags defaults to gui",
-			goos: "windows", nflag: 0,
-			want: runMode{guiFlag: true},
-		},
-		{
-			name: "linux no flags defaults to stdio",
-			goos: "linux", nflag: 0,
+			name: "explicit stdio is kept",
+			in:   runMode{stdio: true},
 			want: runMode{stdio: true},
 		},
 		{
-			name: "explicit gui on windows",
-			in:   runMode{guiFlag: true}, goos: "windows", nflag: 1,
-			want: runMode{guiFlag: true},
+			name: "explicit http is kept",
+			in:   runMode{httpFlag: true},
+			want: runMode{httpFlag: true},
 		},
 		{
-			name: "explicit stdio on windows overrides default",
-			in:   runMode{stdio: true}, goos: "windows", nflag: 1,
-			want: runMode{stdio: true},
-		},
-		{
-			name: "gui conflicts with stdio",
-			in:   runMode{guiFlag: true, stdio: true}, goos: "windows", nflag: 2,
-			wantErr: errModeConflict,
+			name: "stdio with http keeps both transports",
+			in:   runMode{stdio: true, httpFlag: true},
+			want: runMode{stdio: true, httpFlag: true},
 		},
 		{
 			name: "daemon implies http and disables stdio",
-			in:   runMode{daemonFlag: true, stdio: true}, goos: "linux", nflag: 1,
+			in:   runMode{daemonFlag: true, stdio: true},
 			want: runMode{daemonFlag: true, httpFlag: true},
 		},
 		{
 			name: "stdio-proxy implies stdio",
-			in:   runMode{stdioProxy: true}, goos: "linux", nflag: 1,
+			in:   runMode{stdioProxy: true},
 			want: runMode{stdio: true, stdioProxy: true},
 		},
 		{
-			name: "config only without mode errors",
-			in:   runMode{}, goos: "linux", nflag: 1,
+			name: "stdio-proxy keeps its normalisation priority over daemon",
+			in:   runMode{stdioProxy: true, daemonFlag: true},
+			want: runMode{stdio: true, stdioProxy: true},
+		},
+		{
+			name:    "empty mode is an error",
+			in:      runMode{},
 			wantErr: errNoMode,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveRunMode(tc.in, tc.goos, tc.nflag)
+			got, err := resolveRunMode(tc.in)
 			if tc.wantErr != nil {
 				if !errors.Is(err, tc.wantErr) {
 					t.Fatalf("err=%v, want %v", err, tc.wantErr)
@@ -75,20 +70,51 @@ func TestResolveRunMode(t *testing.T) {
 	}
 }
 
-func TestDefaultNoArgsModes(t *testing.T) {
+func TestIsHelpRequest(t *testing.T) {
 	for _, tc := range []struct {
-		goos      string
-		wantStdio bool
-		wantGUI   bool
+		args []string
+		want bool
 	}{
-		{goos: "windows", wantStdio: false, wantGUI: true},
-		{goos: "linux", wantStdio: true, wantGUI: false},
-		{goos: "darwin", wantStdio: true, wantGUI: false},
+		{args: nil, want: false},
+		{args: []string{"-h"}, want: true},
+		{args: []string{"--help"}, want: true},
+		{args: []string{"-help"}, want: true},
+		{args: []string{"--stdio"}, want: false},
+		{args: []string{"--stdio", "--help"}, want: true},
+		{args: []string{"--http-addr", "127.0.0.1:9090"}, want: false},
 	} {
-		gotStdio, gotGUI := defaultNoArgsModes(tc.goos)
-		if gotStdio != tc.wantStdio || gotGUI != tc.wantGUI {
-			t.Fatalf("defaultNoArgsModes(%q)=(%v,%v), want (%v,%v)", tc.goos, gotStdio, gotGUI, tc.wantStdio, tc.wantGUI)
+		if got := isHelpRequest(tc.args); got != tc.want {
+			t.Errorf("isHelpRequest(%v)=%v, want %v", tc.args, got, tc.want)
 		}
+	}
+}
+
+func TestPrintUsageDescribesModesWithoutGUI(t *testing.T) {
+	usageFlags = nil
+	defer func() { usageFlags = nil }()
+
+	var buf bytes.Buffer
+	printUsage(&buf, "mcp-semantic-search-zvec-go")
+	out := buf.String()
+
+	for _, want := range []string{
+		"usage: mcp-semantic-search-zvec-go",
+		"--stdio",
+		"--stdio-proxy",
+		"--http",
+		"--daemon",
+		"--project-add",
+		"--project-remove",
+		"--projects-reload",
+		"--stop-stdio-for-workspace",
+		"status 0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("usage text does not mention %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--gui") {
+		t.Errorf("usage text must not advertise the removed --gui flag:\n%s", out)
 	}
 }
 

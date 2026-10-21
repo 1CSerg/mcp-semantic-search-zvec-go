@@ -5,12 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -19,7 +19,6 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemonclient"
-	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/gui"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/logging"
@@ -35,19 +34,23 @@ func main() {
 }
 
 func run() int {
-	for _, arg := range os.Args[1:] {
+	program := filepath.Base(os.Args[0])
+	args := os.Args[1:]
+
+	for _, arg := range args {
 		if arg == "--version" || arg == "-version" {
 			fmt.Println(version.Version)
 			return 0
 		}
 	}
 
+	// No arguments and explicit help are answered before any configuration is
+	// read, any directory is created and any daemon or collection is touched.
 	var (
 		stdio              bool
 		stdioProxy         bool
 		httpFlag           bool
 		daemonFlag         bool
-		guiFlag            bool
 		httpAddr           string
 		configPath         string
 		daemonConfig       string
@@ -65,28 +68,46 @@ func run() int {
 		stopDaemon         bool
 		assumeYes          bool
 	)
-	flag.BoolVar(&stdio, "stdio", false, "Run MCP server over stdin/stdout (per-project mode)")
-	flag.BoolVar(&stdioProxy, "stdio-proxy", false, "Run MCP stdio proxy to shared daemon HTTP API")
-	flag.BoolVar(&httpFlag, "http", false, "Run HTTP REST API server")
-	flag.BoolVar(&daemonFlag, "daemon", false, "Run shared multi-workspace HTTP daemon")
-	flag.BoolVar(&guiFlag, "gui", false, "Run the Windows desktop GUI")
-	flag.StringVar(&httpAddr, "http-addr", "", "HTTP listen address (default 127.0.0.1:8080 per-project, :8080 daemon, or config server.http_addr)")
-	flag.StringVar(&configPath, "config", "", "Override CONFIG_PATH")
-	flag.StringVar(&daemonConfig, "daemon-config", "", "Path to daemon.yaml (or WORKSPACES_CONFIG env)")
-	flag.StringVar(&workspaceID, "workspace-id", "", "Workspace ID for --stdio-proxy (legacy manual mode)")
-	flag.StringVar(&daemonURL, "daemon-url", "", "Shared daemon base URL for --stdio-proxy (legacy manual mode)")
-	flag.StringVar(&stopStdioWorkspace, "stop-stdio-for-workspace", "", "Stop stale --stdio MCP instances for workspace and exit")
-	flag.StringVar(&stopStdioIndexDir, "index-dir", "", "Index directory for lock reclaim (optional; used with --stop-stdio-for-workspace)")
-	flag.StringVar(&projectConfig, "project-config", "", "Absolute path to a project's project.yaml for --stdio-proxy (global install mode)")
-	flag.StringVar(&projectAdd, "project-add", "", "Register a project root, ensure the daemon and reload it")
-	flag.StringVar(&projectRemove, "project-remove", "", "Unregister a project root (collection data is kept)")
-	flag.StringVar(&projectNew, "project-new-collection", "", "Give a project a new collection id (for a copied project)")
-	flag.StringVar(&projectRelocate, "project-relocate", "", "Move a registered project to a new root, keeping its collection")
-	flag.BoolVar(&projectsReload, "projects-reload", false, "Ask the running daemon to re-read projects.d")
-	flag.BoolVar(&ensureDaemon, "ensure-daemon", false, "Start the shared daemon if it is not running")
-	flag.BoolVar(&stopDaemon, "stop-daemon", false, "Stop the shared daemon gracefully")
-	flag.BoolVar(&assumeYes, "yes", false, "Confirm a destructive management command (used with --project-relocate)")
-	flag.Parse()
+	fs := flag.NewFlagSet(program, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() { printUsage(fs.Output(), program) }
+	usageFlags = fs
+	fs.BoolVar(&stdio, "stdio", false, "Run MCP server over stdin/stdout (per-project mode)")
+	fs.BoolVar(&stdioProxy, "stdio-proxy", false, "Run MCP stdio proxy to shared daemon HTTP API")
+	fs.BoolVar(&httpFlag, "http", false, "Run HTTP REST API server")
+	fs.BoolVar(&daemonFlag, "daemon", false, "Run shared multi-workspace HTTP daemon")
+	fs.StringVar(&httpAddr, "http-addr", "", "HTTP listen address (default 127.0.0.1:8080 per-project, :8080 daemon, or config server.http_addr)")
+	fs.StringVar(&configPath, "config", "", "Override CONFIG_PATH")
+	fs.StringVar(&daemonConfig, "daemon-config", "", "Path to daemon.yaml (or WORKSPACES_CONFIG env)")
+	fs.StringVar(&workspaceID, "workspace-id", "", "Workspace ID for --stdio-proxy (legacy manual mode)")
+	fs.StringVar(&daemonURL, "daemon-url", "", "Shared daemon base URL for --stdio-proxy (legacy manual mode)")
+	fs.StringVar(&stopStdioWorkspace, "stop-stdio-for-workspace", "", "Stop stale --stdio MCP instances for workspace and exit")
+	fs.StringVar(&stopStdioIndexDir, "index-dir", "", "Index directory for lock reclaim (optional; used with --stop-stdio-for-workspace)")
+	fs.StringVar(&projectConfig, "project-config", "", "Absolute path to a project's project.yaml for --stdio-proxy (global install mode)")
+	fs.StringVar(&projectAdd, "project-add", "", "Register a project root, ensure the daemon and reload it")
+	fs.StringVar(&projectRemove, "project-remove", "", "Unregister a project root (collection data is kept)")
+	fs.StringVar(&projectNew, "project-new-collection", "", "Give a project a new collection id (for a copied project)")
+	fs.StringVar(&projectRelocate, "project-relocate", "", "Move a registered project to a new root, keeping its collection")
+	fs.BoolVar(&projectsReload, "projects-reload", false, "Ask the running daemon to re-read projects.d")
+	fs.BoolVar(&ensureDaemon, "ensure-daemon", false, "Start the shared daemon if it is not running")
+	fs.BoolVar(&stopDaemon, "stop-daemon", false, "Stop the shared daemon gracefully")
+	fs.BoolVar(&assumeYes, "yes", false, "Confirm a destructive management command (used with --project-relocate)")
+
+	// No arguments and explicit help are answered before any configuration is
+	// read, any directory is created and any daemon or collection is touched.
+	if len(args) == 0 || isHelpRequest(args) {
+		printUsage(os.Stdout, program)
+		return 0
+	}
+	if err := fs.Parse(args); err != nil {
+		// The FlagSet already reported the parse problem on stderr; --help is
+		// intercepted above, so any error here is a usage error.
+		if errors.Is(err, flag.ErrHelp) {
+			printUsage(os.Stdout, program)
+			return 0
+		}
+		return 2
+	}
 
 	if stopStdioWorkspace != "" {
 		return runStopStdio(stopStdioWorkspace, stopStdioIndexDir)
@@ -111,7 +132,7 @@ func run() int {
 		return 2
 	}
 	if managementCommands(projects) {
-		if stdio || stdioProxy || httpFlag || daemonFlag || guiFlag {
+		if stdio || stdioProxy || httpFlag || daemonFlag {
 			fmt.Fprintf(os.Stderr, "project management commands cannot be combined with a run mode\n")
 			return 2
 		}
@@ -123,19 +144,13 @@ func run() int {
 		stdioProxy: stdioProxy,
 		httpFlag:   httpFlag,
 		daemonFlag: daemonFlag,
-		guiFlag:    guiFlag,
-	}, runtime.GOOS, flag.NFlag())
+	})
 	if err != nil {
-		switch {
-		case errors.Is(err, errModeConflict):
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-		default:
-			fmt.Fprintf(os.Stderr, "usage: %s [--gui|--stdio|--stdio-proxy] [--http|--daemon] [flags]\n", filepath.Base(os.Args[0]))
-			fmt.Fprintf(os.Stderr, "  At least one of --gui, --stdio, --stdio-proxy, --http, or --daemon is required.\n")
-		}
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		printUsage(os.Stderr, program)
 		return 2
 	}
-	stdio, stdioProxy, httpFlag, daemonFlag, guiFlag = mode.stdio, mode.stdioProxy, mode.httpFlag, mode.daemonFlag, mode.guiFlag
+	stdio, stdioProxy, httpFlag, daemonFlag = mode.stdio, mode.stdioProxy, mode.httpFlag, mode.daemonFlag
 
 	if stdioProxy && strings.TrimSpace(workspaceID) == "" && strings.TrimSpace(projectConfig) == "" {
 		fmt.Fprintf(os.Stderr, "--stdio-proxy requires --workspace-id or --project-config\n")
@@ -164,9 +179,6 @@ func run() int {
 			ProjectConfig: projectConfig,
 		})
 	}
-	if guiFlag {
-		return runGUI(ctx, stop)
-	}
 	return runPerProject(ctx, stop, stdio, httpFlag, httpAddr)
 }
 
@@ -175,23 +187,17 @@ type runMode struct {
 	stdioProxy bool
 	httpFlag   bool
 	daemonFlag bool
-	guiFlag    bool
 }
 
-var (
-	errModeConflict = errors.New("--gui cannot be combined with --stdio, --stdio-proxy, --http, or --daemon")
-	errNoMode       = errors.New("no run mode selected")
-)
+var errNoMode = errors.New("no run mode selected")
 
-// resolveRunMode applies no-flag defaults and mode overrides, returning the
-// effective mode or a usage error. nflag is the number of flags actually set
-// (flag.NFlag()); when zero, OS-specific defaults apply. This is separated from
-// run for testability, since flag.BoolVar resets bound variables to their
-// declared default and would otherwise clobber pre-parse assignments.
-func resolveRunMode(in runMode, goos string, nflag int) (runMode, error) {
-	if nflag == 0 {
-		in.stdio, in.guiFlag = defaultNoArgsModes(goos)
-	}
+// resolveRunMode applies the mode overrides that are implied by another mode,
+// returning the effective mode or errNoMode. Starting without arguments never
+// reaches this function: run answers it with the help text, so a mode is always
+// selected explicitly. It is separated from run for testability, since flag
+// registration resets bound variables to their declared default and would
+// otherwise clobber pre-parse assignments.
+func resolveRunMode(in runMode) (runMode, error) {
 	if in.stdioProxy {
 		in.stdio = true
 		in.httpFlag = false
@@ -201,20 +207,56 @@ func resolveRunMode(in runMode, goos string, nflag int) (runMode, error) {
 		in.httpFlag = true
 		in.stdio = false
 	}
-	if in.guiFlag && (in.stdio || in.stdioProxy || in.httpFlag || in.daemonFlag) {
-		return in, errModeConflict
-	}
-	if !in.stdio && !in.httpFlag && !in.guiFlag {
+	if !in.stdio && !in.httpFlag {
 		return in, errNoMode
 	}
 	return in, nil
 }
 
-func defaultNoArgsModes(goos string) (stdio, gui bool) {
-	if goos == "windows" {
-		return false, true
+// printUsage writes the single help text used for no arguments, -h/--help and
+// flag errors. It is the only description of the supported modes and management
+// commands, so the CLI has one source of truth.
+func printUsage(w io.Writer, program string) {
+	fmt.Fprintf(w, "usage: %s <mode> [flags]\n\n", program)
+	fmt.Fprintf(w, "%s - semantic search MCP server, HTTP API and shared daemon.\n\n", program)
+	fmt.Fprintf(w, "Run modes (choose exactly one):\n")
+	fmt.Fprintf(w, "  --stdio                        MCP server over stdin/stdout for one project\n")
+	fmt.Fprintf(w, "  --stdio-proxy                  MCP stdio proxy to the shared daemon\n")
+	fmt.Fprintf(w, "  --http                         HTTP REST API server for one project\n")
+	fmt.Fprintf(w, "  --daemon                       Shared multi-workspace HTTP daemon\n")
+	fmt.Fprintf(w, "\nProject management commands (no run mode):\n")
+	fmt.Fprintf(w, "  --project-add <root>           Register a project root, ensure the daemon, reload it\n")
+	fmt.Fprintf(w, "  --project-remove <root>        Unregister a project root (collection data is kept)\n")
+	fmt.Fprintf(w, "  --project-new-collection <root> Give a copied project its own collection id\n")
+	fmt.Fprintf(w, "  --project-relocate <root> --yes Move a registered project to a new root\n")
+	fmt.Fprintf(w, "  --projects-reload              Ask the running daemon to re-read projects.d\n")
+	fmt.Fprintf(w, "  --ensure-daemon | --stop-daemon Start or stop the shared daemon\n")
+	fmt.Fprintf(w, "  --stop-stdio-for-workspace <path> Stop stale --stdio instances for a workspace\n")
+	fmt.Fprintf(w, "\nFlags:\n")
+	if usageFlags != nil {
+		prev := usageFlags.Output()
+		usageFlags.SetOutput(w)
+		usageFlags.PrintDefaults()
+		usageFlags.SetOutput(prev)
 	}
-	return true, false
+	fmt.Fprintf(w, "\nRunning without arguments prints this help and exits with status 0.\n")
+}
+
+// usageFlags is the FlagSet run registered the CLI flags on. printUsage prints its
+// defaults so the help text and the parsed flags cannot drift apart.
+var usageFlags *flag.FlagSet
+
+// isHelpRequest reports whether the arguments ask for help. The request is
+// answered before flag parsing so help never depends on flag values, configuration
+// files or on whether the remaining arguments are valid.
+func isHelpRequest(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "-h", "--help", "-help":
+			return true
+		}
+	}
+	return false
 }
 
 func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag bool, httpAddr string) int {
@@ -240,58 +282,6 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 
 	slog.Info("starting", "version", version.Version, "workspace", rt.settings.WorkspaceRoot, "mode", "per-project")
 	return serveTransports(ctx, stop, rt.settings, rt.svc, httpFlag, httpAddr, stdio)
-}
-
-func runGUI(ctx context.Context, stop context.CancelFunc) int {
-	// Global install mode: the GUI is a client of the shared daemon. It must not
-	// build a Phase1, open zvec or start a watcher — that would make it a second
-	// owner of the collection and fight the daemon for the zvec LOCK.
-	if guiUsesGlobalCollections() {
-		slog.Info("starting gui", "version", version.Version, "mode", "global-collections")
-		settings := &config.Settings{HTTPAddr: config.DefaultHTTPAddrLocal}
-		if err := gui.Run(ctx, settings, nil); err != nil {
-			slog.Error("gui error", "err", err)
-			return 1
-		}
-		return 0
-	}
-
-	rt, err := setupPerProject(ctx, perProjectOptions{
-		Stdio:            false,
-		StartBackgrounds: false,
-	})
-	if err != nil {
-		slog.Error("gui setup failed", "err", err)
-		return 1
-	}
-	defer func() {
-		stop()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if p, ok := rt.svc.(*service.Phase1); ok {
-			if err := p.Shutdown(shutdownCtx); err != nil {
-				slog.Warn("gui shutdown wait", "err", err)
-			}
-		}
-		rt.Close()
-	}()
-
-	defer func() {
-		if r := recover(); r != nil {
-			_ = crash.WriteWithOptions(rt.settings.LogsDir(), version.Version, r, crash.WriteOptions{
-				RedactPaths:   crash.RedactPathsEnabled(),
-				WorkspaceRoot: rt.settings.WorkspaceRoot,
-			})
-			panic(r)
-		}
-	}()
-
-	slog.Info("starting", "version", version.Version, "workspace", rt.settings.WorkspaceRoot, "mode", "gui")
-	if err := gui.Run(ctx, rt.settings, rt.svc); err != nil {
-		slog.Error("gui error", "err", err)
-		return 1
-	}
-	return 0
 }
 
 type perProjectRuntime struct {
@@ -358,28 +348,6 @@ func setupPerProject(ctx context.Context, opts perProjectOptions) (*perProjectRu
 
 	rt.svc = svc
 	return rt, nil
-}
-
-// guiUsesGlobalCollections reports whether the GUI should run as a client of the
-// shared daemon.
-//
-// The decision is "is this a user-level install?", not "are there registrations?".
-// A user who installed the application but has not added a project yet must get the
-// collection picker with the --project-add instruction; routing that case to the
-// per-project GUI would silently build a Phase1 in the current directory and open a
-// collection the user never registered.
-func guiUsesGlobalCollections() bool {
-	userDir, err := config.UserDataDir()
-	if err != nil {
-		return false
-	}
-	// Any of these means the user-level layout is in use.
-	for _, name := range []string{"config.yaml", "daemon.yaml", "projects.d"} {
-		if _, statErr := os.Stat(filepath.Join(userDir, name)); statErr == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonConfigPath string) int {
