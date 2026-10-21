@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Clone zvec-ai/zvec-go v0.6.0 into .deps/ and download pre-built native libs.
+# Clone zvec-ai/zvec-go v0.7.0 into .deps/ and download pre-built native libs.
 # Prints ZVEC_LIB_DIR=... for CI (append >> $GITHUB_ENV) or: eval "$(bash scripts/fetch/fetch-zvec-libs.sh)"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DEST="$ROOT/.deps/zvec-go"
-TAG="${ZVEC_GO_TAG:-v0.6.0}"
+TAG="${ZVEC_GO_TAG:-v0.7.0}"
 ACP_PATCH_DIR="$ROOT/scripts/fetch/patches/zvec-go-acp"
 
 apply_zvec_acp_patch() {
@@ -109,8 +109,20 @@ fi
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/dev/native-path.sh"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib/zvec-native-lib-guard.sh"
 ZVEC_LIB_DIR="$(native_path "$ZVEC_LIB_DIR")"
 
 mkdir -p "$ROOT/.deps"
-printf 'ZVEC_LIB_DIR=%s\n' "$ZVEC_LIB_DIR" > "$ROOT/.deps/zvec-lib.env"
-echo "ZVEC_LIB_DIR=$ZVEC_LIB_DIR"
+# Windows paths contain backslashes, which bash `source` would treat as escapes.
+# Quote such values so every `source .deps/zvec-lib.env` consumer keeps them intact.
+# Callers redirect this script's stdout into the same file, so print the identical
+# line: both writes must agree or the file ends up with a stray fragment.
+if [[ "$ZVEC_LIB_DIR" == *\\* || "$ZVEC_LIB_DIR" == *" "* ]]; then
+  ENV_LINE="ZVEC_LIB_DIR='$ZVEC_LIB_DIR'"
+else
+  ENV_LINE="ZVEC_LIB_DIR=$ZVEC_LIB_DIR"
+fi
+printf '%s\n' "$ENV_LINE" > "$ROOT/.deps/zvec-lib.env"
+warn_stale_zvec_root_native_libs "$ROOT" "$LIB_DIR"
+echo "$ENV_LINE"

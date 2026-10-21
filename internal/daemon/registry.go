@@ -55,6 +55,7 @@ type Registry struct {
 	closeCancel context.CancelFunc
 
 	mu                  sync.Mutex
+	reloadMu            sync.Mutex
 	open                map[string]*workspaceHandle
 	opening             map[string]*openWait
 	closing             bool
@@ -63,6 +64,7 @@ type Registry struct {
 	closeDrainTimeout   time.Duration
 	openingNotify       func(workspaceID string)
 	onRuntimeShutdown   func() // test hook; called once after CloseResources + ShutdownRuntime
+	reload              func() (Config, error)
 }
 
 // NewRegistry creates a workspace registry from daemon config.
@@ -120,10 +122,6 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 	if workspaceID == "" {
 		return nil, nil, fmt.Errorf("workspace_id is required")
 	}
-	spec := r.cfg.SpecByID(workspaceID)
-	if spec == nil {
-		return nil, nil, fmt.Errorf("%w: %q", ErrUnknownWorkspace, workspaceID)
-	}
 
 	for {
 		r.mu.Lock()
@@ -131,6 +129,14 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 			r.mu.Unlock()
 			return nil, nil, ErrRegistryClosing
 		}
+		// The spec and the config snapshot are read under the same lock as the
+		// open maps, so a concurrent reload cannot swap them mid-open.
+		spec := r.cfg.SpecByID(workspaceID)
+		if spec == nil {
+			r.mu.Unlock()
+			return nil, nil, fmt.Errorf("%w: %q", ErrUnknownWorkspace, workspaceID)
+		}
+		cfgSnapshot := r.cfg
 		if h, ok := r.open[workspaceID]; ok {
 			return r.borrowHandleLocked(h, workspaceID)
 		}
@@ -168,7 +174,7 @@ func (r *Registry) BorrowService(workspaceID string) (service.Service, func(), e
 					slog.Error("workspace init panic", "workspace_id", workspaceID, "panic", rec)
 				}
 			}()
-			h, err = r.initWorkspace(*spec)
+			h, err = r.initWorkspace(*spec, cfgSnapshot)
 		}()
 		r.mu.Lock()
 		delete(r.opening, workspaceID)
@@ -220,14 +226,34 @@ func (r *Registry) reserveOpenSlotLocked(spec WorkspaceSpec) (*workspaceHandle, 
 	return nil, nil
 }
 
-func (r *Registry) initWorkspace(spec WorkspaceSpec) (*workspaceHandle, error) {
+func (r *Registry) initWorkspace(spec WorkspaceSpec, cfg Config) (*workspaceHandle, error) {
 	if err := r.closeCtx.Err(); err != nil {
 		return nil, err
 	}
-	settings, err := config.LoadWorkspaceFromSpec(spec.ID, spec.Root, spec.IndexDir, spec.ConfigPath, config.LoadOptions{
-		PathContainment: config.ParsePathContainmentMode(r.cfg.PathContainment),
-		PathAllowlist:   r.cfg.PathAllowlist,
-	})
+	autoIndex := cfg.AutoIndexOnOpenEnabled()
+	containment := config.ParsePathContainmentMode(cfg.PathContainment)
+	var (
+		settings *config.Settings
+		err      error
+	)
+	if spec.FromProjectsDir {
+		// Global install layout: project.yaml drives overrides, the index lives
+		// under the user-level collections dir, config/secrets stay global, and
+		// auto_index_on_open (default true) applies.
+		settings, err = LoadCollectionSettings(spec, autoIndex, containment, cfg.PathAllowlist)
+	} else {
+		// Explicit legacy workspace: keep the historical default of no automatic
+		// indexing unless auto_index_on_open is set in daemon.yaml.
+		legacyAuto := false
+		if cfg.AutoIndexOnOpen != nil {
+			legacyAuto = *cfg.AutoIndexOnOpen
+		}
+		settings, err = config.LoadWorkspaceFromSpec(spec.ID, spec.Root, spec.IndexDir, spec.ConfigPath, config.LoadOptions{
+			AutoIndexOnStart: &legacyAuto,
+			PathContainment:  containment,
+			PathAllowlist:    cfg.PathAllowlist,
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +266,7 @@ func (r *Registry) initWorkspace(spec WorkspaceSpec) (*workspaceHandle, error) {
 		cfg := zvec.Config{
 			IndexDir:      settings.IndexDir,
 			WorkspaceRoot: settings.WorkspaceRoot,
+			CollectionID:  settings.CollectionID,
 			ProfileName:   settings.App.ActiveProfile,
 			Dimensions:    profile.Dimensions,
 		}
@@ -369,6 +396,7 @@ func (r *Registry) discardHandle(h *workspaceHandle) {
 			zvec.ReclaimCollectionLock(zvec.Config{
 				IndexDir:      h.settings.IndexDir,
 				WorkspaceRoot: h.settings.WorkspaceRoot,
+				CollectionID:  h.settings.CollectionID,
 				ProfileName:   h.settings.App.ActiveProfile,
 				Dimensions:    profile.Dimensions,
 			})
@@ -503,7 +531,9 @@ func (r *Registry) hasDiscards() bool {
 	return r.discards > 0
 }
 
-// Config returns the daemon configuration.
+// Config returns the daemon configuration snapshot.
 func (r *Registry) Config() Config {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.cfg
 }

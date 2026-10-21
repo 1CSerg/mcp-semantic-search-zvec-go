@@ -22,7 +22,7 @@ func testIdentity(wsID, wsRoot, profile string, dims int) IndexIdentity {
 }
 
 func TestIndexMetaRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	identity := testIdentity("ws1", "/proj", "smoke", 128)
 	if err := EnsureIndexMeta(dir, identity); err != nil {
 		t.Fatal(err)
@@ -34,13 +34,13 @@ func TestIndexMetaRoundTrip(t *testing.T) {
 	if meta.WorkspaceID != "ws1" || meta.EmbeddingDimensions != 128 {
 		t.Fatalf("meta=%+v", meta)
 	}
-	if err := ValidateIndexMeta(dir, "ws2", "smoke", 128, 0, ""); err == nil {
+	if err := ValidateIndexMeta(dir, "ws2", "", "smoke", 128, 0, ""); err == nil {
 		t.Fatal("expected owner mismatch")
 	}
 }
 
 func TestIndexMetaPathPresent(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if IndexMetaPresent(dir) {
 		t.Fatal("expected missing")
 	}
@@ -53,14 +53,14 @@ func TestIndexMetaPathPresent(t *testing.T) {
 }
 
 func TestReadIndexMetaMissing(t *testing.T) {
-	_, err := ReadIndexMeta(t.TempDir())
+	_, err := ReadIndexMeta(tempDir(t))
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestEnsureIndexMetaExisting(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	identity := testIdentity("ws1", "/proj", "smoke", 128)
 	if err := EnsureIndexMeta(dir, identity); err != nil {
 		t.Fatal(err)
@@ -78,7 +78,7 @@ func TestEnsureIndexMetaExisting(t *testing.T) {
 }
 
 func TestEnsureIndexMetaSetsZvecGoVersion(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := EnsureIndexMeta(dir, testIdentity("ws1", "/proj", "smoke", 128)); err != nil {
 		t.Fatal(err)
 	}
@@ -92,20 +92,20 @@ func TestEnsureIndexMetaSetsZvecGoVersion(t *testing.T) {
 }
 
 func TestValidateIndexMetaDimensions(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := EnsureIndexMeta(dir, testIdentity("ws1", "/proj", "smoke", 128)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateIndexMeta(dir, "ws1", "smoke", 64, 0, ""); err == nil {
+	if err := ValidateIndexMeta(dir, "ws1", "", "smoke", 64, 0, ""); err == nil {
 		t.Fatal("expected dimension mismatch")
 	}
-	if err := ValidateIndexMeta(dir, "ws1", "other", 128, 0, ""); err == nil {
+	if err := ValidateIndexMeta(dir, "ws1", "", "other", 128, 0, ""); err == nil {
 		t.Fatal("expected profile mismatch")
 	}
 }
 
 func TestEnsureIndexMetaBackfillsIncomplete(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: version.ZvecGoVersion}); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestEnsureIndexMetaBackfillsIncomplete(t *testing.T) {
 }
 
 func TestValidateIndexMetaChunkingVersionMismatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws1",
 		EmbeddingProfile:    "smoke",
@@ -145,14 +145,14 @@ func TestValidateIndexMetaChunkingVersionMismatch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err := ValidateIndexMeta(dir, "ws1", "smoke", 128, 1, "hybrid")
+	err := ValidateIndexMeta(dir, "ws1", "", "smoke", 128, 1, "hybrid")
 	if err == nil || !errors.Is(err, ErrOwnerMismatch) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestValidateIndexMetaChunkingStrategyMismatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws1",
 		EmbeddingProfile:    "smoke",
@@ -162,14 +162,14 @@ func TestValidateIndexMetaChunkingStrategyMismatch(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err := ValidateIndexMeta(dir, "ws1", "smoke", 128, 1, "hybrid")
+	err := ValidateIndexMeta(dir, "ws1", "", "smoke", 128, 1, "hybrid")
 	if err == nil || !errors.Is(err, ErrOwnerMismatch) {
 		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestWriteIndexMetaPreservesCreatedAt(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	const created = "2020-01-01T00:00:00Z"
 	if err := WriteIndexMeta(dir, IndexMeta{CreatedAt: created, WorkspaceID: "ws1"}); err != nil {
 		t.Fatal(err)
@@ -205,7 +205,7 @@ func TestValidateIndexMetaWorkspaceIDCaseInsensitiveOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("windows-only")
 	}
-	dir := t.TempDir()
+	dir := tempDir(t)
 	root := filepath.Clean(`D:\Projects\MyApp`)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         root,
@@ -216,7 +216,7 @@ func TestValidateIndexMetaWorkspaceIDCaseInsensitiveOnWindows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateIndexMeta(dir, strings.ToLower(root), "smoke", 128, 1, "hybrid"); err != nil {
+	if err := ValidateIndexMeta(dir, strings.ToLower(root), "", "smoke", 128, 1, "hybrid"); err != nil {
 		t.Fatalf("expected case-insensitive workspace_id match: %v", err)
 	}
 }

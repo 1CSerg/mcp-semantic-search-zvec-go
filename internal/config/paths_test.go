@@ -7,6 +7,51 @@ import (
 	"testing"
 )
 
+// TestGlobalDirAbsolute pins the MCP_GLOBAL_DIR contract: it must be absolute so
+// every derived global path (bin, config, secrets, collections, logs) is stable
+// regardless of the process working directory.
+func TestGlobalDirAbsolute(t *testing.T) {
+	rel := filepath.Join("relative", "global")
+	t.Setenv(envGlobalDir, rel)
+	if _, err := UserDataDir(); err == nil {
+		t.Fatalf("relative MCP_GLOBAL_DIR %q must be rejected", rel)
+	}
+	if _, err := CollectionDir("abc123"); err == nil {
+		t.Fatal("CollectionDir must fail when MCP_GLOBAL_DIR is relative")
+	}
+
+	abs := t.TempDir()
+	t.Setenv(envGlobalDir, abs)
+	paths := map[string]func() (string, error){
+		"config":      GlobalConfigPath,
+		"env":         GlobalEnvPath,
+		"projects":    ProjectsDir,
+		"collections": CollectionsDir,
+		"logs":        GlobalLogsDir,
+		"bin":         GlobalBinDir,
+		"models":      GlobalModelsDir,
+	}
+	for name, fn := range paths {
+		got, err := fn()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !filepath.IsAbs(got) {
+			t.Fatalf("%s path %q is not absolute", name, got)
+		}
+		if !IsPathUnderRoot(abs, got) {
+			t.Fatalf("%s path %q is outside MCP_GLOBAL_DIR %q", name, got, abs)
+		}
+	}
+	collDir, err := CollectionDir("abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsPathUnderRoot(abs, collDir) {
+		t.Fatalf("collection dir %q is outside MCP_GLOBAL_DIR %q", collDir, abs)
+	}
+}
+
 func TestParsePathContainmentMode(t *testing.T) {
 	tests := []struct {
 		in   string

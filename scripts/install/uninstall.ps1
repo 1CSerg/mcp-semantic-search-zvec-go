@@ -1,14 +1,47 @@
 param(
-    [switch]$KeepData
+    [switch]$KeepData,
+    # Remove the user-level application as well (requires no registrations or -Force).
+    [switch]$UninstallApp,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
+
+# The shared helpers live in the clone (scripts/lib) when this script runs from the
+# repository, and in <userdir>/lib when it was installed with the application. Both
+# locations must work: the documented app uninstall runs the installed copy.
+function Resolve-InstallLib {
+    param([string]$ScriptDir)
+    $candidates = @()
+    if ((Split-Path -Leaf $ScriptDir) -eq '.mcp-semantic-search-zvec-go') {
+        # A project-local install: the clone helpers are two levels up.
+        $candidates += Join-Path (Split-Path $ScriptDir -Parent) 'scripts\lib\global-install.ps1'
+        $candidates += Join-Path $ScriptDir 'bin\global-install.ps1'
+    } else {
+        # The repository's scripts\install, or <userdir> with its lib\ directory.
+        $candidates += Join-Path (Split-Path $ScriptDir -Parent) 'lib\global-install.ps1'
+        $candidates += Join-Path $ScriptDir 'lib\global-install.ps1'
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
+
+$libPath = Resolve-InstallLib -ScriptDir $PSScriptRoot
+if (-not $libPath) {
+    throw "cannot find global-install.ps1 for $PSScriptRoot; re-run install.ps1 to restore the helpers"
+}
+$libDir = Split-Path $libPath -Parent
+. $libPath
+$stayOpen = Join-Path $libDir 'Stay-OpenOnError.ps1'
+if (-not (Test-Path $stayOpen)) { $stayOpen = Join-Path $PSScriptRoot 'bin\Stay-OpenOnError.ps1' }
+if (Test-Path $stayOpen) { . $stayOpen }
+
 if ((Split-Path -Leaf $PSScriptRoot) -eq '.mcp-semantic-search-zvec-go') {
-    . (Join-Path $PSScriptRoot 'bin\Stay-OpenOnError.ps1')
     $InstallDir = $PSScriptRoot
     $TargetRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 } else {
-    . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
     $TargetRoot = (Get-Location).Path
     $InstallDir = Join-Path $TargetRoot ".mcp-semantic-search-zvec-go"
 }
@@ -318,6 +351,105 @@ if (Test-Path $manifestPath) {
 
 $failed = $false
 try {
+
+# ---------------------------------------------------------------------------
+# Global layout: the project only holds a project.yaml. Uninstalling the project
+# removes its managed entries, rules and registration; collection data stays.
+# ---------------------------------------------------------------------------
+$globalDir = $null
+try { $globalDir = Get-GlobalDir } catch { $globalDir = $null }
+
+if ($UninstallApp) {
+    if (-not $globalDir) {
+        throw "cannot determine the user-level install directory (set MCP_GLOBAL_DIR or LOCALAPPDATA)"
+    }
+    $regs = @(Get-GlobalRegistrations -GlobalDir $globalDir)
+    if ($regs.Count -gt 0 -and -not $Force) {
+        $list = ($regs | ForEach-Object { "  $($_.ID) -> $($_.Root)" }) -join "`n"
+        throw @"
+Refusing to remove the user-level application: $($regs.Count) project(s) are still registered.
+$list
+
+Uninstall those projects first, or re-run with -Force. Collection data is
+preserved either way.
+"@
+    }
+    $p = Get-GlobalPaths -GlobalDir $globalDir
+    if (Test-Path $p.Binary) {
+        $null = Invoke-GlobalBinary -GlobalDir $globalDir -Arguments @("--stop-daemon")
+        Start-Sleep -Milliseconds 500
+    }
+    foreach ($dir in @($p.Bin, $p.Runtime)) {
+        if (Test-Path $dir) { Remove-ItemWithRetry -LiteralPath $dir -Recurse }
+    }
+    foreach ($file in @($p.Config, $p.DaemonYaml, $p.AuthToken, (Join-Path $globalDir "install-manifest.json"))) {
+        if (Test-Path $file) { Remove-ItemWithRetry -LiteralPath $file }
+    }
+    if (Test-Path $p.ProjectsDir) {
+        Get-ChildItem -LiteralPath $p.ProjectsDir -Filter "*.yaml" -File | ForEach-Object {
+            Remove-ItemWithRetry -LiteralPath $_.FullName
+        }
+    }
+    Write-Host "Removed the user-level application from $globalDir"
+    Write-Host "Collection data preserved: $($p.Collections)"
+    Write-Host "Secrets preserved: $($p.EnvFile)"
+    exit 0
+}
+
+$projectConfigPath = Get-ProjectConfigPath -TargetRoot $TargetRoot
+$isGlobalProject = (Test-Path $projectConfigPath) -and -not (Test-LegacyProjectInstall -TargetRoot $TargetRoot)
+if ($isGlobalProject) {
+    if (-not $globalDir) {
+        throw "cannot determine the user-level install directory (set MCP_GLOBAL_DIR or LOCALAPPDATA)"
+    }
+    $unregistered = $false
+    Invoke-UninstallStep "unregister project" {
+        $result = Invoke-GlobalBinary -GlobalDir $globalDir -Arguments @("--project-remove", $TargetRoot)
+        if ($result.ExitCode -ne 0) { throw $result.Output }
+        Write-Host $result.Output
+        $unregistered = $true
+    }
+    Invoke-UninstallStep "remove mcp.json entry" {
+        $null = Remove-ManagedMcpEntry -Path (Join-Path $TargetRoot ".cursor\mcp.json") -ServerKey $ServerKey
+        Write-Host "Removed $ServerKey from .cursor/mcp.json"
+    }
+    Invoke-UninstallStep "remove Roo mcp.json entry" {
+        $null = Remove-ManagedMcpEntry -Path (Join-Path $TargetRoot ".roo\mcp.json") -ServerKey $ServerKey
+        Write-Host "Removed $ServerKey from .roo/mcp.json"
+    }
+    Invoke-UninstallStep "remove managed rules" {
+        foreach ($rel in @($DefaultCursorRuleRel, $DefaultRooRuleRel)) {
+            $path = Join-Path $TargetRoot ($rel -replace '/', '\')
+            if (Test-ManagedRuleFile -Path $path) {
+                Remove-ItemWithRetry -LiteralPath $path
+                Write-Host "Removed rule: $path"
+            } elseif (Test-Path $path) {
+                Write-Host "Skipped rule (not install-managed): $path"
+            }
+        }
+    }
+    # Deleting project.yaml while the registration survives leaves projects.d
+    # pointing at a root with no config, which makes the whole registry invalid and
+    # the daemon refuse to start. Keep the file unless the unregister succeeded.
+    if ($unregistered) {
+        Invoke-UninstallStep "remove project config" {
+            if (Test-Path $projectConfigPath) { Remove-ItemWithRetry -LiteralPath $projectConfigPath }
+        }
+    } else {
+        Write-Warning "kept ${projectConfigPath}: the project is still registered, so removing it would leave the registry inconsistent"
+    }
+    Invoke-UninstallStep "remove .gitignore block" {
+        Remove-GitignoreBlock (Join-Path $TargetRoot ".gitignore")
+    }
+    if ($script:StepErrors.Count -gt 0) {
+        Write-Warning "Uninstall completed with $($script:StepErrors.Count) error(s)."
+        foreach ($err in $script:StepErrors) { Write-Warning $err }
+        $failed = $true
+    } else {
+        Write-Host "Uninstalled $ServerKey from $TargetRoot. Collection data preserved. Restart Cursor."
+    }
+    exit 0
+}
 
 Invoke-UninstallStep "stop MCP processes" {
     Stop-McpProcesses -Workspace $TargetRoot -InstallDir $InstallDir

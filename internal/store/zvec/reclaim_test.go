@@ -7,8 +7,8 @@ import (
 )
 
 func TestReclaimCollectionLock(t *testing.T) {
-	dir := t.TempDir()
-	workspace := t.TempDir()
+	dir := tempDir(t)
+	workspace := tempDir(t)
 	cfg := Config{
 		IndexDir:      dir,
 		WorkspaceRoot: workspace,
@@ -37,8 +37,8 @@ func TestReclaimCollectionLock(t *testing.T) {
 
 func TestReclaimCollectionLockMissingDir(t *testing.T) {
 	cfg := Config{
-		IndexDir:      t.TempDir(),
-		WorkspaceRoot: t.TempDir(),
+		IndexDir:      tempDir(t),
+		WorkspaceRoot: tempDir(t),
 		ProfileName:   "test",
 		Dimensions:    8,
 	}
@@ -48,7 +48,7 @@ func TestReclaimCollectionLockMissingDir(t *testing.T) {
 }
 
 func TestReclaimAllCollectionLocks(t *testing.T) {
-	indexDir := t.TempDir()
+	indexDir := tempDir(t)
 	for _, name := range []string{"ws_one", "ws_two"} {
 		collectionPath := filepath.Join(indexDir, "zvec", name)
 		if err := os.MkdirAll(collectionPath, 0o755); err != nil {

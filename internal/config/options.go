@@ -12,6 +12,7 @@ import (
 type LoadOptions struct {
 	WorkspaceRoot    string
 	WorkspaceID      string
+	CollectionID     string
 	IndexDir         string
 	ConfigPath       string
 	EnvPath          string
@@ -21,6 +22,9 @@ type LoadOptions struct {
 	GitHubRepo       string
 	// Secrets holds KEY=VALUE pairs from workspace .env without mutating process env.
 	Secrets map[string]string
+	// DotEnvPaths, when non-nil, replaces the default .env candidate list
+	// (config dir, workspace install dir, EnvPath).
+	DotEnvPaths []string
 	// UseProcessEnv merges process environment for overrides and secret lookup (default per-project mode).
 	UseProcessEnv bool
 	// PathContainment controls validation of INDEX_DIR/CONFIG_PATH against workspace root.
@@ -100,7 +104,11 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 	if secrets == nil {
 		secrets = make(map[string]string)
 	}
-	if err := mergeDotEnvIntoMap(secrets, dotEnvCandidatePaths(workspace, configPath, opts.EnvPath)); err != nil {
+	dotEnvPaths := opts.DotEnvPaths
+	if dotEnvPaths == nil {
+		dotEnvPaths = dotEnvCandidatePaths(workspace, configPath, opts.EnvPath)
+	}
+	if err := mergeDotEnvIntoMap(secrets, dotEnvPaths); err != nil {
 		return nil, err
 	}
 
@@ -160,6 +168,7 @@ func LoadWithOptions(opts LoadOptions) (*Settings, error) {
 	return &Settings{
 		WorkspaceRoot:    workspace,
 		WorkspaceID:      workspaceID,
+		CollectionID:     opts.CollectionID,
 		IndexDir:         indexDir,
 		ConfigPath:       configPath,
 		AutoIndexOnStart: autoIndex,
@@ -265,4 +274,72 @@ func LoadWorkspaceFromSpec(id, root, indexDir, configPath string, opts LoadOptio
 		opts.AutoIndexOnStart = &auto
 	}
 	return LoadWithOptions(opts)
+}
+
+// LoadForCollection loads settings for a global-install collection: the index
+// lives under the user-level collections dir, config and secrets come from the
+// global install, and per-project overrides from pc are applied on top.
+func LoadForCollection(pc *ProjectConfig, workspaceRoot string, opts LoadOptions) (*Settings, error) {
+	if pc == nil {
+		return nil, fmt.Errorf("project config is required")
+	}
+	if err := ValidateCollectionID(pc.CollectionID); err != nil {
+		return nil, err
+	}
+
+	if opts.IndexDir == "" {
+		indexDir, err := CollectionDir(pc.CollectionID)
+		if err != nil {
+			return nil, err
+		}
+		opts.IndexDir = indexDir
+	}
+	if opts.ConfigPath == "" {
+		configPath, err := GlobalConfigPath()
+		if err != nil {
+			return nil, err
+		}
+		opts.ConfigPath = configPath
+	}
+
+	// Secrets come from the global .env and an explicit ENV_PATH only;
+	// process env stays untouched (same isolation as daemon mode).
+	globalEnv, err := GlobalEnvPath()
+	if err != nil {
+		return nil, err
+	}
+	opts.DotEnvPaths = []string{globalEnv, opts.EnvPath}
+	opts.UseProcessEnv = false
+
+	// Index and config live outside the workspace root by design; recognize the
+	// global data dir as a legal location for path containment checks.
+	userDir, err := UserDataDir()
+	if err != nil {
+		return nil, err
+	}
+	opts.PathAllowlist = append(append([]string(nil), opts.PathAllowlist...), userDir)
+
+	opts.WorkspaceRoot = workspaceRoot
+	opts.WorkspaceID = pc.CollectionID
+	opts.CollectionID = pc.CollectionID
+
+	settings, err := LoadWithOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	// A collection has no per-project install tree, so LogsDir would resolve to
+	// <userdir>/logs while the daemon actually writes <userdir>/data/logs. Point it
+	// at the real location so index_status.diagnostics.log_file is usable.
+	if logsDir, logErr := GlobalLogsDir(); logErr == nil {
+		settings.LogsDirOverride = logsDir
+	}
+	// Overrides are applied first, then the merged result is validated as a
+	// whole so a project cannot produce settings the global config would reject.
+	if err := ApplyProjectOverrides(&settings.App, pc); err != nil {
+		return nil, err
+	}
+	if err := ValidateCollectionSettings(settings); err != nil {
+		return nil, fmt.Errorf("collection %q: %w", pc.CollectionID, err)
+	}
+	return settings, nil
 }

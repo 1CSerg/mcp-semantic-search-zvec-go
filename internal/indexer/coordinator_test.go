@@ -16,6 +16,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lock"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/testutil"
 )
 
 type mockEmbedder struct {
@@ -85,22 +86,44 @@ func (s *memZvec) WipeCollection() error {
 	return nil
 }
 
+// tempDir returns a per-test directory removed with a Windows-aware retry (see
+// testutil.RemoveDirWithRetry): a just-closed handle keeps a deleted file's
+// directory entry alive for a few milliseconds, which otherwise surfaces as an
+// opaque "TempDir RemoveAll cleanup: The directory is not empty".
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Cleanup(func() { testutil.RemoveDirWithRetry(t, dir) })
+	return dir
+}
+
 func waitCoordinatorIdle(t *testing.T, c *Coordinator) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		p := c.CurrentProgress()
-		if !c.IsRunning() && (p.State == StateIdle || p.State == StateError) {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	// WaitForIdle releases only after the background goroutine has persisted its
+	// final progress, so the index dir is quiescent when this returns.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := c.WaitForIdle(ctx); err != nil {
+		t.Fatalf("coordinator did not become idle: %v", err)
 	}
-	t.Fatal("coordinator did not become idle")
 }
 
 func releaseCoordinatorTestResources(c *Coordinator) {
 	_ = c.lock.Release()
 	_ = c.Zvec.Close()
+}
+
+// removeIndexDirWithRetry deletes the index dir that tempDir(t) created under
+// root and reports a real leak instead of letting testing.go fail the run with an
+// opaque "directory is not empty" from its own cleanup.
+//
+// Windows marks a deleted file as pending-delete until the last handle closes, so
+// a file removed while a handle is still being closed keeps its directory entry
+// alive for a few milliseconds. The retry loop absorbs exactly that window; a dir
+// that is still not removable afterwards is a genuine leak and fails the test.
+func removeIndexDirWithRetry(t *testing.T, indexDir string) {
+	t.Helper()
+	testutil.RemoveDirWithRetry(t, indexDir)
 }
 
 func registerCoordinatorTestCleanup(t *testing.T, c *Coordinator) {
@@ -109,11 +132,15 @@ func registerCoordinatorTestCleanup(t *testing.T, c *Coordinator) {
 	t.Cleanup(func() {
 		waitCoordinatorIdle(t, c)
 		releaseCoordinatorTestResources(c)
+		// Runs before t.TempDir's own cleanup (cleanups are LIFO) so a leftover
+		// handle is reported here, with the entries that survived, instead of as an
+		// unexplained TempDir RemoveAll failure.
+		removeIndexDirWithRetry(t, c.Settings.IndexDir)
 	})
 }
 
 func TestCoordinatorStartRecoversStaleProgress(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	store := NewProgressStore(indexDir)
 	if err := store.Save(StartRunning(false)); err != nil {
@@ -152,7 +179,7 @@ func TestCoordinatorStartRecoversStaleProgress(t *testing.T) {
 }
 
 func TestCoordinatorIndexesFile(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -217,7 +244,7 @@ func TestCoordinatorIndexesFile(t *testing.T) {
 }
 
 func TestCoordinatorReindexesWhenContentHashMissingOrChanged(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -347,7 +374,7 @@ func TestCoordinatorReindexesWhenContentHashMissingOrChanged(t *testing.T) {
 }
 
 func TestCoordinatorSkipsUnchangedFiles(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -400,7 +427,7 @@ func (c *countingEmbedder) Embed(ctx context.Context, texts []string) ([][]float
 }
 
 func TestCoordinatorAlreadyRunning(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		WorkspaceID:   "test-ws",
@@ -444,7 +471,7 @@ func (s *slowEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, 
 }
 
 func TestCoordinatorFileDeletedMidRun(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -524,7 +551,7 @@ func TestIsZvecUnavailable(t *testing.T) {
 }
 
 func TestCoordinatorCurrentProgressLoadError(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -552,7 +579,7 @@ func TestCoordinatorCurrentProgressLoadError(t *testing.T) {
 }
 
 func TestCoordinatorStartProgressSaveFails(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	blocked := filepath.Join(root, "blocked")
 	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -583,7 +610,7 @@ func TestCoordinatorStartProgressSaveFails(t *testing.T) {
 }
 
 func TestCoordinatorIncrementalRemovesDeletedFile(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -632,7 +659,7 @@ func TestCoordinatorIncrementalRemovesDeletedFile(t *testing.T) {
 }
 
 func TestCoordinatorEmbedFailure(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.WriteFile(filepath.Join(root, "bad.go"), []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -673,7 +700,7 @@ func (failingEmbedder) Embed(context.Context, []string) ([][]float32, error) {
 func (failingEmbedder) Dimensions() int { return 4 }
 
 func TestCoordinatorStartFailsWhenLockHeld(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -716,7 +743,7 @@ func TestCoordinatorStartFailsWhenLockHeld(t *testing.T) {
 }
 
 func TestCoordinatorForceReindexOwnerMismatch(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	oldRoot := filepath.Join(root, "old-path")
 	newRoot := root
@@ -798,7 +825,7 @@ func (s *selectiveFailZvec) UpsertChunks(chunks []zvec.Chunk, _ [][]float32) err
 }
 
 func TestCoordinatorSkipsPerFileZvecError(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -865,7 +892,7 @@ func TestCoordinatorSkipsPerFileZvecError(t *testing.T) {
 }
 
 func TestCoordinatorRunStopsOnLifecycleCancel(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -945,7 +972,7 @@ func TestCoordinatorWaitForIdle(t *testing.T) {
 
 func newTestCoordinator(t *testing.T) *Coordinator {
 	t.Helper()
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	settings := &config.Settings{
 		WorkspaceRoot: root,
@@ -998,7 +1025,7 @@ func TestCoordinatorCloseConcurrentStart(t *testing.T) {
 }
 
 func TestCoordinatorStartHoldsZvecCloseMu(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.WriteFile(filepath.Join(root, "slow.go"), []byte("package main\n"+strings.Repeat("// x\n", 400)), 0o644); err != nil {
 		t.Fatal(err)
@@ -1074,7 +1101,7 @@ func (m *failEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 func (m *failEmbedder) Dimensions() int { return m.dims }
 
 func TestCoordinatorPreservesIndexOnEmbedFailure(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1195,7 +1222,7 @@ func (s *lockErrorZvec) DocCount() (int, error) {
 }
 
 func TestManifestZvecDesyncLockError(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1241,7 +1268,7 @@ func (s *lockErrorZvec) DocIDsPresent([]string) (bool, error) {
 }
 
 func TestManifestZvecDesyncMissingManifestDoc(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1281,7 +1308,7 @@ func TestManifestZvecDesyncMissingManifestDoc(t *testing.T) {
 }
 
 func TestManifestZvecDesyncSameCountDifferentSets(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(indexDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -1345,7 +1372,7 @@ func (m *batchFailEmbedder) Embed(_ context.Context, texts []string) ([][]float3
 func (m *batchFailEmbedder) Dimensions() int { return m.dims }
 
 func TestCoordinatorPreservesIndexOnSecondBatchEmbedFailure(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1454,7 +1481,7 @@ func (s *partialUpsertZvec) UpsertChunks(chunks []zvec.Chunk, vectors [][]float3
 }
 
 func TestCoordinatorPartialUpsertDoesNotCommitManifest(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1519,7 +1546,7 @@ func (s *flushFailZvec) UpsertChunks(chunks []zvec.Chunk, vectors [][]float32) e
 }
 
 func TestCoordinatorFlushWriteErrorDoesNotCommitManifest(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1569,7 +1596,7 @@ func TestCoordinatorFlushWriteErrorDoesNotCommitManifest(t *testing.T) {
 }
 
 func TestCoordinatorForceReindexPreservesActiveOnEmbedFailure(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1680,7 +1707,7 @@ func TestCoordinatorForceReindexPreservesActiveOnEmbedFailure(t *testing.T) {
 }
 
 func TestCoordinatorJournalAppendFailureStillDeletesStale(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)
@@ -1767,7 +1794,7 @@ func TestCoordinatorJournalAppendFailureStillDeletesStale(t *testing.T) {
 }
 
 func TestCoordinatorManifestUpsertFailureDoesNotJournalDeleteLiveDocs(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	indexDir := filepath.Join(root, "index")
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatal(err)

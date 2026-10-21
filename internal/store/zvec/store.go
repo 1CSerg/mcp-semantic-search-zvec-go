@@ -71,27 +71,51 @@ type Store interface {
 type Config struct {
 	IndexDir         string
 	WorkspaceRoot    string
+	CollectionID     string // global-install identity; overrides WorkspaceRoot for naming
 	ProfileName      string
 	Dimensions       int
 	CollectionSuffix string // e.g. "_staging" for force reindex build
 }
 
-// CollectionName derives stable zvec collection directory name.
+// CollectionName derives a stable zvec collection directory name from the workspace root.
 func CollectionName(workspaceRoot, profileName string, dimensions int) string {
 	return collectionNameWithSuffix(workspaceRoot, profileName, dimensions, "")
 }
 
+// CollectionNameForID derives a stable zvec collection directory name from a collection id.
+// Unlike CollectionName it does not depend on the workspace path, so moving the
+// project keeps the index identity.
+func CollectionNameForID(collectionID, profileName string, dimensions int) string {
+	return collectionNameHash(fmt.Sprintf("%s:%s:%d", collectionID, profileName, dimensions), "")
+}
+
 func collectionNameWithSuffix(workspaceRoot, profileName string, dimensions int, suffix string) string {
 	workspaceRoot = config.NormalizeAbsolutePath(filepath.Clean(workspaceRoot))
-	raw := fmt.Sprintf("%s:%s:%d", workspaceRoot, profileName, dimensions)
+	return collectionNameHash(fmt.Sprintf("%s:%s:%d", workspaceRoot, profileName, dimensions), suffix)
+}
+
+func collectionNameHash(raw, suffix string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return "ws_" + hex.EncodeToString(sum[:])[:16] + suffix
 }
 
+// CollectionName returns the active (non-staging) collection name for cfg.
+func (cfg Config) CollectionName() string {
+	base := cfg
+	base.CollectionSuffix = ""
+	return base.collectionName()
+}
+
+func (cfg Config) collectionName() string {
+	if cfg.CollectionID != "" {
+		return collectionNameHash(fmt.Sprintf("%s:%s:%d", cfg.CollectionID, cfg.ProfileName, cfg.Dimensions), cfg.CollectionSuffix)
+	}
+	return collectionNameWithSuffix(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions, cfg.CollectionSuffix)
+}
+
 // CollectionPath returns the on-disk path for a workspace collection.
 func CollectionPath(cfg Config) string {
-	name := collectionNameWithSuffix(cfg.WorkspaceRoot, cfg.ProfileName, cfg.Dimensions, cfg.CollectionSuffix)
-	return filepath.Join(cfg.IndexDir, "zvec", name)
+	return filepath.Join(cfg.IndexDir, "zvec", cfg.collectionName())
 }
 
 // StagingCollectionSuffix is appended to the active collection name during force reindex.

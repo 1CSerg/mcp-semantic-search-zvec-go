@@ -14,30 +14,37 @@ import (
 
 // PrepareWorkspaceLocks stops stale MCP stdio instances, reclaims orphaned lock files,
 // and heals interrupted indexing progress before opening the zvec collection.
+//
+// It must not run the process-killing part for a global-install collection: there
+// the shared daemon owns the index and the MCP proxies are its clients, not
+// competing stdio owners. Their command line names the project root (via
+// --project-config), so scanning would kill the very sessions being served.
 func PrepareWorkspaceLocks(settings *config.Settings) error {
 	if settings == nil {
 		return nil
 	}
 
-	stopped, err := stopStaleStdioInstances(settings.WorkspaceRoot, os.Getpid())
-	if err != nil && !errors.Is(err, ErrStdioScanUnsupported) {
-		return err
-	}
-	for _, pid := range stopped {
-		slog.Info("stopped stale stdio mcp process", "pid", pid, "workspace", settings.WorkspaceRoot)
-	}
+	if settings.CollectionID == "" {
+		stopped, err := stopStaleStdioInstances(settings.WorkspaceRoot, os.Getpid())
+		if err != nil && !errors.Is(err, ErrStdioScanUnsupported) {
+			return err
+		}
+		for _, pid := range stopped {
+			slog.Info("stopped stale stdio mcp process", "pid", pid, "workspace", settings.WorkspaceRoot)
+		}
 
-	wrapperStopped, err := stopLauncherWrappers(settings.WorkspaceRoot, launchChainPIDSet())
-	if err != nil {
-		return err
-	}
-	for _, pid := range wrapperStopped {
-		slog.Info("stopped stale launcher wrapper", "pid", pid, "workspace", settings.WorkspaceRoot)
-	}
-	stopped = append(stopped, wrapperStopped...)
+		wrapperStopped, err := stopLauncherWrappers(settings.WorkspaceRoot, launchChainPIDSet())
+		if err != nil {
+			return err
+		}
+		for _, pid := range wrapperStopped {
+			slog.Info("stopped stale launcher wrapper", "pid", pid, "workspace", settings.WorkspaceRoot)
+		}
+		stopped = append(stopped, wrapperStopped...)
 
-	if len(stopped) > 0 {
-		time.Sleep(killGrace)
+		if len(stopped) > 0 {
+			time.Sleep(killGrace)
+		}
 	}
 
 	staleSecs := settings.App.Indexing.LockStaleSeconds
@@ -90,6 +97,7 @@ func zvecConfigFromSettings(settings *config.Settings) (zvec.Config, bool) {
 	return zvec.Config{
 		IndexDir:      settings.IndexDir,
 		WorkspaceRoot: settings.WorkspaceRoot,
+		CollectionID:  settings.CollectionID,
 		ProfileName:   settings.App.ActiveProfile,
 		Dimensions:    profile.Dimensions,
 	}, true

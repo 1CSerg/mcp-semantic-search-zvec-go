@@ -6,20 +6,38 @@ import (
 	"testing"
 )
 
+// TestLoadConfigMissingPath pins the user-level daemon startup contract: a
+// missing daemon.yaml is not an error, because the daemon starts before any
+// project is added. It must produce a valid config with an empty registry.
 func TestLoadConfigMissingPath(t *testing.T) {
-	if _, err := LoadConfig(""); err == nil {
-		t.Fatal("expected error")
+	t.Setenv("MCP_GLOBAL_DIR", t.TempDir())
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("missing daemon config must not be fatal: %v", err)
+	}
+	if len(cfg.Workspaces) != 0 {
+		t.Fatalf("workspaces=%v", cfg.Workspaces)
+	}
+	if cfg.MaxOpenWorkspaces != defaultMaxOpenWorkspaces {
+		t.Fatalf("max_open_workspaces=%d", cfg.MaxOpenWorkspaces)
 	}
 }
 
+// TestLoadConfigEmptyWorkspaces: an explicitly empty registry is valid so the
+// daemon can run before the first project is registered.
 func TestLoadConfigEmptyWorkspaces(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("MCP_GLOBAL_DIR", dir)
 	path := dir + "/daemon.yaml"
 	if err := os.WriteFile(path, []byte("workspaces: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadConfig(path); err == nil {
-		t.Fatal("expected empty workspaces error")
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("empty workspaces must be valid: %v", err)
+	}
+	if len(cfg.Workspaces) != 0 {
+		t.Fatalf("workspaces=%v", cfg.Workspaces)
 	}
 }
 

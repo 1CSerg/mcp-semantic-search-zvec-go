@@ -323,6 +323,39 @@ func TestLogsDirCustomIndexDir(t *testing.T) {
 	}
 }
 
+// TestLogsDirOverride pins the user-level daemon's log location. Without the
+// override a daemon started detached would resolve LogsDir() from its working
+// directory and write an unpredictable ./logs next to whatever CWD it inherited.
+func TestLogsDirOverride(t *testing.T) {
+	userDir := t.TempDir()
+	t.Setenv(envGlobalDir, userDir)
+	want, err := GlobalLogsDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The user-level daemon has no per-project ConfigPath/IndexDir.
+	settings := &Settings{LogsDirOverride: want}
+	if got := settings.LogsDir(); got != want {
+		t.Fatalf("LogsDir=%q want %q", got, want)
+	}
+	if !IsPathUnderRoot(userDir, want) {
+		t.Fatalf("log dir %q is outside the user dir %q", want, userDir)
+	}
+	if filepath.Base(want) != "logs" || filepath.Base(filepath.Dir(want)) != "data" {
+		t.Fatalf("expected <userdir>/data/logs, got %q", want)
+	}
+
+	// Without the override the legacy install-tree rule still applies.
+	legacy := &Settings{
+		ConfigPath: filepath.Join("/workspace", DefaultInstallDirName, "config.yaml"),
+		IndexDir:   filepath.Join("/workspace", DefaultInstallDirName, DefaultIndexSubdir),
+	}
+	if got := legacy.LogsDir(); got != filepath.Join("/workspace", DefaultInstallDirName, "logs") {
+		t.Fatalf("legacy LogsDir=%q", got)
+	}
+}
+
 func TestParseBoolEnv(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

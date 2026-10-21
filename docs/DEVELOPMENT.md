@@ -104,7 +104,7 @@ templates/                          # MCP fragments
 
 ## zvec-go
 
-Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.6.0 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) bundled with that release). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
+Vector store uses official [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) v0.7.0 (CGO, vendor pre-built libs; native core [alibaba/zvec](https://github.com/alibaba/zvec) bundled with that release). Где зафиксирована версия и как её менять — [Versions](#versions) (подраздел **zvec-go**).
 
 ### Build tags
 
@@ -123,7 +123,7 @@ make fetch-zvec-libs
 # writes .deps/zvec-lib.env with ZVEC_LIB_DIR
 ```
 
-Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.6.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
+Clones [zvec-ai/zvec-go](https://github.com/zvec-ai/zvec-go) tag `v0.7.0` into `.deps/zvec-go` and downloads pre-built libs from GitHub Releases. `go.mod` uses `replace => ./.deps/zvec-go`.
 
 ### tree-sitter (hybrid AST chunking)
 
@@ -220,6 +220,30 @@ First run ~2–3 min (clone + download libs). Covers integration checklist below
 
 Linux: `make smoke-phase1`
 
+The smoke runs in an isolated workspace (`%TEMP%\mcp-zvec-smoke-phase1` on Windows,
+`/tmp/mcp-zvec-smoke-phase1` on POSIX) with its own `config.yaml`, index and logs, so it
+never touches your working index. It asserts `zvec_open_ok` / `zvec_doc_count` before
+searching, covers `path_glob`, and prints the server log tail on failure.
+
+**Windows: run the `.sh` scripts with Git Bash, not WSL.** If WSL is installed,
+`bash.exe` on `PATH` is usually `C:\Windows\system32\bash.exe` (WSL), which has a Linux
+`PATH` without Go or MinGW — the script then dies with `go: command not found` or
+`exit status 127`. Use Git Bash explicitly:
+
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" scripts/smoke/run-phase1.sh
+```
+
+Make targets that call `bash` have the same problem. Either put Git Bash first on `PATH`,
+or override the `BASH` variable (quoted, because the path contains spaces):
+
+```powershell
+make smoke-phase1 BASH="C:/Program Files/Git/bin/bash.exe"
+```
+
+`fetch-zvec-libs`/`fetch-onnx-runtime` write their env file via a temp file + `mv`, so a
+failed fetch no longer leaves a truncated `.deps/zvec-lib.env` behind.
+
 **Indexer smoke** (`make smoke-phase2` — empty project → reindex → HTTP search):
 
 ```powershell
@@ -259,6 +283,43 @@ Linux: `make smoke-phase5`
 ```
 
 Makefile: `make smoke-staging-multi-windows`
+
+**Global install layout smoke** (no native tags required — builds a stub binary):
+one application per user, N projects, per-project isolation, id/root conflicts,
+idempotent re-install, unicode paths, daemon lifecycle, legacy-migration guard.
+Runs entirely in a temporary `MCP_GLOBAL_DIR` on a free loopback port.
+
+```powershell
+.\scripts\smoke\run-global-install.ps1
+```
+
+```bash
+bash scripts/smoke/run-global-install.sh     # Git Bash works on Windows too
+```
+
+Makefile: `make smoke-global-install`
+
+**Global daemon native end-to-end** (production binary, `-tags zvec,onnx,treesitter`):
+a mock embeddings server, one shared daemon, real MCP stdio proxies performing
+`initialize`/`tools/list`/`tools/call`, three collections plus a Cyrillic path,
+per-result source attribution (each hit must resolve to its own project and carry
+that project's marker), adding a project while others run, proxy close/reopen,
+id/root conflict refusal, a global profile change requiring a rebuild, and a
+daemon restart.
+
+```powershell
+.\scripts\smoke\run-global-daemon.ps1
+```
+
+```bash
+bash scripts/smoke/run-global-daemon.sh --binary ./bin/mcp-semantic-search-zvec-go
+```
+
+Makefile: `make smoke-global-daemon`
+
+Driver: `scripts/smoke/global-daemon-check.go` (build-tag `ignore`, run with
+`go run`). It stops the daemon it started through `--stop-daemon`; the wrappers
+add a lock-file-based safety net.
 
 Production build:
 
@@ -350,6 +411,60 @@ curl -s http://127.0.0.1:8080/health | jq .
 curl -s http://127.0.0.1:8080/v1/status | jq .
 ```
 
+## `go test ./...` on Windows: PIE test binaries and security software
+
+On a Windows host with an on-access antivirus/EDR agent, `go test ./...` can fail on
+`internal/embeddings/openai` with either of these errors, while every other package passes:
+
+```
+github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings/openai.test:
+open ...\go-build...\b001\openai.test.exe: Access is denied.
+FAIL ... [build failed]
+
+fork/exec ...\go-build...\b001\openai.test.exe: Access is denied.
+FAIL github.com/1CSerg/mcp-semantic-search-zvec-go/internal/embeddings/openai
+```
+
+**Diagnosis (confirmed on Windows 11 + Go 1.26.3, Kaspersky running):**
+
+- `go test` links the test binary with `-buildmode=pie -s -w` and then immediately runs
+  `go tool buildid -w` on it; the run step follows right after. A scanner that opens the
+  freshly linked executable first makes Go fail with `Access is denied` — sometimes at the
+  `buildid` step (build failure), sometimes at `fork/exec` (run failure), depending on timing.
+- The file's ACL is not the problem: it carries only inherited `Allow` entries for
+  `SYSTEM` / `Administrators` / the user, and there is no deny ACE. `Copy-Item` of the same
+  file is also denied, i.e. an open handle, not a permission rule.
+- The artifact later disappears from the build directory (quarantine/removal by the agent).
+- Content alone is not the trigger: `go test -c -o <path>` links the identical bytes
+  (`-ldflags "-s -w"`, same 7 684 096-byte binary) and stays openable and executable.
+- `internal/embeddings/openai` is the only affected package: its test binary is the largest
+  in the tree (≈7.7 MB stripped) and starts an `httptest` listener, which is what the agent
+  reacts to. Nothing in the package or the repo causes it.
+
+**Supported local workaround — link a non-PIE test binary:**
+
+```powershell
+# one package
+go test -ldflags=-buildmode=exe ./internal/embeddings/openai/
+
+# whole tree
+$env:GOFLAGS = "-ldflags=-buildmode=exe"; go test ./...
+```
+
+```bash
+# Makefile targets run this for you (see below)
+make test-local          # go test ./... with -ldflags=-buildmode=exe
+make test-local-race     # same, with -race
+```
+
+`-buildmode=exe` only changes how the test binary is linked; tests, build tags and
+behaviour are identical. **CI is not affected:** the Linux runners do not use this path
+(`go test -v -race -count=1 ./...` stays as-is in `.github/workflows/ci.yml`), so do not
+add `GOFLAGS` to the workflow.
+
+`CGO_ENABLED=0`, `go clean -cache`, a different `GOTMPDIR` (including another disk) and
+short paths do **not** help — the denial comes from outside the Go toolchain.
+
 ## Покрытие тестами
 
 Пороги для `./internal/...` (встроенный `go tool cover`):
@@ -412,7 +527,7 @@ Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model по
 |-------|------------|
 | `go.mod` | `require github.com/zvec-ai/zvec-go vX.Y.Z` и `replace => ./.deps/zvec-go` |
 | `internal/version/version.go` | `ZvecGoVersion` (тег `vX.Y.Z`, вшит в бинарник) |
-| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.6.0`) |
+| `scripts/fetch/fetch-zvec-libs.sh` | default `ZVEC_GO_TAG` (сейчас `v0.7.0`) |
 | `scripts/fetch/fetch-zvec-libs.ps1` | то же |
 | `docker/Dockerfile` | `ARG ZVEC_GO_TAG=vX.Y.Z` |
 

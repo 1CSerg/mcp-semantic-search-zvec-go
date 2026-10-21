@@ -53,6 +53,11 @@ func (s *CollectionStore) Open() error {
 	return s.openCollection(true)
 }
 
+// OpenWritable opens the collection for writing, creating it when absent.
+func (s *CollectionStore) OpenWritable() error {
+	return s.ensureWritable()
+}
+
 // IsOpen reports whether this process holds an open collection handle.
 func (s *CollectionStore) IsOpen() bool {
 	s.mu.Lock()
@@ -365,9 +370,11 @@ func (s *CollectionStore) searchWithGlobExpansion(vector []float32, topK int, pa
 	if docCount == 0 {
 		return nil, nil
 	}
-	queryTopK := topK
+	// Start at min(topK, docCount): with topK > docCount the old schedule never
+	// ran a single query and returned zero hits.
+	queryTopK := globTopKStart(topK, docCount)
 	var hits []SearchHit
-	for len(hits) < topK && queryTopK <= docCount {
+	for len(hits) < topK && queryTopK > 0 && queryTopK <= docCount {
 		results, qErr := s.queryLocked(vector, queryTopK)
 		if qErr != nil {
 			return nil, qErr
@@ -390,11 +397,10 @@ func (s *CollectionStore) searchWithGlobExpansion(vector []float32, topK int, pa
 		if len(hits) >= topK || queryTopK >= docCount {
 			break
 		}
-		next := queryTopK * 2
-		if next <= queryTopK {
-			next = docCount
-		}
-		queryTopK = next
+		// Doubling is capped at docCount so the last iteration is a full pass;
+		// an uncapped step (e.g. 64 -> 128 with docCount 121) would skip it and
+		// lose matches ranked below the previous window.
+		queryTopK = nextGlobTopK(queryTopK, docCount)
 	}
 	return hits, nil
 }

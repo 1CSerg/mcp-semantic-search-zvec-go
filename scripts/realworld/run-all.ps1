@@ -31,18 +31,22 @@ try {
 }
 
 $zvecEnv = Join-Path $RepoRoot ".deps\zvec-lib.env"
+# Bash consumers quote values that contain backslashes (see fetch-zvec-libs.sh).
+function ConvertFrom-EnvFileValue([string]$Value) {
+    return $Value.Trim().Trim("'").Trim('"')
+}
 if (-not (Test-Path $zvecEnv)) {
     & "$RepoRoot\scripts\fetch\fetch-zvec-libs.ps1" | Out-Null
 } else {
     Get-Content $zvecEnv | ForEach-Object {
-        if ($_ -match '^ZVEC_LIB_DIR=(.+)$') { $env:ZVEC_LIB_DIR = $Matches[1].Trim() }
+        if ($_ -match '^ZVEC_LIB_DIR=(.+)$') { $env:ZVEC_LIB_DIR = ConvertFrom-EnvFileValue $Matches[1] }
     }
 }
 if (-not (Test-Path (Join-Path $RepoRoot ".deps\onnxruntime.env"))) {
     & "$RepoRoot\scripts\fetch\fetch-onnx-runtime.ps1" | Out-Null
 } else {
     Get-Content (Join-Path $RepoRoot ".deps\onnxruntime.env") | ForEach-Object {
-        if ($_ -match '^ORT_LIB_DIR=(.+)$') { $env:ORT_LIB_DIR = $Matches[1].Trim() }
+        if ($_ -match '^ORT_LIB_DIR=(.+)$') { $env:ORT_LIB_DIR = ConvertFrom-EnvFileValue $Matches[1] }
     }
 }
 $env:CGO_ENABLED = "1"

@@ -12,14 +12,14 @@ import (
 )
 
 func TestRecoverStalledProgressIdle(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := RecoverStalledProgress(dir, 60, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRecoverStalledProgressRunningNoLock(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	if err := store.Save(StartRunning(false)); err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestRecoverStalledProgressRunningNoLock(t *testing.T) {
 }
 
 func TestRecoverStalledProgressStaleLockPayload(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	if err := store.Save(StartRunning(false)); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestStallWatcher(t *testing.T) {
 }
 
 func TestRecoverStalledProgressWithActiveLock(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	if err := store.Save(StartRunning(false)); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestRecoverStalledProgressWithActiveLock(t *testing.T) {
 }
 
 func TestRecoverInterruptedProgress(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	p := FinishError(StartRunning(false), context.Canceled)
 	p.FilesTotal = 100
@@ -126,7 +126,7 @@ func TestRecoverInterruptedProgress(t *testing.T) {
 }
 
 func TestRecoverInterruptedProgressLegacySubstring(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	p := StartRunning(false)
 	p.State = StateError
@@ -148,7 +148,7 @@ func TestRecoverInterruptedProgressLegacySubstring(t *testing.T) {
 }
 
 func TestRecoverInterruptedProgressNoOp(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	if err := store.Save(FinishError(StartRunning(false), errors.New("embed down"))); err != nil {
 		t.Fatal(err)

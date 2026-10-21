@@ -22,9 +22,9 @@ type chunkSearchCase struct {
 }
 
 func TestSemanticSearch_MinirepoHybridE2E(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	copyChunkMinirepoTo(t, root)
-	indexDir := t.TempDir()
+	indexDir := tempDir(t)
 
 	srv := modelsEmbedServer(t)
 	defer srv.Close()
@@ -62,7 +62,7 @@ func TestSemanticSearch_MinirepoHybridE2E(t *testing.T) {
 }
 
 func TestSharedDaemon_MultiTenant_Chunking_AST(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	wsA := filepath.Join(root, "ws-a")
 	wsB := filepath.Join(root, "ws-b")
 	goSource := []byte("package main\n\nfunc TenantFunc() int {\n\treturn 42\n}\n")

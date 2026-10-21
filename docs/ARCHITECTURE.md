@@ -7,25 +7,30 @@ flowchart TB
   subgraph clients [Clients]
     Cursor[Cursor / Roo MCP]
     OtherSW[Other software]
+    GUI[Desktop GUI]
   end
 
-  subgraph process [mcp-semantic-search-zvec-go]
-    MCP[MCP stdio]
-    HTTP[HTTP REST]
+  subgraph proxy [Lightweight proxies — one per MCP session]
+    MCPProxy[MCP stdio proxy]
+  end
+
+  subgraph daemon [One shared daemon — the only zvec owner]
+    HTTP[HTTP REST + admin]
     SVC[Service layer]
     Idx[Indexer]
     Emb[Embeddings]
-    Zvec[zvec collection]
-    Man[SQLite manifest]
-    Watch[File watcher]
+    Zvec[zvec collection per project]
+    Man[SQLite manifest per project]
+    Watch[File watcher per open collection]
   end
 
   WS[Workspace files RO]
-  Data[.mcp-semantic-search-zvec-go/data]
+  Data[userdir/data/collections/id]
 
-  Cursor --> MCP
+  Cursor --> MCPProxy
+  MCPProxy -->|"workspace_id = collection_id"| HTTP
+  GUI -->|"HTTPProxy"| HTTP
   OtherSW --> HTTP
-  MCP --> SVC
   HTTP --> SVC
   SVC --> Idx
   Idx --> Emb
@@ -42,11 +47,59 @@ flowchart TB
 1. **Single service layer** — `internal/service` shared by MCP and HTTP; identical JSON semantics.
 2. **Embedded vector store** — zvec in-process; no external DB server.
 3. **Resilience first** — graceful shutdown, lock recovery, health/readiness probes.
-4. **Two deployment modes** — per-project (default) and shared daemon.
+4. **Three deployment modes** — global install (default), per-project, and the legacy manual shared daemon.
 
 ## Deployment modes
 
-### Mode A — Per-project (default)
+### Mode 0 — Global install (default)
+
+One application per user, one daemon owning every collection, one lightweight proxy per MCP session.
+
+```mermaid
+flowchart LR
+  subgraph ideA [IDE window — project A]
+    PA[proxy A]
+  end
+  subgraph ideB [IDE window — project B]
+    PB[proxy B]
+  end
+  subgraph userdir [userdir]
+    BIN[bin/ single EXE]
+    CFG[config.yaml + .env]
+    TOK[auth.token]
+    REG[projects.d]
+    DAEMON[daemon 127.0.0.1:8080]
+    CA[data/collections/A]
+    CB[data/collections/B]
+  end
+  PA -->|"collection_id A"| DAEMON
+  PB -->|"collection_id B"| DAEMON
+  DAEMON --> CA
+  DAEMON --> CB
+  BIN -.->|"launches if absent"| DAEMON
+  CFG --> DAEMON
+  TOK --> DAEMON
+  REG --> DAEMON
+```
+
+Key invariants:
+
+- **Only the daemon opens zvec.** A proxy never creates a `Phase1`, never opens a collection and never starts a watcher. It reads `project.yaml`, verifies the local registration, ensures the daemon is running, and forwards every request with `workspace_id = collection_id`.
+- **A project stores no binary, model, index or secret.** It holds `project.yaml` and the managed IDE entries only.
+- **One daemon per user**, enforced by `runtime/daemon.lock`. A second daemon exits without opening the registry.
+- **One token per user** (`auth.token`), loopback-only listener, and a client that refuses non-loopback URLs and never follows redirects.
+- **The daemon outlives the IDE.** Proxies are children of the IDE; the daemon is launched detached (`Setsid` on Unix, detached process group + file log handles on Windows) and is never bound to a proxy's context.
+
+### Registry lifecycle (global mode)
+
+- `projects.d/<id>.yaml` is the local registry: `id`, `root`, `description`. Index and config paths are derived from the user directory, never stored per project.
+- The registry may be empty: the daemon starts before the first project is added.
+- `POST /v1/admin/reload-projects` re-reads it. The new snapshot is read and validated in full before anything is applied, so a broken registration leaves the running daemon untouched.
+- Unchanged collections keep handles, watchers and jobs; new ones open lazily; changed or removed ones are closed only when idle. A changed collection that is open or indexing makes the whole reload fail with 409 — nothing is applied partially.
+- Each spec carries a SHA-256 digest of its `project.yaml`, so an override edit is detected without reparsing during the diff.
+- `POST /v1/admin/stop` asks the owner to shut down gracefully; the handler never calls `os.Exit`.
+
+### Mode A — Per-project (legacy, explicit)
 
 One OS process bound to one `WORKSPACE_ROOT`. Each target project has `.mcp-semantic-search-zvec-go/` with its own index.
 
@@ -54,7 +107,7 @@ One OS process bound to one `WORKSPACE_ROOT`. Each target project has `.mcp-sema
 - Cursor: one MCP entry per project in `.cursor/mcp.json`.
 - Trade-off: N projects → N processes (N × ONNX memory in local mode).
 
-### Mode B — Shared daemon
+### Mode B — Shared daemon (legacy, explicit)
 
 One long-running HTTP server serves multiple workspaces via `workspace_id`.
 
@@ -230,6 +283,18 @@ Incremental reindex for a changed file uses **upsert-new → manifest commit →
   address is non-loopback (network-reachable). Per-project `--http` defaults to
   loopback (`127.0.0.1:8080`); daemon/Docker default `:8080`. Bind to
   `127.0.0.1` or set a token for network exposure.
+- **Global layout:** the user-level daemon always has a token (`auth.token`,
+  32 random bytes, created once with `O_EXCL`, never regenerated, never logged,
+  never on a command line — it travels in the child's environment). Its listener
+  is loopback only; a non-loopback `http_addr` is rejected for this mode. The
+  client validates the URL, refuses anything non-loopback, and disables redirects
+  so the token cannot leave the host. Admin routes (`/v1/admin/*`) are disabled
+  (`403`) when no token is configured instead of running open.
+- **`PrepareWorkspaceLocks` does not scan for competing processes for a global
+  collection.** In the global layout the MCP proxies name the project root on their
+  command line, and they are the daemon's clients — killing them would terminate
+  the sessions being served. The process-stop part runs only for the legacy
+  per-project layout, where a second `--stdio` owner is a real conflict.
 - Shared daemon **open mode** (no `API_TOKEN`): `GET /v1/status`, `POST /v1/search`,
   and `POST /v1/reindex` redact workspace path fields and sanitize path-bearing
   messages (see [API.md — Open daemon redaction](API.md#open-daemon-redaction)).
@@ -241,6 +306,9 @@ Incremental reindex for a changed file uses **upsert-new → manifest commit →
   **not** exported to the process environment (`os.Setenv`), so they don't leak
   via `/proc/<pid>/environ` or to child processes. Plaintext `api_key` in
   `config.yaml` is discouraged and logs a warning — prefer `api_key_env` + `.env`.
+- A project cannot set an index path, a secret, a daemon endpoint or a token: the
+  `project.yaml` schema is strict and the merge allowlist is enforced before the
+  collection's settings are validated.
 - Index contains source snippets — keep `data/` out of git; `data/` and `logs/`
   are created with `0700`/`0600` permissions.
 - Default embeddings via local HTTP need no cloud API keys.

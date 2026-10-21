@@ -5,6 +5,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
+. (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\zvec-native-lib-guard.ps1')
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 
 $failed = $false
@@ -12,6 +13,7 @@ $exitCode = 1
 try {
     & "$RepoRoot\scripts\fetch\fetch-zvec-libs.ps1" | Out-Null
     $LibDir = $env:ZVEC_LIB_DIR
+    Write-StaleZvecRootNativeLibWarning -RepoRoot $RepoRoot -LibDir $LibDir
 
     $env:CGO_ENABLED = "1"
     $env:Path = "$LibDir;" + $env:Path

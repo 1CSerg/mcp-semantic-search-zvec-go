@@ -10,7 +10,7 @@ import (
 )
 
 func TestStatusRelativePath(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	absIndex := filepath.Join(root, ".mcp-semantic-search-zvec-go", "data", "index")
 
 	tests := []struct {
@@ -58,14 +58,14 @@ func TestRelativeIndexingMapNil(t *testing.T) {
 
 func TestRelativeIndexingMapNoCurrentFile(t *testing.T) {
 	idx := map[string]any{"running": true}
-	got := relativeIndexingMap(t.TempDir(), idx)
+	got := relativeIndexingMap(tempDir(t), idx)
 	if got["running"] != true {
 		t.Fatalf("got=%v", got)
 	}
 }
 
 func TestRelativeIndexingMap(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	absFile := filepath.Join(root, "src", "main.go")
 	idx := map[string]any{
 		"running":      true,
@@ -78,7 +78,7 @@ func TestRelativeIndexingMap(t *testing.T) {
 }
 
 func TestIndexStatusDiagnostics(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, config.DefaultInstallDirName, config.DefaultIndexSubdir),
@@ -96,7 +96,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeHint(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("windows-only diagnostic")
 	}
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, "База", "index"),
@@ -124,7 +124,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeZvecFailure(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("windows-only diagnostic")
 	}
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, "База", "index"),
@@ -141,7 +141,7 @@ func TestEnrichIndexStatusDiagnosticsUnicodeZvecFailure(t *testing.T) {
 }
 
 func TestEnrichIndexStatusDiagnosticsCloudDrive(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: filepath.Join(root, "GDrive", "База знаний"),
 		IndexDir:      filepath.Join(root, "GDrive", "База знаний", ".mcp-semantic-search-zvec-go", "data", "index"),
@@ -154,7 +154,7 @@ func TestEnrichIndexStatusDiagnosticsCloudDrive(t *testing.T) {
 }
 
 func TestEnrichIndexStatusDiagnosticsManifestEmpty(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, "index"),
@@ -171,7 +171,7 @@ func TestEnrichIndexStatusDiagnosticsManifestEmpty(t *testing.T) {
 }
 
 func TestEnrichIndexStatusDiagnosticsManifestMismatch(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, "index"),
@@ -184,7 +184,7 @@ func TestEnrichIndexStatusDiagnosticsManifestMismatch(t *testing.T) {
 }
 
 func TestEnrichIndexStatusDiagnosticsIdentityMismatch(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	settings := &config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, "index"),

@@ -20,6 +20,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/manifest"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/store/zvec"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/testutil"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/version"
 )
 
@@ -141,19 +142,29 @@ func insertManifestRow(t *testing.T, indexDir, path string, chunks int) error {
 	return err
 }
 
+// tempDir returns a per-test directory removed with a Windows-aware retry (see
+// testutil.RemoveDirWithRetry): a just-closed handle keeps a deleted file's
+// directory entry alive for a few milliseconds, which otherwise surfaces as an
+// opaque "TempDir RemoveAll cleanup: The directory is not empty".
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Cleanup(func() { testutil.RemoveDirWithRetry(t, dir) })
+	return dir
+}
+
 func waitCoordinatorIdle(t *testing.T, p *Phase1) {
 	t.Helper()
 	if p.coordinator == nil {
 		return
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if !p.coordinator.IsRunning() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
+	// WaitForIdle releases only after the background goroutine has persisted its
+	// final progress, so the index dir is quiescent when this returns.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := p.coordinator.WaitForIdle(ctx); err != nil {
+		t.Fatalf("coordinator still running after timeout: %v", err)
 	}
-	t.Fatal("coordinator still running after timeout")
 }
 
 func releasePhase1TestResources(t *testing.T, p *Phase1) {
@@ -169,6 +180,12 @@ func registerPhase1TestCleanup(t *testing.T, p *Phase1) {
 	t.Setenv("MANIFEST_WAL", "off")
 	t.Cleanup(func() {
 		releasePhase1TestResources(t, p)
+		// Runs before t.TempDir's own cleanup (cleanups are LIFO) so a leftover
+		// handle is reported here, with the entries that survived, instead of as an
+		// unexplained TempDir RemoveAll failure.
+		if p != nil && p.Settings != nil {
+			testutil.RemoveDirWithRetry(t, p.Settings.IndexDir)
+		}
 	})
 }
 
@@ -192,7 +209,7 @@ func modelsEmbedServer(t *testing.T) *httptest.Server {
 
 func phase1Settings(t *testing.T, embedURL string) *config.Settings {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	return &config.Settings{
 		WorkspaceRoot: dir,
 		IndexDir:      filepath.Join(dir, "index"),
@@ -943,7 +960,7 @@ func (e *phase1StubEmbedder) Dimensions() int { return e.dims }
 
 func phase1MigrationSettings(t *testing.T, autoIndex bool) (*config.Settings, string) {
 	t.Helper()
-	dir := t.TempDir()
+	dir := tempDir(t)
 	indexDir := filepath.Join(dir, "index")
 	return &config.Settings{
 		WorkspaceRoot:    dir,
@@ -1801,7 +1818,7 @@ func TestPhase1GetIndexStatusProfileError(t *testing.T) {
 }
 
 func TestPhase1GetIndexStatusOnnxModelPath(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	modelPath := filepath.Join(dir, "model.onnx")
 	if err := os.WriteFile(modelPath, []byte("onnx"), 0o644); err != nil {
 		t.Fatal(err)

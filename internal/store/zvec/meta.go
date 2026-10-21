@@ -14,15 +14,19 @@ import (
 type IndexMeta struct {
 	WorkspaceID          string `json:"workspace_id"`
 	WorkspaceRoot        string `json:"workspace_root"`
+	CollectionID         string `json:"collection_id,omitempty"`
 	WorkspaceFingerprint string `json:"workspace_fingerprint"`
 	EmbeddingProfile     string `json:"embedding_profile"`
 	EmbeddingDimensions  int    `json:"embedding_dimensions"`
 	CollectionName       string `json:"collection_name"`
 	ChunkingVersion      int    `json:"chunking_version"`
 	ChunkingStrategy     string `json:"chunking_strategy"`
-	ZvecGoVersion        string `json:"zvec_go_version,omitempty"`
-	CreatedAt            string `json:"created_at"`
-	UpdatedAt            string `json:"updated_at"`
+	// ChunkingFingerprint detects a geometry change (min tokens, prose overlap,
+	// context prefix, language toggles) that does not bump the chunking version.
+	ChunkingFingerprint string `json:"chunking_fingerprint,omitempty"`
+	ZvecGoVersion       string `json:"zvec_go_version,omitempty"`
+	CreatedAt           string `json:"created_at"`
+	UpdatedAt           string `json:"updated_at"`
 }
 
 // ReadIndexMeta loads index_meta.json.
@@ -65,7 +69,9 @@ func WriteIndexMeta(indexDir string, meta IndexMeta) error {
 }
 
 // ValidateIndexMeta checks owner/profile/dimensions/chunking match.
-func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions, chunkingVersion int, chunkingStrategy string) error {
+// When both the stored meta and the current identity carry a collection_id,
+// ownership is decided by collection_id alone and a workspace_root move is legal.
+func ValidateIndexMeta(indexDir, workspaceID, collectionID, profile string, dimensions, chunkingVersion int, chunkingStrategy string) error {
 	if !IndexMetaPresent(indexDir) {
 		return nil
 	}
@@ -73,7 +79,11 @@ func ValidateIndexMeta(indexDir, workspaceID, profile string, dimensions, chunki
 	if err != nil {
 		return fmt.Errorf("read index_meta: %w", err)
 	}
-	if meta.WorkspaceID != "" && workspaceID != "" && !workspaceIDsEqual(meta.WorkspaceID, workspaceID) {
+	if meta.CollectionID != "" && collectionID != "" {
+		if meta.CollectionID != collectionID {
+			return fmt.Errorf("%w: index belongs to collection_id %q, current is %q", ErrOwnerMismatch, meta.CollectionID, collectionID)
+		}
+	} else if meta.WorkspaceID != "" && workspaceID != "" && !workspaceIDsEqual(meta.WorkspaceID, workspaceID) {
 		return fmt.Errorf("%w: index belongs to workspace_id %q, current is %q", ErrOwnerMismatch, meta.WorkspaceID, workspaceID)
 	}
 	if meta.EmbeddingProfile != "" && profile != "" && meta.EmbeddingProfile != profile {
@@ -101,16 +111,18 @@ func workspaceIDsEqual(a, b string) bool {
 func indexMetaFromIdentity(identity IndexIdentity, zvecGoVersion string) IndexMeta {
 	root := config.NormalizeAbsolutePath(identity.WorkspaceRoot)
 	wsID := config.NormalizeWorkspaceID(identity.WorkspaceID, root)
-	collectionName := CollectionName(root, identity.Profile, identity.Dimensions)
+	collectionName := identity.collectionName()
 	return IndexMeta{
 		WorkspaceID:          wsID,
 		WorkspaceRoot:        root,
+		CollectionID:         identity.CollectionID,
 		WorkspaceFingerprint: collectionName,
 		EmbeddingProfile:     identity.Profile,
 		EmbeddingDimensions:  identity.Dimensions,
 		CollectionName:       collectionName,
 		ChunkingVersion:      identity.ChunkingVersion,
 		ChunkingStrategy:     identity.ChunkingStrategy,
+		ChunkingFingerprint:  identity.ChunkingFingerprint,
 		ZvecGoVersion:        zvecGoVersion,
 	}
 }
@@ -123,6 +135,14 @@ func indexMetaIncomplete(meta *IndexMeta) bool {
 		meta.CollectionName == "" ||
 		meta.EmbeddingProfile == "" ||
 		meta.EmbeddingDimensions == 0
+}
+
+// WriteIdentityMeta overwrites index_meta.json with a complete meta for identity.
+// Tooling that creates a collection outside the normal indexer (cmd/seed-index)
+// must call this: without a complete meta the server classifies the collection
+// as a legacy zvec-go index and wipes it on startup.
+func WriteIdentityMeta(indexDir string, identity IndexIdentity) error {
+	return WriteIndexMeta(indexDir, indexMetaFromIdentity(identity, version.ZvecGoVersion))
 }
 
 // EnsureIndexMeta creates, validates, or backfills index_meta.json.
@@ -144,6 +164,7 @@ func EnsureIndexMeta(indexDir string, identity IndexIdentity) error {
 	if err := ValidateIndexMeta(
 		indexDir,
 		identity.WorkspaceID,
+		identity.CollectionID,
 		identity.Profile,
 		identity.Dimensions,
 		identity.ChunkingVersion,

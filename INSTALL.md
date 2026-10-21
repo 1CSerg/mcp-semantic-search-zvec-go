@@ -1,10 +1,245 @@
 # Installation
 
+Two deployment layouts exist:
+
+| Layout | What is installed | When to use |
+|--------|-------------------|-------------|
+| **Global (default)** | One application per user, one shared daemon, one lightweight stdio proxy per MCP session. A project stores only `project.yaml` with its `collection_id`. | Recommended. Many projects, one machine, one set of models and secrets. |
+| **Legacy per-project** (`-McpMode Native` / `--mcp-mode native`) | A copy of the binary, native libraries, config, secrets and index inside each project. | Existing installs and automation that must keep the old layout. |
+
+Both layouts are supported; the legacy one is unchanged.
+
+## Global layout (default)
+
+### Quick install
+
+Windows:
+
+```powershell
+git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go $env:TEMP\mcp-semantic-search-zvec-go
+& "$env:TEMP\mcp-semantic-search-zvec-go\scripts\install\install.ps1" -TargetRoot (Get-Location).Path
+```
+
+Linux / macOS:
+
+```bash
+git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go /tmp/mcp-semantic-search-zvec-go
+bash /tmp/mcp-semantic-search-zvec-go/scripts/install/install.sh --target-root "$PWD"
+```
+
+The default install does two things, in this order:
+
+1. **Installs or updates the application** in the user-level directory.
+2. **Adds the current project** to it: `project.yaml`, the local registration and the managed IDE entries.
+
+Installing the application and adding a project are separate operations:
+
+```powershell
+# Application only (no project); the daemon is started and left running.
+& "...\scripts\install\install.ps1" -InstallAppOnly
+```
+
+```bash
+bash .../scripts/install/install.sh --install-app-only
+```
+
+### User-level directory
+
+`MCP_GLOBAL_DIR` overrides the location (it must be an absolute path). Defaults:
+`%LOCALAPPDATA%\mcp-semantic-search-zvec-go` on Windows,
+`$XDG_DATA_HOME/mcp-semantic-search-zvec-go` (fallback `~/.local/share/...`) elsewhere.
+
+```text
+<userdir>/
+  bin/                             # one installed EXE + native libraries
+  config.yaml                      # embeddings, defaults, logging (shared by all projects)
+  daemon.yaml                      # listener (127.0.0.1:8080), resource caps
+  .env                             # user secrets — never per project
+  auth.token                       # local Bearer token for proxy ↔ daemon
+  projects.d/<collection_id>.yaml  # local registry: id, root, description
+  runtime/daemon.lock              # singleton daemon lock
+  data/collections/<collection_id>/# manifest, meta, locks, zvec (one per project)
+  data/models/                     # shared model files
+  data/logs/                       # daemon/proxy/crash logs
+```
+
+### What a project contains
+
+```text
+<project>/
+├── .cursor/mcp.json                                   # managed MCP entry (merged)
+├── .cursor/rules/semantic-search-zvec-go.mdc          # managed agent rule
+├── .roo/mcp.json                                      # managed MCP entry (merged)
+├── .roo/rules/semantic-search-zvec-go.md              # managed agent rule
+└── .mcp-semantic-search-zvec-go/
+    └── project.yaml                                   # schema_version + collection_id
+```
+
+A project holds **no** binary, native libraries, models, index, shared config or secrets. The managed MCP entry points at the shared binary:
+
+```json
+{
+  "mcpServers": {
+    "semantic-search-zvec-go": {
+      "command": "C:\\Users\\you\\AppData\\Local\\mcp-semantic-search-zvec-go\\bin\\mcp-semantic-search-zvec-go.exe",
+      "args": ["--stdio-proxy", "--project-config", "D:\\project\\.mcp-semantic-search-zvec-go\\project.yaml"]
+    }
+  }
+}
+```
+
+No secrets and no `INDEX_DIR`/`WORKSPACE_ROOT`: the proxy reads the project's `collection_id`, ensures the daemon is running and passes the id on every request. The absolute paths in this IDE JSON are fine; the portable `project.yaml` never contains one.
+
+### project.yaml
+
+Minimal file:
+
+```yaml
+schema_version: 1
+collection_id: 9ab86bc3-48b1-4fc9-8c3c-3f8ab01bbcd0
+```
+
+Allowed overrides (everything else belongs to the shared config and is rejected):
+
+```yaml
+schema_version: 1
+collection_id: 9ab86bc3-48b1-4fc9-8c3c-3f8ab01bbcd0
+description: "Order service"
+active_profile: local_multilingual     # must exist in the shared config.yaml
+indexing:
+  extensions: [".go", ".md"]
+  skip_dirs: [".git", "vendor", ".mcp-semantic-search-zvec-go"]
+  max_file_bytes: 2097152
+  chunking:
+    min_chunk_tokens: 24
+    prose_overlap_ratio: 0.12
+    languages:
+      bsl:
+        enabled: false                 # only the fields you set are overridden
+file_watcher:
+  enabled: true
+```
+
+`schema_version` may be omitted for older files (treated as 1). Unknown keys, another version, and `index_dir`-style path keys are rejected.
+
+### Project commands
+
+All commands are subcommands of the same installed binary; the install scripts call them for you.
+
+```powershell
+$exe = "$env:LOCALAPPDATA\mcp-semantic-search-zvec-go\bin\mcp-semantic-search-zvec-go.exe"
+& $exe --project-add D:\project            # register, ensure the daemon, reload
+& $exe --project-remove D:\project         # unregister (collection data is kept)
+& $exe --project-new-collection D:\copy    # give a copied project its own collection
+& $exe --project-relocate D:\moved --yes   # move a project, keeping its collection
+& $exe --projects-reload                   # re-read projects.d without restarting
+& $exe --ensure-daemon                     # start the daemon if it is not running
+& $exe --stop-daemon                       # graceful shutdown
+```
+
+Rules:
+
+- A new root gets a new UUID v4 collection id.
+- The same root with the same id is idempotent.
+- The same root with a **different** id is refused: run `--project-remove` first.
+- The same id on a **different** root is refused: use `--project-new-collection` for a copy.
+- `--project-relocate` keeps the id, refuses while the collection is open in the daemon, and needs `--yes`.
+- A management command that the daemon refuses (409, the collection is in use) is **rolled back** and exits non-zero: the registry on disk never disagrees with what the daemon serves.
+- `--project-new-collection` changes `project.yaml` and the registration only. A copied project's `.cursor/mcp.json` and `.roo/mcp.json` still point at the **original** absolute `--project-config`, so re-run install for the copy (`install.ps1 -TargetRoot <copy>` / `install.sh --target-root <copy>`) to rewrite them before using it.
+
+Adding a project does not restart anything: the running daemon re-reads `projects.d` and serves the new collection immediately. Other collections keep their open handles and their running indexing jobs.
+
+### Daemon and security
+
+- The user-level daemon listens on **`127.0.0.1:8080`** only. A non-loopback `http_addr` is rejected for this mode; use the legacy explicit `--daemon-config` if you really need LAN access.
+- `auth.token` is 32 random bytes (hex), created once with exclusive access and never regenerated. Proxies read it from the user directory; it is never printed or put on a command line.
+- One daemon per user is enforced by `runtime/daemon.lock`; a second daemon exits without touching any collection.
+- The daemon keeps running after the IDE closes. Closing an MCP session ends only its proxy.
+
+### Auto-index, LRU and identity changes
+
+- `auto_index_on_open: true` (default in the generated `daemon.yaml`) builds or refreshes a collection the first time it is opened. One open produces at most one startup job.
+- `max_open_workspaces` (default 10) bounds open collections. A collection that is indexing is never evicted; when every slot is busy the request fails with a diagnosable 503.
+- A **global** profile change (`dimensions`, `model`, `base_url`, chunking strategy/version) requires a daemon restart and then `reindex` with `force: true` for each collection. `index_status` reports `identity_mismatch` until then, and search refuses to use the new model against old vectors.
+- A **project** change (`project.yaml` overrides) is applied by `--projects-reload`; the changed collection is reopened, and a reload is refused with 409 while that collection is in use.
+
+### Migration from a project-local install
+
+Detection is explicit. Without `-MigrateLegacy` / `--migrate-legacy`, adding a project that still holds `.mcp-semantic-search-zvec-go/bin/mcp-semantic-search-zvec-go.exe` stops with instructions instead of creating a second owner of the index.
+
+```powershell
+& "...\scripts\install\install.ps1" -TargetRoot (Get-Location).Path -MigrateLegacy
+```
+
+```bash
+bash .../scripts/install/install.sh --target-root "$PWD" --migrate-legacy
+```
+
+Migration:
+
+1. Installs the shared application **without deleting** the old install.
+2. Stops the old per-project MCP processes with `--stop-stdio-for-workspace` (never a blanket kill).
+3. Merges profiles into the shared `config.yaml`. A profile name that already exists with a **different** model/dimensions/endpoint is a conflict: the script stops and asks you to rename it (no "last one wins").
+4. Copies missing secret **names** into the shared `.env`; values are not printed.
+5. Registers the project and rewrites only the managed MCP entry and rules.
+6. Leaves the old `.mcp-semantic-search-zvec-go/` tree as a backup until you delete it.
+7. The new index is built from scratch under `data/collections/<id>/`; the old index files are never copied or edited.
+
+### Uninstall
+
+Remove **one project** (other projects, their data and the application are untouched):
+
+```powershell
+& .\.mcp-semantic-search-zvec-go\uninstall.ps1
+```
+
+```bash
+./.mcp-semantic-search-zvec-go/uninstall.sh
+```
+
+This unregisters the project, removes the managed MCP entries and rules, and deletes the project's `project.yaml`. The collection's index stays in the user directory.
+
+Remove the **application** (refused while projects are registered unless forced):
+
+```powershell
+& "$env:LOCALAPPDATA\mcp-semantic-search-zvec-go\uninstall.ps1" -UninstallApp
+& "$env:LOCALAPPDATA\mcp-semantic-search-zvec-go\uninstall.ps1" -UninstallApp -Force
+```
+
+```bash
+bash "$XDG_DATA_HOME/mcp-semantic-search-zvec-go/uninstall.sh" --uninstall-app [--force]
+```
+
+Collection data and `.env` are preserved in every branch, including `-KeepData`.
+
+### Update
+
+Re-run the install command from an updated clone or release. The application binary is replaced with staging, backup and rollback:
+
+1. The new binary is verified with `--version`.
+2. The daemon is asked to stop through the admin API (never a force kill).
+3. If a proxy still holds the binary (Windows cannot replace a mapped EXE), the install **refuses** and tells you to close the IDE MCP session; the working version is left in place.
+4. On any failure the previous binary is restored.
+
+`config.yaml` is merged (your `active_profile`, profiles, lists and comments are preserved); `daemon.yaml`, `.env`, `auth.token` and every collection are left alone.
+
+### GUI
+
+On Windows, the installed EXE without flags opens the GUI. In the global layout the GUI is a **client** of the same daemon:
+
+- it lists the registered collections and lets you switch between them;
+- a switch cancels the previous collection's in-flight requests, so results never leak across;
+- it never opens zvec, never builds a `Phase1` and never suggests stopping a concurrent MCP proxy (a proxy shares the daemon rather than competing for the index);
+- with no projects registered it reports that no collection is available and names the `--project-add` instruction instead of inventing a collection;
+- it can start the daemon itself after a reboot or an explicit `--stop-daemon`.
+
+## Legacy per-project layout
+
+Pass `-McpMode Native` (PowerShell) or `--mcp-mode native` (Bash) to keep the original behaviour described below. Everything from "What install creates" onward in this document describes that layout.
+
 Install into a **target project** (your codebase), not only this repository.
 
 ## Prerequisites
-
-| Requirement | Notes |
 |-------------|-------|
 | Go 1.26+ | Only for building from source |
 | Git | Recommended |
@@ -325,9 +560,11 @@ Both can be installed in the same project:
 
 Indexes are separate unless you intentionally share paths.
 
-## Shared daemon
+## Shared daemon (legacy manual mode)
 
 One HTTP process serves multiple projects via `workspace_id`. Architecture and trade-offs: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). `daemon.yaml` reference: [docs/CONFIG.md](docs/CONFIG.md#daemonyaml-phase-5).
+
+> **Note:** the global layout above already does this, automatically and with a local token. This section describes the older manual setup: an explicit `daemon.yaml`, an explicit `--daemon-config`, and `--stdio-proxy --workspace-id`. It remains supported and unchanged.
 
 1. Create `daemon.yaml` (template: [templates/daemon.yaml](templates/daemon.yaml); Docker example: [templates/daemon.docker.yaml](templates/daemon.docker.yaml)).
 2. Start daemon: `--daemon --daemon-config /path/to/daemon.yaml --http-addr :8080` (or `docker compose -f docker/docker-compose.daemon.yml up`).
@@ -344,4 +581,21 @@ One HTTP process serves multiple projects via `workspace_id`. Architecture and t
   -McpMode Proxy -WorkspaceId my-app -DaemonUrl "http://127.0.0.1:8080"
 ```
 
-Per-project install (`--stdio`, default `-McpMode Native`) remains the default and does not require a daemon.
+Per-project install (`--stdio`, `-McpMode Native`) remains available and does not require a daemon.
+
+## Troubleshooting the global layout
+
+| Symptom | Action |
+|---------|--------|
+| `collection_id is not registered on this machine` | Run `--project-add <project>` (or re-run install for that project). |
+| `collection … is registered for <other root>` | The project was copied or moved. `--project-relocate <new> --yes` for a move, `--project-new-collection <copy>` for a copy. |
+| `--project-add` refuses with `already registered` | The copied `project.yaml` still carries the original id. Use `--project-new-collection`. |
+| `shared daemon unavailable` / proxy fails on every tool call | Start it: `--ensure-daemon`. Check `data/logs/daemon.stderr.log` under the user dir. |
+| `daemon port is already in use by another listener` | Something else owns `127.0.0.1:8080`. Stop it or change `http_addr` in `<userdir>/daemon.yaml` (loopback only). |
+| `auth.token is corrupt` | A running daemon still holds the old value. Stop it, delete `<userdir>/auth.token`, then `--ensure-daemon`. |
+| `daemon config: …` after editing `daemon.yaml` | The daemon validates strictly on start; fix the reported key. An empty registry is valid. |
+| `identity_mismatch` after changing the shared profile | Restart the daemon, then `reindex` with `force: true` for each collection. |
+| reload refused with 409 (`collection in use`) | A collection being changed is open or indexing. Close that project's MCP session, then `--projects-reload`. |
+| Install refuses to replace the binary (`still in use`) | Close the IDE MCP sessions for the affected project and re-run install; no force kill is performed. |
+| GUI shows an empty collection list | No project is registered yet: `--project-add <project>`. |
+| `MCP_GLOBAL_DIR must be an absolute path` | Use an absolute path (or unset it to use the platform default). |

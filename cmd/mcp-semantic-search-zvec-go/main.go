@@ -18,6 +18,7 @@ import (
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/crash"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemon"
+	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/daemonclient"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/gui"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/indexer/chunk"
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/lifecycle"
@@ -54,6 +55,15 @@ func run() int {
 		daemonURL          string
 		stopStdioWorkspace string
 		stopStdioIndexDir  string
+		projectConfig      string
+		projectAdd         string
+		projectRemove      string
+		projectNew         string
+		projectRelocate    string
+		projectsReload     bool
+		ensureDaemon       bool
+		stopDaemon         bool
+		assumeYes          bool
 	)
 	flag.BoolVar(&stdio, "stdio", false, "Run MCP server over stdin/stdout (per-project mode)")
 	flag.BoolVar(&stdioProxy, "stdio-proxy", false, "Run MCP stdio proxy to shared daemon HTTP API")
@@ -63,14 +73,49 @@ func run() int {
 	flag.StringVar(&httpAddr, "http-addr", "", "HTTP listen address (default 127.0.0.1:8080 per-project, :8080 daemon, or config server.http_addr)")
 	flag.StringVar(&configPath, "config", "", "Override CONFIG_PATH")
 	flag.StringVar(&daemonConfig, "daemon-config", "", "Path to daemon.yaml (or WORKSPACES_CONFIG env)")
-	flag.StringVar(&workspaceID, "workspace-id", "", "Workspace ID for --stdio-proxy")
-	flag.StringVar(&daemonURL, "daemon-url", "", "Shared daemon base URL for --stdio-proxy (default http://127.0.0.1:8080)")
+	flag.StringVar(&workspaceID, "workspace-id", "", "Workspace ID for --stdio-proxy (legacy manual mode)")
+	flag.StringVar(&daemonURL, "daemon-url", "", "Shared daemon base URL for --stdio-proxy (legacy manual mode)")
 	flag.StringVar(&stopStdioWorkspace, "stop-stdio-for-workspace", "", "Stop stale --stdio MCP instances for workspace and exit")
 	flag.StringVar(&stopStdioIndexDir, "index-dir", "", "Index directory for lock reclaim (optional; used with --stop-stdio-for-workspace)")
+	flag.StringVar(&projectConfig, "project-config", "", "Absolute path to a project's project.yaml for --stdio-proxy (global install mode)")
+	flag.StringVar(&projectAdd, "project-add", "", "Register a project root, ensure the daemon and reload it")
+	flag.StringVar(&projectRemove, "project-remove", "", "Unregister a project root (collection data is kept)")
+	flag.StringVar(&projectNew, "project-new-collection", "", "Give a project a new collection id (for a copied project)")
+	flag.StringVar(&projectRelocate, "project-relocate", "", "Move a registered project to a new root, keeping its collection")
+	flag.BoolVar(&projectsReload, "projects-reload", false, "Ask the running daemon to re-read projects.d")
+	flag.BoolVar(&ensureDaemon, "ensure-daemon", false, "Start the shared daemon if it is not running")
+	flag.BoolVar(&stopDaemon, "stop-daemon", false, "Stop the shared daemon gracefully")
+	flag.BoolVar(&assumeYes, "yes", false, "Confirm a destructive management command (used with --project-relocate)")
 	flag.Parse()
 
 	if stopStdioWorkspace != "" {
 		return runStopStdio(stopStdioWorkspace, stopStdioIndexDir)
+	}
+
+	projects := projectFlags{
+		ProjectConfig:   projectConfig,
+		StdioProxy:      stdioProxy,
+		WorkspaceID:     workspaceID,
+		DaemonURL:       daemonURL,
+		ProjectAdd:      projectAdd,
+		ProjectRemove:   projectRemove,
+		ProjectNew:      projectNew,
+		ProjectRelocate: projectRelocate,
+		ProjectsReload:  projectsReload,
+		EnsureDaemon:    ensureDaemon,
+		StopDaemon:      stopDaemon,
+		Yes:             assumeYes,
+	}
+	if err := validateProjectFlags(projects); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 2
+	}
+	if managementCommands(projects) {
+		if stdio || stdioProxy || httpFlag || daemonFlag || guiFlag {
+			fmt.Fprintf(os.Stderr, "project management commands cannot be combined with a run mode\n")
+			return 2
+		}
+		return runProjectCommands(context.Background(), projects)
 	}
 
 	mode, err := resolveRunMode(runMode{
@@ -92,8 +137,8 @@ func run() int {
 	}
 	stdio, stdioProxy, httpFlag, daemonFlag, guiFlag = mode.stdio, mode.stdioProxy, mode.httpFlag, mode.daemonFlag, mode.guiFlag
 
-	if stdioProxy && strings.TrimSpace(workspaceID) == "" {
-		fmt.Fprintf(os.Stderr, "--stdio-proxy requires --workspace-id\n")
+	if stdioProxy && strings.TrimSpace(workspaceID) == "" && strings.TrimSpace(projectConfig) == "" {
+		fmt.Fprintf(os.Stderr, "--stdio-proxy requires --workspace-id or --project-config\n")
 		return 2
 	}
 	if configPath != "" {
@@ -113,7 +158,11 @@ func run() int {
 		return runDaemon(ctx, stop, httpAddr, daemonConfig)
 	}
 	if stdioProxy {
-		return runStdioProxy(ctx, workspaceID, daemonURL)
+		return runStdioProxy(ctx, stdioProxyOptions{
+			WorkspaceID:   workspaceID,
+			DaemonURL:     daemonURL,
+			ProjectConfig: projectConfig,
+		})
 	}
 	if guiFlag {
 		return runGUI(ctx, stop)
@@ -194,6 +243,19 @@ func runPerProject(ctx context.Context, stop context.CancelFunc, stdio, httpFlag
 }
 
 func runGUI(ctx context.Context, stop context.CancelFunc) int {
+	// Global install mode: the GUI is a client of the shared daemon. It must not
+	// build a Phase1, open zvec or start a watcher — that would make it a second
+	// owner of the collection and fight the daemon for the zvec LOCK.
+	if guiUsesGlobalCollections() {
+		slog.Info("starting gui", "version", version.Version, "mode", "global-collections")
+		settings := &config.Settings{HTTPAddr: config.DefaultHTTPAddrLocal}
+		if err := gui.Run(ctx, settings, nil); err != nil {
+			slog.Error("gui error", "err", err)
+			return 1
+		}
+		return 0
+	}
+
 	rt, err := setupPerProject(ctx, perProjectOptions{
 		Stdio:            false,
 		StartBackgrounds: false,
@@ -298,7 +360,48 @@ func setupPerProject(ctx context.Context, opts perProjectOptions) (*perProjectRu
 	return rt, nil
 }
 
+// guiUsesGlobalCollections reports whether the GUI should run as a client of the
+// shared daemon.
+//
+// The decision is "is this a user-level install?", not "are there registrations?".
+// A user who installed the application but has not added a project yet must get the
+// collection picker with the --project-add instruction; routing that case to the
+// per-project GUI would silently build a Phase1 in the current directory and open a
+// collection the user never registered.
+func guiUsesGlobalCollections() bool {
+	userDir, err := config.UserDataDir()
+	if err != nil {
+		return false
+	}
+	// Any of these means the user-level layout is in use.
+	for _, name := range []string{"config.yaml", "daemon.yaml", "projects.d"} {
+		if _, statErr := os.Stat(filepath.Join(userDir, name)); statErr == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonConfigPath string) int {
+	// User-level mode: the single installed daemon that owns every collection.
+	// Legacy explicit modes (WORKSPACES_CONFIG / --daemon-config / --http-addr)
+	// keep their previous behaviour.
+	userLevel := isUserLevelDaemon(daemonConfigPath, httpAddr)
+
+	if userLevel {
+		// Singleton: a second daemon must not open the registry or the collections.
+		daemonLock, err := daemonclient.AcquireDaemonLock()
+		if err != nil {
+			if errors.Is(err, daemonclient.ErrDaemonAlreadyRunning) {
+				fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: daemon: %v\n", err)
+				return 0
+			}
+			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: daemon lock: %v\n", err)
+			return 1
+		}
+		defer func() { _ = daemonLock.Release() }()
+	}
+
 	daemonCfg, err := daemon.LoadConfig(daemonConfigPath)
 	if err != nil {
 		slog.Error("daemon config load failed", "err", err)
@@ -309,11 +412,37 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 		HTTPAddr: config.DefaultHTTPAddrDaemon,
 		APIToken: os.Getenv("API_TOKEN"),
 	}
-	if v := os.Getenv("HTTP_ADDR"); v != "" {
-		settings.HTTPAddr = v
-	}
-	if httpAddr != "" {
-		settings.HTTPAddr = httpAddr
+	if userLevel {
+		// The user-level daemon is local-only and always authenticated.
+		token, tokenErr := daemonclient.EnsureAuthToken()
+		if tokenErr != nil {
+			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: daemon auth token: %v\n", tokenErr)
+			return 1
+		}
+		settings.APIToken = token
+		baseURL, urlErr := daemonclient.DaemonBaseURL()
+		if urlErr != nil {
+			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: daemon listener: %v\n", urlErr)
+			return 1
+		}
+		settings.HTTPAddr = strings.TrimPrefix(baseURL, "http://")
+		// Logs belong to the user-level install, never to the detached child's
+		// working directory.
+		if logsDir, err := config.GlobalLogsDir(); err == nil {
+			settings.LogsDirOverride = logsDir
+		}
+		// The daemon config is the user-level daemon.yaml. It is deliberately left as
+		// an empty path: LoadConfig then resolves the user-level file itself AND merges
+		// projects.d. Passing the path explicitly would mark it as a legacy config
+		// source, which skips the registry — the daemon would start with the right
+		// workspaces and then lose them on the first reload.
+	} else {
+		if v := os.Getenv("HTTP_ADDR"); v != "" {
+			settings.HTTPAddr = v
+		}
+		if httpAddr != "" {
+			settings.HTTPAddr = httpAddr
+		}
 	}
 
 	_, logCloser, err := logging.Setup(settings)
@@ -340,9 +469,13 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 
 	registry := daemon.NewRegistry(daemonCfg, ctx)
 	defer registry.Close()
+	// Reload re-reads the same config source the daemon started with.
+	registry.SetConfigLoader(daemon.ConfigLoader(daemonConfigPath))
 
 	httpSrv := httptransport.NewDaemon(settings, registry)
-	slog.Info("starting shared daemon", "version", version.Version, "workspaces", len(daemonCfg.Workspaces))
+	httpSrv.SetDaemonLifecycle(daemonStopFunc(stop))
+	slog.Info("starting shared daemon", "version", version.Version, "workspaces", len(daemonCfg.Workspaces),
+		"addr", settings.HTTPAddr, "user_level", userLevel)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -369,6 +502,40 @@ func runDaemon(ctx context.Context, stop context.CancelFunc, httpAddr, daemonCon
 	return 0
 }
 
+// isUserLevelDaemon reports whether this process is the single installed daemon.
+// An explicit daemon config or listen address means the operator chose a legacy
+// manual daemon, which keeps its previous behaviour (bind address, token, paths).
+func isUserLevelDaemon(daemonConfigPath, httpAddr string) bool {
+	if strings.TrimSpace(daemonConfigPath) != "" || strings.TrimSpace(httpAddr) != "" {
+		return false
+	}
+	if strings.TrimSpace(os.Getenv("WORKSPACES_CONFIG")) != "" {
+		return false
+	}
+	if v := strings.TrimSpace(os.Getenv("MCP_DAEMON_USER_LEVEL")); v != "" {
+		return v == "1" || strings.EqualFold(v, "true")
+	}
+	// A daemon started by the user with no explicit config is the user-level one.
+	return true
+}
+
+// daemonStopFunc adapts a context cancel func to the HTTP lifecycle interface.
+func daemonStopFunc(stop context.CancelFunc) httptransport.DaemonLifecycle {
+	return daemonStopper{stop: stop}
+}
+
+type daemonStopper struct{ stop context.CancelFunc }
+
+func (d daemonStopper) RequestShutdown(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if d.stop != nil {
+		d.stop()
+	}
+	return nil
+}
+
 func newStdioProxyService(daemonURL, workspaceID, apiToken string) *service.HTTPProxy {
 	settings, err := config.Load()
 	if err == nil {
@@ -379,7 +546,30 @@ func newStdioProxyService(daemonURL, workspaceID, apiToken string) *service.HTTP
 	return service.NewHTTPProxy(daemonURL, workspaceID, apiToken)
 }
 
-func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
+// stdioProxyOptions selects between the project-aware mode and the legacy
+// manual mode. Exactly one of ProjectConfig or WorkspaceID is set.
+type stdioProxyOptions struct {
+	WorkspaceID   string
+	DaemonURL     string
+	ProjectConfig string
+}
+
+func runStdioProxy(ctx context.Context, opts stdioProxyOptions) int {
+	workspaceID := opts.WorkspaceID
+	projectMode := strings.TrimSpace(opts.ProjectConfig) != ""
+	if projectMode {
+		// In project mode stdout carries MCP frames only: every diagnostic,
+		// including the binding summary, goes to stderr.
+		pc, root, err := loadProjectBinding(opts.ProjectConfig)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: %v\n", err)
+			return 1
+		}
+		workspaceID = pc.CollectionID
+		slog.Info("project proxy binding", "collection_id", pc.CollectionID, "root", root,
+			"project_config", opts.ProjectConfig)
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("mcp stdio proxy panic", "panic", fmt.Sprint(r))
@@ -390,12 +580,23 @@ func runStdioProxy(ctx context.Context, workspaceID, daemonURL string) int {
 			panic(r)
 		}
 	}()
-	if daemonURL == "" {
-		daemonURL = "http://127.0.0.1:8080"
+
+	var svc service.Service
+	if projectMode {
+		built, err := newProjectProxyService(projectProxyOptions{ProjectConfigPath: opts.ProjectConfig})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-semantic-search-zvec-go: %v\n", err)
+			return 1
+		}
+		svc = built
+	} else {
+		if opts.DaemonURL == "" {
+			opts.DaemonURL = "http://127.0.0.1:8080"
+		}
+		svc = newStdioProxyService(opts.DaemonURL, workspaceID, os.Getenv("API_TOKEN"))
 	}
-	apiToken := os.Getenv("API_TOKEN")
-	svc := newStdioProxyService(daemonURL, workspaceID, apiToken)
-	slog.Info("starting mcp stdio proxy", "version", version.Version, "workspace_id", workspaceID, "daemon_url", daemonURL)
+	slog.Info("starting mcp stdio proxy", "version", version.Version, "workspace_id", workspaceID,
+		"project_mode", projectMode)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -33,6 +33,11 @@ prose_cov
 .deps/
 todo.md
 
+# Smoke-run artifacts (scripts/smoke/* write to %TEMP%, but keep stray local logs out of git)
+scripts/smoke/logs/
+# A daemon started without MCP_DAEMON_LOG_DIR logs to ./logs
+/logs/
+
 # Legacy cmake debug artifacts
 *-configure-err.log
 

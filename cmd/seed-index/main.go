@@ -41,6 +41,7 @@ func run() int {
 	cfg := zvec.Config{
 		IndexDir:      settings.IndexDir,
 		WorkspaceRoot: settings.WorkspaceRoot,
+		CollectionID:  settings.CollectionID,
 		ProfileName:   settings.App.ActiveProfile,
 		Dimensions:    profile.Dimensions,
 	}
@@ -74,6 +75,24 @@ func run() int {
 		return 1
 	}
 
+	// Write a complete index_meta.json for the seeded collection. Without it the
+	// server sees zvec data with no meta and treats the index as a legacy
+	// zvec-go index, wiping the collection on startup ("run reindex to rebuild").
+	identity := zvec.IndexIdentity{
+		WorkspaceID:      settings.WorkspaceID,
+		WorkspaceRoot:    settings.WorkspaceRoot,
+		CollectionID:     settings.CollectionID,
+		Profile:          settings.App.ActiveProfile,
+		Dimensions:       profile.Dimensions,
+		ChunkingVersion:  settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy: settings.App.Indexing.Chunking.Strategy,
+	}
+	if err := zvec.WriteIdentityMeta(settings.IndexDir, identity); err != nil {
+		log.Printf("index meta: %v", err)
+		return 1
+	}
+
 	fmt.Printf("seeded %d chunks at %s\n", count, filepath.ToSlash(zvec.CollectionPath(cfg)))
+	fmt.Printf("index meta: %s\n", filepath.ToSlash(zvec.IndexMetaPath(settings.IndexDir)))
 	return 0
 }

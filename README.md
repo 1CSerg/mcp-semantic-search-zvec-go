@@ -38,18 +38,37 @@ curl http://127.0.0.1:8080/health
 | Документ | Описание |
 |----------|----------|
 | [AGENTS.md](AGENTS.md) | MCP в целевом проекте: install, tools, env, troubleshooting |
-| [INSTALL.md](INSTALL.md) | Установка в целевой проект: prerequisites, Cursor wiring, Docker |
+| [INSTALL.md](INSTALL.md) | Установка: global layout (по умолчанию), legacy per-project, Cursor wiring, Docker, миграция, обновление, удаление |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Разработка репозитория: сборка, тесты, CGO, zvec-go |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура, режимы развёртывания, отказоустойчивость |
-| [docs/API.md](docs/API.md) | HTTP REST и MCP tools |
-| [docs/CONFIG.md](docs/CONFIG.md) | config.yaml и переменные окружения |
+| [docs/API.md](docs/API.md) | HTTP REST (включая `/v1/admin/*`) и MCP tools |
+| [docs/CONFIG.md](docs/CONFIG.md) | config.yaml, daemon.yaml, project.yaml, переменные окружения |
 
 ## Режимы multi-project
 
 | Режим | Описание |
 |-------|----------|
-| **Per-project** (по умолчанию) | Один процесс на workspace; изоляция индексов |
-| **Shared daemon** | Один HTTP-сервис, несколько workspace через `workspace_id` и `--stdio-proxy` |
+| **Global install** (по умолчанию) | Одно приложение на пользователя, один общий daemon владеет всеми коллекциями; в проекте только `project.yaml` с `collection_id`; в IDE — лёгкий stdio-прокси |
+| **Per-project** (legacy, явно) | Один процесс на workspace; изоляция индексов, exe и индекс внутри проекта |
+| **Shared daemon** (legacy, вручную) | Один HTTP-сервис, несколько workspace через `workspace_id` и `--stdio-proxy --workspace-id` |
+
+Кратко о режиме по умолчанию:
+
+```text
+<userdir>/                      # %LOCALAPPDATA%\mcp-semantic-search-zvec-go (или MCP_GLOBAL_DIR)
+  bin/ config.yaml daemon.yaml .env auth.token projects.d/ data/collections/<id>/
+
+<project>/.mcp-semantic-search-zvec-go/project.yaml   # schema_version + collection_id
+<project>/.cursor/mcp.json                            # managed: <userdir>/bin/… --stdio-proxy --project-config <abs project.yaml>
+```
+
+```powershell
+& "...\scripts\install\install.ps1" -TargetRoot (Get-Location).Path   # приложение + этот проект
+& "...\scripts\install\install.ps1" -InstallAppOnly                   # только приложение
+& "$env:LOCALAPPDATA\mcp-semantic-search-zvec-go\bin\mcp-semantic-search-zvec-go.exe" --project-add D:\other
+```
+
+Legacy-режим: `-McpMode Native` / `--mcp-mode native`. Подробности: [INSTALL.md](INSTALL.md#global-layout-default).
 
 ## Статус
 

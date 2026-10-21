@@ -226,15 +226,17 @@ Override with `HTTP_ADDR` env. Per-project default binds loopback only; use `:80
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WORKSPACE_ROOT` | cwd | Project root to index |
+| `MCP_GLOBAL_DIR` | `%LOCALAPPDATA%\mcp-semantic-search-zvec-go` (Windows) / `$XDG_DATA_HOME/mcp-semantic-search-zvec-go` | User-level install directory for the global layout. Must be an absolute path. |
+| `MCP_DAEMON_USER_LEVEL` | — | Set to `1` by the launcher to force the user-level daemon mode (loopback listener, `auth.token`, singleton lock) even when other flags are present |
+| `WORKSPACE_ROOT` | cwd | Project root to index (per-project layout) |
 | `WORKSPACE_ID` | `WORKSPACE_ROOT` | Stable owner ID in index_meta |
-| `INDEX_DIR` | `.mcp-semantic-search-zvec-go/data/index` | Index storage |
+| `INDEX_DIR` | `.mcp-semantic-search-zvec-go/data/index` | Index storage (per-project layout) |
 | `CONFIG_PATH` | `.mcp-semantic-search-zvec-go/config.yaml` | Config file |
-| `AUTO_INDEX_ON_START` | false (code); `true` in Native install `mcp.json` | Background index on start via `reindex` coordinator. **Per-project `--stdio` only** — shared daemon workspaces ignore this env; call `reindex` manually |
+| `AUTO_INDEX_ON_START` | false (code); `true` in Native install `mcp.json` | Background index on start via `reindex` coordinator. **Per-project `--stdio` only** — shared daemon workspaces ignore this env; the daemon uses `auto_index_on_open` instead |
 | `GITHUB_REPO` | `1CSerg/mcp-semantic-search-zvec-go` | GitHub repo for `check_update` (polls Releases API) |
 | `CHECK_UPDATE_DISABLE` | false | Set `true` to skip GitHub release polling in `check_update` |
 | `HTTP_ADDR` | `127.0.0.1:8080` (per-project); `:8080` (daemon/Docker) | HTTP bind |
-| `API_TOKEN` | — | HTTP Bearer auth. **Required** when the shared daemon binds beyond loopback (`:8080`, `0.0.0.0`, etc.); startup fails without it. Recommended for `--stdio-proxy` when the daemon listens beyond loopback; without it, daemon HTTP redacts workspace paths in status/search/reindex (see [API.md](API.md#open-daemon-redaction)). Set in workspace or daemon `.env` |
+| `API_TOKEN` | — | HTTP Bearer auth. **Required** when the shared daemon binds beyond loopback (`:8080`, `0.0.0.0`, etc.); startup fails without it. Recommended for `--stdio-proxy` when the daemon listens beyond loopback; without it, daemon HTTP redacts workspace paths in status/search/reindex (see [API.md](API.md#open-daemon-redaction)). In the global layout the token comes from `<userdir>/auth.token` and `API_TOKEN` is not read from a project. Set in workspace or daemon `.env` |
 | `ENV_PATH` | auto | Path to `.env` secrets file |
 | `MCP_PATH_CONTAINMENT` | `warn` | Path validation for `INDEX_DIR` / `CONFIG_PATH`: `strict` (fail startup), `warn` (log only), `off` (disable) |
 | `INDEXING_MAX_FILE_BYTES` | from yaml (`2097152`) | Override `indexing.max_file_bytes` (positive integer) |
@@ -254,7 +256,80 @@ Planned: `EMBEDDING_PROFILE` to override `active_profile` from yaml — not impl
 
 Resolved `INDEX_DIR` and `CONFIG_PATH` must normally stay under `WORKSPACE_ROOT`. External index locations (e.g. Docker bind-mount outside project root) require an explicit allowlist in `daemon.yaml` (`path_allowlist`). Set `MCP_PATH_CONTAINMENT=strict` in per-project mode for fail-fast hardening.
 
-## daemon.yaml (shared daemon)
+## Global install layout (default)
+
+One application per user. Three files cooperate, and each has a narrow owner:
+
+| File | Location | Owner | Holds |
+|------|----------|-------|-------|
+| `config.yaml` | `<userdir>/` | shared | profiles, embedding settings, chunking defaults, search/logging |
+| `daemon.yaml` | `<userdir>/` | shared | loopback listener, `max_open_workspaces`, `auto_index_on_open` |
+| `.env` | `<userdir>/` | shared | secrets (never read from a project) |
+| `auth.token` | `<userdir>/` | generated | local Bearer token for proxy ↔ daemon |
+| `projects.d/<id>.yaml` | `<userdir>/` | `ProjectManager` | `id`, `root`, `description` |
+| `project.yaml` | `<project>/.mcp-semantic-search-zvec-go/` | project | `schema_version`, `collection_id`, allowed overrides |
+
+`MCP_GLOBAL_DIR` overrides `<userdir>`; it must be an absolute path, otherwise every derived path is rejected.
+
+### project.yaml schema
+
+```yaml
+schema_version: 1            # absent = 1; any other value is rejected
+collection_id: <id>          # required; becomes a directory name under data/collections
+description: "Order service" # optional, metadata only
+active_profile: local_multilingual   # optional, must exist in the shared config.yaml
+indexing:
+  extensions: [...]          # optional, replaces the shared list entirely
+  skip_dirs: [...]           # optional, replaces the shared list entirely
+  max_file_bytes: 2097152    # optional
+  chunking:
+    min_chunk_tokens: 24     # optional
+    prose_overlap_ratio: 0.12# optional, must be in [0, 1)
+    languages:
+      bsl:
+        enabled: false       # optional; only the fields you set are overridden
+        include_sdbl: false  # optional
+file_watcher:
+  enabled: true              # optional
+  backend: polling           # optional: auto | inotify | polling
+  debounce_seconds: 2        # optional
+  poll_interval_seconds: 10  # optional
+```
+
+Strictness and merge rules:
+
+- **Unknown keys are errors**, at every level. So is `index_dir`, `config_path`, or any other path key: a project cannot choose where its index lives.
+- `schema_version` may be omitted (treated as 1); versions other than 1 are rejected.
+- Lists (`extensions`, `skip_dirs`) **replace** the shared value; an explicit empty list means an empty list.
+- Nested `languages` merge per field: an override that only sets `include_sdbl` keeps the shared `enabled`.
+- `provider`, `model`, `dimensions`, `base_url`, `model_path`, `api_key*`, `chunking.strategy`, `chunking.version`, and all listener/token settings are **not** overridable from a project.
+- `daemon_url` is read-only legacy: generated files never write it and the global proxy never dials a URL from a project.
+- A `collection_id` becomes a directory name, so it must match `[A-Za-z0-9][A-Za-z0-9._-]*`, be at most 64 characters, and must not contain `..`, end with `.`, or be a Windows device name (`CON`, `NUL`, `COM1`, …). Uniqueness is case-insensitive on every platform.
+
+Merge order: built-in defaults → shared `config.yaml` → allowed project overrides → final validation. The merged config is a fresh object: one project's overrides never mutate another's view.
+
+### daemon.yaml (global layout)
+
+The generated file is deliberately small:
+
+```yaml
+http_addr: 127.0.0.1:8080   # loopback only; a non-loopback value is rejected
+max_open_workspaces: 10
+auto_index_on_open: true
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `http_addr` | `127.0.0.1:8080` | Loopback listener. The global daemon refuses a non-loopback bind; use the legacy explicit `--daemon-config` for LAN access. |
+| `max_open_workspaces` | 10 | LRU cap on open collections. A collection that is indexing is never evicted; when every slot is busy the request fails with 503. |
+| `auto_index_on_open` | `true` | Build or refresh a collection on first open. One open → at most one startup job. |
+| `projects_dir` | `<userdir>/projects.d` | Registry location (override only for tests/portable use). |
+
+An empty registry is valid: the daemon starts before the first project is added.
+
+A **global** change (`profiles`, `dimensions`, chunking strategy/version) requires stopping the daemon and restarting it, then `reindex` with `force: true` per collection. A **project** change is applied by `--projects-reload`, which reopens only the changed collection and refuses with 409 while it is in use.
+
+## daemon.yaml (legacy shared daemon)
 
 Shared daemon registration. Template: [templates/daemon.yaml](../templates/daemon.yaml).
 

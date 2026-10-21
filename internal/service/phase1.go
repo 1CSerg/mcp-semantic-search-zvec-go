@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +76,7 @@ func NewPhase1(settings *config.Settings) (*Phase1, error) {
 	p.zvecCfg = zvec.Config{
 		IndexDir:      settings.IndexDir,
 		WorkspaceRoot: settings.WorkspaceRoot,
+		CollectionID:  settings.CollectionID,
 		ProfileName:   settings.App.ActiveProfile,
 		Dimensions:    profile.Dimensions,
 	}
@@ -94,6 +98,13 @@ func (p *Phase1) SetLifecycleContext(ctx context.Context) {
 	if p.coordinator != nil {
 		p.coordinator.SetLifecycleContext(ctx)
 	}
+}
+
+// IndexingActive reports whether a background indexing job is running for this
+// workspace. The registry uses it to refuse reloading a collection whose config
+// or root is being changed underneath a running job.
+func (p *Phase1) IndexingActive() bool {
+	return p.coordinator != nil && p.coordinator.IsRunning()
 }
 
 func (p *Phase1) manifestStats() (files, chunks int) {
@@ -282,7 +293,7 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 	files, chunks := p.manifestStats()
 	profile, profileErr := p.Settings.ActiveProfile()
 
-	collectionName := zvec.CollectionName(p.zvecCfg.WorkspaceRoot, p.zvecCfg.ProfileName, p.zvecCfg.Dimensions)
+	collectionName := p.zvecCfg.CollectionName()
 	collectionPath := zvec.CollectionPath(p.zvecCfg)
 
 	docCount := 0
@@ -323,6 +334,7 @@ func (p *Phase1) GetIndexStatus(ctx context.Context) (json.RawMessage, error) {
 	identity := zvec.IndexIdentity{
 		WorkspaceID:      p.Settings.WorkspaceID,
 		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		CollectionID:     p.Settings.CollectionID,
 		Profile:          p.Settings.App.ActiveProfile,
 		Dimensions:       profileDims,
 		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
@@ -470,6 +482,7 @@ func (p *Phase1) Ready(ctx context.Context) error {
 	if err := zvec.ValidateIndexMeta(
 		p.Settings.IndexDir,
 		p.Settings.WorkspaceID,
+		p.Settings.CollectionID,
 		p.Settings.App.ActiveProfile,
 		profile.Dimensions,
 		p.Settings.App.Indexing.Chunking.Version,
@@ -535,13 +548,36 @@ func (p *Phase1) indexIdentity() (zvec.IndexIdentity, error) {
 		return zvec.IndexIdentity{}, err
 	}
 	return zvec.IndexIdentity{
-		WorkspaceID:      p.Settings.WorkspaceID,
-		WorkspaceRoot:    p.Settings.WorkspaceRoot,
-		Profile:          p.Settings.App.ActiveProfile,
-		Dimensions:       profile.Dimensions,
-		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,
-		ChunkingStrategy: p.Settings.App.Indexing.Chunking.Strategy,
+		WorkspaceID:         p.Settings.WorkspaceID,
+		WorkspaceRoot:       p.Settings.WorkspaceRoot,
+		CollectionID:        p.Settings.CollectionID,
+		Profile:             p.Settings.App.ActiveProfile,
+		Dimensions:          profile.Dimensions,
+		ChunkingVersion:     p.Settings.App.Indexing.Chunking.Version,
+		ChunkingStrategy:    p.Settings.App.Indexing.Chunking.Strategy,
+		ChunkingFingerprint: ChunkingFingerprint(p.Settings.App.Indexing.Chunking),
 	}, nil
+}
+
+// ChunkingFingerprint is a stable digest of the chunking geometry that
+// ChunkingVersion and ChunkingStrategy do not cover. A project override can change
+// min_chunk_tokens, prose_overlap_ratio, context_prefix or a language toggle without
+// bumping the version, and an index that mixes two geometries silently degrades
+// results; the fingerprint makes the change visible as an identity mismatch.
+func ChunkingFingerprint(c config.ChunkingConfig) string {
+	langs := make([]string, 0, len(c.Languages))
+	for name := range c.Languages {
+		langs = append(langs, name)
+	}
+	sort.Strings(langs)
+	var b strings.Builder
+	fmt.Fprintf(&b, "min=%d;overlap=%.6f;prefix=%t;", c.MinChunkTokens, c.ProseOverlapRatio, c.ContextPrefixEnabled())
+	for _, name := range langs {
+		lang := c.Languages[name]
+		fmt.Fprintf(&b, "%s:%t/%t;", name, lang.Enabled, lang.IncludeSDBL)
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:8])
 }
 
 func (p *Phase1) reconcileIdentityBeforeReindex(force bool) error {
@@ -638,6 +674,7 @@ func (p *Phase1) runZvecGoMigrationIfNeeded() bool {
 	identity := zvec.IndexIdentity{
 		WorkspaceID:      p.Settings.WorkspaceID,
 		WorkspaceRoot:    p.Settings.WorkspaceRoot,
+		CollectionID:     p.Settings.CollectionID,
 		Profile:          p.Settings.App.ActiveProfile,
 		Dimensions:       profile.Dimensions,
 		ChunkingVersion:  p.Settings.App.Indexing.Chunking.Version,

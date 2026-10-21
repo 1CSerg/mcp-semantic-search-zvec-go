@@ -209,6 +209,36 @@ With `?include_paths=1` and valid Bearer token:
 
 ---
 
+### Admin endpoints (user-level daemon)
+
+These routes exist only in shared daemon mode. Unlike the read/write API, they are **never** open: when no `API_TOKEN` is configured they answer `403` instead of running unauthenticated.
+
+#### `POST /v1/admin/reload-projects`
+
+Re-reads `projects.d` and applies the new snapshot. It takes **no parameters** — roots come from the on-disk registry, so a caller cannot point the daemon at arbitrary paths. A non-empty body that is not `{}` is rejected.
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"ok": true, "collections": N}` — the snapshot was applied |
+| `400` | The new snapshot is invalid (malformed registration, missing `project.yaml`, id mismatch). The previous snapshot stays in effect. |
+| `409` | A changed or removed collection is still open or indexing: `{"error": …, "collections": ["id", …]}`. Nothing was applied. |
+| `403` | No `API_TOKEN` is configured for this daemon |
+| `503` | The registry is shutting down |
+
+Unchanged collections keep their handles, watchers and indexing jobs; new collections are opened lazily; changed or removed idle collections are closed after the reload.
+
+#### `POST /v1/admin/stop`
+
+Requests a graceful shutdown. Returns `202 {"status": "stopping"}` **before** the shutdown runs, so the caller sees a response rather than a dropped connection. The handler never kills the process; it signals the daemon owner, which drains the registry and exits.
+
+| Status | Meaning |
+|--------|---------|
+| `202` | Shutdown requested |
+| `403` | No `API_TOKEN` is configured |
+| `501` | Not available in this mode |
+
+---
+
 ### Open daemon redaction
 
 When the shared daemon runs **without** `API_TOKEN` (open HTTP API), workspace-scoped responses from `GET /v1/status`, `POST /v1/search`, and `POST /v1/reindex` are redacted before send:
@@ -230,20 +260,31 @@ Windows no flags → desktop GUI. Linux/macOS no flags → `--stdio` (per-projec
 
 | Flag | Mode | Description |
 |------|------|-------------|
-| `--gui` | Desktop GUI | Windows desktop UI for status, reindex, search, and result viewing |
+| `--gui` | Desktop GUI | Windows desktop UI for status, reindex, search, and result viewing. In the global layout it lists and switches registered collections and is a client of the shared daemon. |
 | `--stdio` | Per-project | MCP server over stdin/stdout |
 | `--http` | Per-project | HTTP REST API |
 | `--http-addr` | Both | Listen address (default `127.0.0.1:8080` per-project, `:8080` daemon, or `server.http_addr`) |
 | `--config` | Per-project | Override `CONFIG_PATH` |
-| `--daemon` | Shared daemon | Multi-workspace HTTP daemon (implies `--http`) |
-| `--daemon-config` | Shared daemon | Path to `daemon.yaml` (or `WORKSPACES_CONFIG`) |
-| `--stdio-proxy` | Proxy | MCP stdio → HTTP proxy (requires `--workspace-id`) |
-| `--workspace-id` | Proxy | Workspace ID for `--stdio-proxy` |
-| `--daemon-url` | Proxy | Daemon base URL (default `http://127.0.0.1:8080`) |
+| `--daemon` | Shared daemon | Multi-workspace HTTP daemon (implies `--http`). With no `--daemon-config`/`--http-addr` this is the **user-level** daemon: loopback listener from `<userdir>/daemon.yaml`, token from `<userdir>/auth.token`, singleton lock. |
+| `--daemon-config` | Shared daemon | Path to `daemon.yaml` (or `WORKSPACES_CONFIG`). Using it selects the legacy manual daemon (explicit bind, explicit token). |
+| `--stdio-proxy` | Proxy | MCP stdio → HTTP proxy. Requires `--project-config` (global layout) or `--workspace-id` (legacy manual mode). |
+| `--project-config` | Proxy | Absolute path to a project's `project.yaml`. The proxy binds that collection id to every request; it cannot be combined with `--workspace-id` or `--daemon-url`. |
+| `--workspace-id` | Proxy | Workspace ID for legacy manual `--stdio-proxy` |
+| `--daemon-url` | Proxy | Daemon base URL for legacy manual `--stdio-proxy` (default `http://127.0.0.1:8080`) |
+| `--project-add` | Management | Register a project root, ensure the daemon and reload it |
+| `--project-remove` | Management | Unregister a project root (collection data is kept) |
+| `--project-new-collection` | Management | Give a project a new collection id (for a copied project) |
+| `--project-relocate` | Management | Move a registered project to a new root, keeping its collection (needs `--yes`) |
+| `--yes` | Management | Confirm `--project-relocate` |
+| `--projects-reload` | Management | Ask the running daemon to re-read `projects.d` |
+| `--ensure-daemon` | Management | Start the shared daemon if it is not running |
+| `--stop-daemon` | Management | Stop the shared daemon gracefully |
 | `--stop-stdio-for-workspace` | Maintenance | Stop stale `--stdio` MCP instances for workspace and exit |
 | `--index-dir` | Maintenance | Index directory for lock reclaim (optional; with `--stop-stdio-for-workspace`) |
 
-Per-project MCP: `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Shared daemon: `--daemon --daemon-config …`. Cursor multi-repo: `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
+Management commands run instead of a server mode and cannot be combined with `--stdio`/`--stdio-proxy`/`--http`/`--daemon`/`--gui`. Their diagnostics go to stderr and stdout stays reserved for MCP frames; a failure exits non-zero.
+
+Per-project MCP: `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Global layout: `--stdio-proxy --project-config <absolute project.yaml>`. Legacy shared daemon: `--daemon --daemon-config …`, clients `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
 
 See also [DEVELOPMENT.md](DEVELOPMENT.md#run-modes).
 
@@ -304,7 +345,11 @@ Production builds poll GitHub Releases. Successful responses are cached **1 h**;
 | Invalid search `limit` (negative) | 400 | tool error |
 | Indexing in progress (search) | 200 | JSON with partial `results` + `indexing` + warning `message` |
 | Missing `workspace_id` (daemon) | 400 | tool error (proxy) |
-| Unknown `workspace_id` (daemon) | 404 | tool error (proxy) |
+| Unknown `workspace_id` (daemon) | 404 | tool error (proxy); never falls back to another collection |
+| Admin route without `API_TOKEN` configured | 403 | — |
+| Admin route with a wrong/missing Bearer | 401 | — |
+| `POST /v1/admin/reload-projects` with an invalid snapshot | 400 | — |
+| `POST /v1/admin/reload-projects` while a changed collection is in use | 409 | — |
 | `include_paths` without valid Bearer | 401 | — |
 | Registry shutting down (`registry is closing`) | 503 | tool error (proxy) |
 | `GET /v1/workspaces` in per-project mode | 501 | — |

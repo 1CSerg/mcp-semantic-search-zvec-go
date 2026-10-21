@@ -36,7 +36,7 @@ func TestSearchResultItemJSONFieldOrder(t *testing.T) {
 }
 
 func TestStubGetIndexStatusChunkingFields(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	s := NewStub(&config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, ".mcp-semantic-search-zvec-go", "data", "index"),
@@ -72,7 +72,7 @@ func TestStubGetIndexStatusChunkingFields(t *testing.T) {
 }
 
 func TestStubGetIndexStatus(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	s := NewStub(&config.Settings{
 		WorkspaceRoot: root,
 		IndexDir:      filepath.Join(root, ".mcp-semantic-search-zvec-go", "data", "index"),

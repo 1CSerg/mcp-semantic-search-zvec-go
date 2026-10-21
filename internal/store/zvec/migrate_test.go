@@ -44,7 +44,7 @@ func testMigrationIdentity() IndexIdentity {
 }
 
 func TestNeedsZvecGoMigrationEmptyCurrent(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestNeedsZvecGoMigrationEmptyCurrent(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationZvecDirOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	zvecDir := filepath.Join(dir, "zvec")
 	if err := os.MkdirAll(zvecDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestNeedsZvecGoMigrationZvecDirOnly(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationEmptyIndex(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	need, meta, err := NeedsZvecGoMigration(dir, version.ZvecGoVersion)
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestNeedsZvecGoMigrationEmptyIndex(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationMatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: version.ZvecGoVersion}); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestNeedsZvecGoMigrationMatch(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationMismatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestNeedsZvecGoMigrationMismatch(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationLegacyEmptyVersion(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{WorkspaceID: "ws1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestNeedsZvecGoMigrationLegacyEmptyVersion(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationManifestOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	manStore, err := manifest.Open(filepath.Join(dir, "manifest.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func TestNeedsZvecGoMigrationManifestOnly(t *testing.T) {
 }
 
 func TestNeedsZvecGoMigrationCorruptMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "index_meta.json"), []byte("{invalid"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestNeedsZvecGoMigrationCorruptMeta(t *testing.T) {
 }
 
 func TestResetIndexForZvecMigration(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:   "ws1",
 		ZvecGoVersion: "v0.3.1",
@@ -211,7 +211,7 @@ func TestResetIndexForZvecMigration(t *testing.T) {
 }
 
 func TestResetIndexForZvecMigrationManifestOnly(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	manStore, err := manifest.Open(filepath.Join(dir, "manifest.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestResetIndexForZvecMigrationManifestOnly(t *testing.T) {
 }
 
 func TestResetIndexForZvecMigrationNilStore(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestResetIndexForZvecMigrationNilStore(t *testing.T) {
 }
 
 func TestResetIndexForZvecMigrationWipeError(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{ZvecGoVersion: "v0.3.1"}); err != nil {
 		t.Fatal(err)
 	}

@@ -39,6 +39,7 @@ const (
 type Settings struct {
 	WorkspaceRoot    string
 	WorkspaceID      string
+	CollectionID     string
 	IndexDir         string
 	ConfigPath       string
 	AutoIndexOnStart bool
@@ -46,6 +47,11 @@ type Settings struct {
 	HTTPAddr         string
 	APIToken         string
 	App              AppConfig
+	// LogsDirOverride pins the log directory. The user-level daemon sets it to
+	// <userdir>/data/logs: it has no per-project config path, and without the
+	// override LogsDir would resolve relative to the detached child's working
+	// directory (i.e. an unpredictable ./logs).
+	LogsDirOverride string
 }
 
 // AppConfig is the parsed config.yaml.
@@ -327,6 +333,9 @@ func (s *Settings) InstallDir() string {
 
 // LogsDir returns the log directory under install tree.
 func (s *Settings) LogsDir() string {
+	if s.LogsDirOverride != "" {
+		return s.LogsDirOverride
+	}
 	return filepath.Join(s.InstallDir(), "logs")
 }
 

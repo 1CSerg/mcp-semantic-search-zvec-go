@@ -50,6 +50,11 @@ type Coordinator struct {
 	curProgress  Progress
 	lifecycleCtx context.Context
 	zvecCloseMu  sync.Mutex
+	// runDone is closed when the background indexing goroutine has fully finished,
+	// including its final progress.json write. A run is only "over" at that point:
+	// without it callers could observe Running=false while the index dir was still
+	// being written (flaky t.TempDir cleanup on Windows).
+	runDone chan struct{}
 
 	// forceStagingOpen, when set, replaces zvec.New+Open for force staging (tests).
 	forceStagingOpen func(cfg zvec.Config) (zvec.Store, error)
@@ -129,20 +134,29 @@ func (c *Coordinator) IsRunning() bool {
 	return c.running
 }
 
-// WaitForIdle blocks until the background job finishes or ctx is canceled.
+// WaitForIdle blocks until the background job fully finishes (including the final
+// progress write) or ctx is canceled.
 func (c *Coordinator) WaitForIdle(ctx context.Context) error {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if !c.IsRunning() {
-			return nil
+	c.mu.Lock()
+	done := c.runDone
+	c.mu.Unlock()
+	if done != nil {
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
+	}
+	// A coordinator whose running flag was set without a background goroutine (or
+	// a run that started between the read above and now) still has to settle.
+	for c.IsRunning() {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-ticker.C:
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
+	return nil
 }
 
 // CurrentProgress returns in-memory or persisted progress.
@@ -211,13 +225,17 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 	}
 	c.running = true
 	c.curProgress = StartRunning(force)
+	runDone := make(chan struct{})
+	c.runDone = runDone
 	c.mu.Unlock()
 
 	p := c.curProgress
 	if err := c.progress.Save(p); err != nil {
 		c.mu.Lock()
 		c.running = false
+		c.runDone = nil
 		c.mu.Unlock()
+		close(runDone)
 		c.zvecCloseMu.Unlock()
 		_ = c.lock.Release()
 		return p, err
@@ -234,7 +252,6 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 			_ = c.lock.Release()
 			c.zvecCloseMu.Unlock()
 			c.mu.Lock()
-			c.running = false
 			if runErr != nil {
 				if IsContextInterrupt(runErr) {
 					c.curProgress = FinishInterrupted(c.curProgress)
@@ -256,6 +273,16 @@ func (c *Coordinator) Start(force bool) (Progress, error) {
 			if err := c.progress.Save(finalProgress); err != nil {
 				slog.Warn("persist final indexing progress failed", "err", err)
 			}
+			// Flip to not-running and signal completion only after the final write:
+			// Running=false is the signal callers use to conclude that the index dir
+			// is quiescent.
+			c.mu.Lock()
+			c.running = false
+			if c.runDone == runDone {
+				c.runDone = nil
+			}
+			c.mu.Unlock()
+			close(runDone)
 		}()
 
 		filesFailed, finishFiles, finishChunks, runErr = c.run(c.runContext(), force)
@@ -274,6 +301,7 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		zvec.IndexIdentity{
 			WorkspaceID:      c.Settings.WorkspaceID,
 			WorkspaceRoot:    c.Settings.WorkspaceRoot,
+			CollectionID:     c.Settings.CollectionID,
 			Profile:          c.Settings.App.ActiveProfile,
 			Dimensions:       c.Profile.Dimensions,
 			ChunkingVersion:  c.Settings.App.Indexing.Chunking.Version,
@@ -314,8 +342,9 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		if c.forceStagingOpen != nil {
 			candidate, openErr = c.forceStagingOpen(stagingCfg)
 		} else {
-			candidate = zvec.New(stagingCfg)
-			openErr = candidate.Open()
+			// Staging must open writable: read-only Open fails with
+			// ErrCollectionMissing on a clean index and aborts every force reindex.
+			candidate, openErr = zvec.OpenStaging(stagingCfg)
 		}
 		if openErr == nil {
 			useStaging = true
@@ -361,15 +390,23 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 			}
 			return nil
 		}
+		// Windows: a directory rename fails while any handle on its files is open,
+		// so release both the staging build and the active collection first.
+		if err := stagingStore.Close(); err != nil {
+			return err
+		}
+		if err := c.Zvec.Close(); err != nil {
+			return err
+		}
 		if err := zvec.PromoteStagingCollection(c.ZvecCfg); err != nil {
 			_ = zvec.DiscardStagingCollection(c.ZvecCfg)
 			_ = zvec.DiscardStagingManifest(c.Settings.IndexDir)
+			_ = c.Zvec.Open()
 			return err
 		}
 		if err := zvec.PromoteStagingManifest(c.Settings.IndexDir); err != nil {
 			return err
 		}
-		_ = c.Zvec.Close()
 		return c.Zvec.Open()
 	}
 

@@ -8,7 +8,7 @@ import (
 )
 
 func TestProgressStoreRoundTrip(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	p := StartRunning(true)
 	p.FilesTotal = 10
@@ -87,7 +87,7 @@ func TestFinishIdleWithWarnings(t *testing.T) {
 }
 
 func TestProgressLoadMissingFile(t *testing.T) {
-	store := NewProgressStore(t.TempDir())
+	store := NewProgressStore(tempDir(t))
 	p, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestProgressLoadMissingFile(t *testing.T) {
 }
 
 func TestProgressSaveBlocked(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	blocked := filepath.Join(dir, "blocked")
 	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestProgressSaveBlocked(t *testing.T) {
 }
 
 func TestProgressLoadInvalidJSON(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	store := NewProgressStore(dir)
 	if err := os.WriteFile(store.path, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)

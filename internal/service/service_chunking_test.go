@@ -542,7 +542,7 @@ func TestIndexStatus_AfterChunkingVersionReindex(t *testing.T) {
 }
 
 func TestSharedDaemon_MultiTenant_Chunking(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	wsA := filepath.Join(root, "ws-a")
 	wsB := filepath.Join(root, "ws-b")
 	doc := []byte("# Tenant Doc\n\nShared prose paragraph for indexing.\n")

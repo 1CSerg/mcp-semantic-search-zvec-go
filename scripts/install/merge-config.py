@@ -19,6 +19,35 @@ except ImportError:
 
 _UNQUOTED_DESCRIPTION_COLON = re.compile(r"^(\s*)description:\s*[^\"'].*:.*", re.MULTILINE)
 
+# Identity fields that decide which vectors a profile produces. Two profiles with
+# the same name but a different identity cannot be merged: the index would be
+# read with the wrong model, so the user must rename one of them.
+_PROFILE_IDENTITY_FIELDS = ("provider", "model", "dimensions", "base_url", "model_path")
+
+
+def profile_identity_conflicts(source: CommentedMap, dest: CommentedMap) -> list[str]:
+    """Return profile names present in both with a different embedding identity."""
+    source_profiles = source.get("profiles")
+    dest_profiles = dest.get("profiles")
+    if not is_mapping(source_profiles) or not is_mapping(dest_profiles):
+        return []
+    conflicts: list[str] = []
+    for name, source_profile in source_profiles.items():
+        if name not in dest_profiles:
+            continue
+        dest_profile = dest_profiles[name]
+        if not is_mapping(source_profile) or not is_mapping(dest_profile):
+            continue
+        for field in _PROFILE_IDENTITY_FIELDS:
+            source_value = source_profile.get(field)
+            dest_value = dest_profile.get(field)
+            if source_value is None or dest_value is None:
+                continue
+            if str(source_value).strip() != str(dest_value).strip():
+                conflicts.append(f"{name} ({field}: {dest_value!r} vs {source_value!r})")
+                break
+    return conflicts
+
 
 def warn_unquoted_description_colons(text: str, path: Path) -> None:
     """Warn when description values contain ':' but are not YAML-quoted."""
@@ -111,6 +140,14 @@ def main() -> int:
         action="store_true",
         help="Replace dest entirely with template (ignore user settings)",
     )
+    parser.add_argument(
+        "--no-overwrite-profiles",
+        action="store_true",
+        help=(
+            "Legacy migration mode: add missing profiles/secrets but refuse (exit 3) "
+            "when a profile name exists on both sides with a different embedding identity"
+        ),
+    )
     args = parser.parse_args()
 
     if not args.template.is_file():
@@ -144,6 +181,19 @@ def main() -> int:
     except (OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if args.no_overwrite_profiles:
+        # Legacy migration: never let "last one wins" silently pick a different
+        # embedding identity for an existing profile name.
+        conflicts = profile_identity_conflicts(template_data, user_data)
+        if conflicts:
+            print(
+                "error: profile name(s) already exist with a different embedding identity: "
+                + "; ".join(conflicts)
+                + ". Rename them in the source config and retry.",
+                file=sys.stderr,
+            )
+            return 3
 
     merge_missing(template_data, user_data)
     merge_profile_embed_budget(user_data)

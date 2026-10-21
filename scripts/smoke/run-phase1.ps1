@@ -1,12 +1,25 @@
-# Phase 1 gate smoke: seed-index -> HTTP /v1/search with ranked results.
+# Phase 1 gate smoke: seed-index -> HTTP /v1/status -> /v1/search (plain + path_glob).
+#
+# The run is fully isolated: a throw-away workspace under %TEMP% holds the config,
+# the index and the seeded collection, so the repo root index is never touched and
+# INDEX_DIR/CONFIG_PATH never violate path containment (no warning noise).
+# Ports are allocated dynamically and both helper processes are built binaries, so
+# a leftover process can neither block the run nor survive the cleanup.
+# Failures print the server log tail instead of a bare "no results".
 $ErrorActionPreference = "Stop"
 . (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib\Stay-OpenOnError.ps1')
+
 $ScriptDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
-$SmokeIndex = Join-Path $env:TEMP "mcp-zvec-smoke-index"
-$HttpPort = 18089
-$MockPort = 9999
 $Dims = 128
+$SmokeRoot = Join-Path $env:TEMP "mcp-zvec-smoke-phase1"
+$WorkspaceRoot = $SmokeRoot
+$IndexDir = Join-Path $SmokeRoot "index"
+$ConfigPath = Join-Path $SmokeRoot "config.yaml"
+$LogFile = Join-Path $SmokeRoot "logs\server.log"
+# Seeded chunk paths are internal/module/file_<n>.go (see cmd/seed-index).
+$SeedGlob = "internal/module/*.go"
+$MissGlob = "does/not/match/*.go"
 
 function Stop-SmokeProcs {
     foreach ($p in $script:SmokeProcs) {
@@ -16,11 +29,59 @@ function Stop-SmokeProcs {
     }
 }
 
+function Get-FreePort {
+    param([string]$CheckBin)
+    $port = & $CheckBin free-port
+    if ($LASTEXITCODE -ne 0 -or -not $port) { throw "cannot allocate a free TCP port" }
+    return [int]$port
+}
+
+function Assert-Status {
+    param([string]$BaseUrl, [string]$CheckBin)
+    $json = Invoke-RestMethod -Uri "$BaseUrl/v1/status" -TimeoutSec 10 | ConvertTo-Json -Depth 6
+    $json | & $CheckBin status
+    if ($LASTEXITCODE -ne 0) { throw "seeded index is not visible to the server" }
+}
+
+function Assert-Results {
+    param([string]$Json, [int]$Min, [string]$Glob, [string]$CheckBin, [string]$FailMessage)
+    $Json | & $CheckBin results "$Min" $Glob
+    if ($LASTEXITCODE -ne 0) { throw $FailMessage }
+}
+
+function Wait-HttpReady {
+    param([string]$BaseUrl)
+    $deadline = (Get-Date).AddSeconds(20)
+    do {
+        try {
+            Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec 2 | Out-Null
+            return
+        } catch {
+            if ((Get-Date) -gt $deadline) { throw "HTTP server did not become ready on $BaseUrl" }
+            Start-Sleep -Milliseconds 500
+        }
+    } while ($true)
+}
+
+function Search-Smoke {
+    param([string]$BaseUrl, [string]$Query, [int]$Limit, [string]$PathGlob)
+    $payload = @{ query = $Query; limit = $Limit }
+    if ($PathGlob) { $payload.path_glob = $PathGlob }
+    $body = $payload | ConvertTo-Json
+    return Invoke-RestMethod -Method Post -Uri "$BaseUrl/v1/search" `
+        -ContentType "application/json" -Body $body -TimeoutSec 30
+}
+
+function Show-ServerLogTail {
+    if (Test-Path $LogFile) {
+        Write-Host "--- server.log (tail) ---"
+        Get-Content $LogFile -Tail 25 | ForEach-Object { Write-Host $_ }
+    }
+}
+
 $script:SmokeProcs = @()
 $failed = $false
 try {
-    Get-Process -Name "mcp-semantic-search-zvec-go" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-
     & "$RepoRoot\scripts\dev\build-zvec-windows.ps1" | Out-Null
 
     $LibDir = $env:ZVEC_LIB_DIR
@@ -31,61 +92,83 @@ try {
         $env:CC = "gcc"
     }
 
-    $env:CONFIG_PATH = Join-Path $ScriptDir "config.yaml"
-    $env:WORKSPACE_ROOT = $RepoRoot
-    $env:INDEX_DIR = $SmokeIndex
-    if (Test-Path $SmokeIndex) { Remove-Item -Recurse -Force $SmokeIndex }
-    New-Item -ItemType Directory -Force -Path $SmokeIndex | Out-Null
+    if (Test-Path $SmokeRoot) { Remove-Item -Recurse -Force $SmokeRoot }
+    New-Item -ItemType Directory -Force -Path $WorkspaceRoot, $IndexDir | Out-Null
 
-    $mock = Start-Process -FilePath "go" -ArgumentList @(
-        "run", "$ScriptDir\mock-embed.go", "-port", $MockPort, "-dims", $Dims
+    $binDir = Join-Path $RepoRoot "bin"
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    $checkBin = Join-Path $binDir "smoke-check.exe"
+    go build -o $checkBin (Join-Path $ScriptDir "smoke-check.go")
+    if ($LASTEXITCODE -ne 0) { throw "smoke-check build failed with exit code $LASTEXITCODE" }
+
+    $httpPort = Get-FreePort -CheckBin $checkBin
+    $mockPort = Get-FreePort -CheckBin $checkBin
+    $BaseUrl = "http://127.0.0.1:$httpPort"
+
+    # The smoke profile points at the mock embedding server, so the generated
+    # config carries the dynamically allocated mock port.
+    $configText = Get-Content -Raw (Join-Path $ScriptDir "config.yaml")
+    $configText = $configText -replace 'http://127\.0\.0\.1:\d+/v1', "http://127.0.0.1:$mockPort/v1"
+    Set-Content -Path $ConfigPath -Value $configText -Encoding utf8
+
+    # Everything (config, index, logs) lives under $WorkspaceRoot: no containment warnings.
+    $env:CONFIG_PATH = $ConfigPath
+    $env:WORKSPACE_ROOT = $WorkspaceRoot
+    $env:INDEX_DIR = $IndexDir
+
+    $mockBin = Join-Path $binDir "mock-embed.exe"
+    go build -o $mockBin (Join-Path $ScriptDir "mock-embed.go")
+    if ($LASTEXITCODE -ne 0) { throw "mock-embed build failed with exit code $LASTEXITCODE" }
+
+    $mock = Start-Process -FilePath $mockBin -ArgumentList @(
+        "-port", "$mockPort", "-dims", "$Dims"
     ) -PassThru -WindowStyle Hidden
     $script:SmokeProcs += $mock
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 1
 
     Push-Location $RepoRoot
-    go run -tags zvec ./cmd/seed-index -n 100
-    if ($LASTEXITCODE -ne 0) { throw "seed-index failed" }
+    try {
+        go run -tags zvec ./cmd/seed-index -n 100
+        if ($LASTEXITCODE -ne 0) { throw "seed-index failed with exit code $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
 
-    $bin = Join-Path $RepoRoot "bin\mcp-semantic-search-zvec-go.exe"
+    $bin = Join-Path $binDir "mcp-semantic-search-zvec-go.exe"
     $srv = Start-Process -FilePath $bin -ArgumentList @(
-        "--http", "--http-addr", "127.0.0.1:$HttpPort"
-    ) -PassThru -WindowStyle Hidden -WorkingDirectory (Join-Path $RepoRoot "bin")
+        "--http", "--http-addr", "127.0.0.1:$httpPort"
+    ) -PassThru -WindowStyle Hidden -WorkingDirectory $binDir
     $script:SmokeProcs += $srv
 
-    $deadline = (Get-Date).AddSeconds(15)
-    do {
-        try {
-            Invoke-RestMethod -Uri "http://127.0.0.1:$HttpPort/health" -TimeoutSec 2 | Out-Null
-            break
-        } catch {
-            if ((Get-Date) -gt $deadline) { throw "HTTP server did not become ready" }
-            Start-Sleep -Milliseconds 500
-        }
-    } while ($true)
+    Wait-HttpReady -BaseUrl $BaseUrl
 
-    $body = @{ query = "authentication"; limit = 5 } | ConvertTo-Json
-    $resp = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$HttpPort/v1/search" `
-        -ContentType "application/json" -Body $body
+    # The seeded collection must be visible: zvec_open_ok / zvec_doc_count prove the
+    # server opened the collection the seed created instead of resetting it.
+    Assert-Status -BaseUrl $BaseUrl -CheckBin $checkBin
 
-    $results = @($resp.results)
-    if ($results.Count -lt 1) {
-        throw "search returned no results: $($resp | ConvertTo-Json -Depth 5)"
-    }
-    foreach ($r in $results) {
-        if (-not $r.path -or $null -eq $r.score) {
-            throw "result missing path/score: $($r | ConvertTo-Json -Depth 3)"
-        }
-    }
+    $plain = Search-Smoke -BaseUrl $BaseUrl -Query "authentication" -Limit 5 | ConvertTo-Json -Depth 6
+    Assert-Results -Json $plain -Min 1 -Glob "-" -CheckBin $checkBin -FailMessage "plain search returned no usable results"
 
-    Write-Host "PASS Phase 1 smoke: $($results.Count) results, top score=$($results[0].score)"
-    Write-Host "  path=$($results[0].path) snippet=$($results[0].snippet)"
+    # path_glob must filter without losing recall (regression guard for the
+    # topK-expansion defect: the seeded collection holds exactly 100 chunks).
+    $globbed = Search-Smoke -BaseUrl $BaseUrl -Query "authentication" -Limit 5 -PathGlob $SeedGlob | ConvertTo-Json -Depth 6
+    Assert-Results -Json $globbed -Min 1 -Glob $SeedGlob -CheckBin $checkBin `
+        -FailMessage "path_glob '$SeedGlob' lost recall or returned a non-matching path"
+
+    $missed = Search-Smoke -BaseUrl $BaseUrl -Query "authentication" -Limit 5 -PathGlob $MissGlob | ConvertTo-Json -Depth 6
+    Assert-Results -Json $missed -Min 0 -Glob $MissGlob -CheckBin $checkBin `
+        -FailMessage "path_glob '$MissGlob' returned results for a non-matching glob"
+
+    Write-Host "PASS path_glob filter: matching glob returns only matching paths, non-matching glob returns 0"
+    Write-Host "  smoke workspace: $SmokeRoot"
 } catch {
     $failed = $true
     Write-Error $_
 } finally {
     Stop-SmokeProcs
-    Pop-Location -ErrorAction SilentlyContinue
-    if ($failed) { Wait-IfInteractiveOnError }
+    if ($failed) {
+        Show-ServerLogTail
+        Wait-IfInteractiveOnError
+    }
 }
 if ($failed) { exit 1 }

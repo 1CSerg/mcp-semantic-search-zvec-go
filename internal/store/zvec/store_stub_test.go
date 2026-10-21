@@ -8,7 +8,7 @@ import (
 )
 
 func TestNewStubFactory(t *testing.T) {
-	s := New(Config{IndexDir: t.TempDir()})
+	s := New(Config{IndexDir: tempDir(t)})
 	if s == nil {
 		t.Fatal("nil store")
 	}

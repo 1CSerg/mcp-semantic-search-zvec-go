@@ -29,6 +29,16 @@ type Server struct {
 	mux           *http.ServeMux
 	daemon        bool
 	updateChecker *update.Checker
+	// lifecycle receives daemon shutdown requests from POST /v1/admin/stop.
+	// The handler never calls os.Exit: it asks the owner to stop gracefully.
+	lifecycle DaemonLifecycle
+}
+
+// DaemonLifecycle lets the daemon owner shut down gracefully from an
+// authenticated admin request, without killing the process from a handler.
+type DaemonLifecycle interface {
+	// RequestShutdown asks the daemon to stop accepting work and exit.
+	RequestShutdown(ctx context.Context) error
 }
 
 // New creates an HTTP server with v1 routes and health probes (per-project mode).
@@ -60,6 +70,12 @@ func NewDaemon(settings *config.Settings, registry *daemon.Registry) *Server {
 	return s
 }
 
+// SetDaemonLifecycle wires the graceful-shutdown callback used by
+// POST /v1/admin/stop.
+func (s *Server) SetDaemonLifecycle(l DaemonLifecycle) {
+	s.lifecycle = l
+}
+
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("GET /ready", s.handleReady)
@@ -68,6 +84,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
 	s.mux.HandleFunc("POST /v1/reindex", s.handleReindex)
 	s.mux.HandleFunc("GET /v1/workspaces", s.handleWorkspaces)
+	s.mux.HandleFunc("POST /v1/admin/reload-projects", s.handleAdminReloadProjects)
+	s.mux.HandleFunc("POST /v1/admin/stop", s.handleAdminStop)
 }
 
 // Handler returns the root http.Handler with middleware.
@@ -278,6 +296,100 @@ func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspaces": s.registry.ListWorkspaces(includePaths),
 	})
+}
+
+// requireAdminAuth enforces an authenticated caller for admin endpoints. Unlike
+// the read/write API, admin routes never run unauthenticated: with no configured
+// token they are disabled instead of open.
+func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
+	token := ""
+	if s.settings != nil {
+		token = s.settings.APIToken
+	}
+	if strings.TrimSpace(token) == "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{
+			"error": "admin API requires API_TOKEN to be configured",
+		})
+		return false
+	}
+	if !bearerAuthorized(r, token) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
+// handleAdminReloadProjects re-reads projects.d and applies the new snapshot.
+// It never accepts a root from the request body: the only input is the on-disk
+// registry, so an authenticated caller cannot point the daemon at arbitrary paths.
+func (s *Server) handleAdminReloadProjects(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminAuth(w, r) {
+		return
+	}
+	if !s.daemon || s.registry == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "project reload is only available in shared daemon mode",
+		})
+		return
+	}
+	// Reject any body: the request carries no parameters by design.
+	if r.Body != nil && r.Body != http.NoBody {
+		var probe json.RawMessage
+		if err := decodeJSON(w, r, &probe); err != nil && !errors.Is(err, io.EOF) {
+			writeDecodeError(w, err)
+			return
+		}
+		if len(probe) > 0 && string(probe) != "null" && string(probe) != "{}" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{
+				"error": "reload-projects takes no parameters; roots come from projects.d",
+			})
+			return
+		}
+	}
+	if err := s.registry.ReloadProjects(r.Context()); err != nil {
+		var reloadErr *daemon.ReloadError
+		switch {
+		case errors.As(err, &reloadErr) && reloadErr.Kind == daemon.ReloadBusy:
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":       reloadErr.Error(),
+				"collections": reloadErr.IDs,
+			})
+		case errors.As(err, &reloadErr):
+			slog.Warn("project reload rejected", "err", err)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": reloadErr.Error()})
+		case errors.Is(err, daemon.ErrRegistryClosing):
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+		default:
+			writeError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"collections": len(s.registry.ListWorkspaces(false)),
+	})
+}
+
+// handleAdminStop asks the daemon owner to shut down gracefully. The response is
+// sent before the shutdown runs, so the caller sees 202 rather than a dropped
+// connection.
+func (s *Server) handleAdminStop(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdminAuth(w, r) {
+		return
+	}
+	if !s.daemon || s.lifecycle == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{
+			"error": "graceful stop is not available in this mode",
+		})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	if err := s.lifecycle.RequestShutdown(context.WithoutCancel(r.Context())); err != nil {
+		slog.Warn("daemon stop request failed", "err", err)
+	}
 }
 
 func (s *Server) redactIfOpenDaemon(raw json.RawMessage) json.RawMessage {

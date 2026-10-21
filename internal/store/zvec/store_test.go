@@ -22,7 +22,7 @@ func TestCollectionPath(t *testing.T) {
 }
 
 func TestIndexMetaPresent(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if IndexMetaPresent(dir) {
 		t.Fatal("expected false")
 	}

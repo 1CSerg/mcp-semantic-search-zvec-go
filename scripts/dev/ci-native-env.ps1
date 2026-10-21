@@ -16,12 +16,18 @@ function Add-NativeLibDir([string]$Dir) {
 	$env:PATH = "$native;$env:PATH"
 }
 
+# Bash consumers quote values that contain backslashes (see fetch-zvec-libs.sh),
+# so strip surrounding quotes before using the value as a native path.
+function ConvertFrom-EnvFileValue([string]$Value) {
+	return $Value.Trim().Trim("'").Trim('"')
+}
+
 foreach ($name in @('zvec-lib.env', 'onnxruntime.env')) {
 	$file = Join-Path $RepoRoot (Join-Path '.deps' $name)
 	if (-not (Test-Path $file)) { continue }
 	Get-Content $file | ForEach-Object {
 		if ($_ -match '^([^=]+)=(.*)$') {
-			Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2].Trim()
+			Set-Item -Path "Env:$($Matches[1])" -Value (ConvertFrom-EnvFileValue $Matches[2])
 		}
 	}
 }

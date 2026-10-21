@@ -219,5 +219,83 @@ profiles:
         self.assertNotIn("max_input_tokens: 256", text)
 
 
+    def test_no_overwrite_profiles_merges_disjoint_profiles(self) -> None:
+        template = self.root / "legacy.yaml"
+        dest = self.root / "config.yaml"
+        template.write_text(
+            """active_profile: legacy_profile
+profiles:
+  legacy_profile:
+    provider: openai_compatible
+    model: legacy-model
+    dimensions: 768
+""",
+            encoding="utf-8",
+        )
+        dest.write_text(
+            """active_profile: global_profile
+profiles:
+  global_profile:
+    provider: openai_compatible
+    model: global-model
+    dimensions: 1024
+""",
+            encoding="utf-8",
+        )
+
+        result = run_merge(template, dest, "--no-overwrite-profiles")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        text = dest.read_text(encoding="utf-8")
+        self.assertIn("legacy_profile:", text)
+        self.assertIn("global_profile:", text)
+        # The user's active profile is never overwritten by the migration.
+        self.assertIn("active_profile: global_profile", text)
+
+    def test_no_overwrite_profiles_rejects_identity_conflict(self) -> None:
+        template = self.root / "legacy.yaml"
+        dest = self.root / "config.yaml"
+        template.write_text(
+            """profiles:
+  shared_name:
+    provider: openai_compatible
+    model: model-a
+    dimensions: 384
+""",
+            encoding="utf-8",
+        )
+        dest.write_text(
+            """profiles:
+  shared_name:
+    provider: openai_compatible
+    model: model-b
+    dimensions: 1024
+""",
+            encoding="utf-8",
+        )
+        dest_before = dest.read_text(encoding="utf-8")
+
+        result = run_merge(template, dest, "--no-overwrite-profiles")
+        self.assertEqual(result.returncode, 3, result.stdout)
+        self.assertIn("shared_name", result.stderr)
+        self.assertIn("Rename", result.stderr)
+        # Nothing was written: the working config is untouched.
+        self.assertEqual(dest.read_text(encoding="utf-8"), dest_before)
+
+    def test_no_overwrite_profiles_accepts_identical_identity(self) -> None:
+        template = self.root / "legacy.yaml"
+        dest = self.root / "config.yaml"
+        body = """profiles:
+  same:
+    provider: openai_compatible
+    model: model-a
+    dimensions: 384
+"""
+        template.write_text(body, encoding="utf-8")
+        dest.write_text(body, encoding="utf-8")
+
+        result = run_merge(template, dest, "--no-overwrite-profiles")
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,7 @@ import (
 )
 
 func TestCloseErrorPreservesHandle(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	marker := filepath.Join(dir, "keep")
 	if err := os.WriteFile(marker, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)

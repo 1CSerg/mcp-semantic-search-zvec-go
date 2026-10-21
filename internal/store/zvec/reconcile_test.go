@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/1CSerg/mcp-semantic-search-zvec-go/internal/config"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestIndexIdentityMismatchAbsentMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	mismatch, meta, err := IndexIdentityMismatch(dir, testIdentity("ws1", "", "test", 3))
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +24,7 @@ func TestIndexIdentityMismatchAbsentMeta(t *testing.T) {
 }
 
 func TestIndexIdentityMismatchMatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws1",
 		EmbeddingProfile:    "test",
@@ -43,7 +44,7 @@ func TestIndexIdentityMismatchMatch(t *testing.T) {
 }
 
 func TestIndexIdentityMismatchWorkspaceID(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws-a",
 		EmbeddingProfile:    "test",
@@ -63,8 +64,67 @@ func TestIndexIdentityMismatchWorkspaceID(t *testing.T) {
 	}
 }
 
+// TestIndexIdentityMismatchChunkingFingerprint: a geometry change that does not bump
+// chunking_version/strategy must still be an identity mismatch, otherwise the index
+// silently mixes two chunking geometries.
+func TestIndexIdentityMismatchChunkingFingerprint(t *testing.T) {
+	dir := tempDir(t)
+	identity := testIdentity("ws1", "", "test", 3)
+	identity.ChunkingFingerprint = "aaaa1111"
+	if err := EnsureIndexMeta(dir, identity); err != nil {
+		t.Fatal(err)
+	}
+
+	// Same version/strategy, different geometry: mismatch with an actionable reason.
+	changed := identity
+	changed.ChunkingFingerprint = "bbbb2222"
+	mismatch, _, err := IndexIdentityMismatch(dir, changed)
+	if !mismatch {
+		t.Fatal("expected a mismatch when the chunking geometry changed")
+	}
+	if err == nil || !errors.Is(err, ErrOwnerMismatch) {
+		t.Fatalf("err=%v", err)
+	}
+	if !strings.Contains(err.Error(), "chunking geometry changed") {
+		t.Fatalf("error should explain the geometry change: %v", err)
+	}
+
+	// Same geometry: no mismatch.
+	mismatch, _, err = IndexIdentityMismatch(dir, identity)
+	if mismatch || err != nil {
+		t.Fatalf("identical geometry must match: mismatch=%v err=%v", mismatch, err)
+	}
+
+	// A legacy index without a fingerprint is not forced to rebuild: write the meta
+	// directly (EnsureIndexMeta keeps an existing complete meta untouched).
+	if err := WriteIndexMeta(dir, IndexMeta{
+		WorkspaceID:         "ws1",
+		WorkspaceRoot:       "/proj",
+		EmbeddingProfile:    "test",
+		EmbeddingDimensions: 3,
+		CollectionName:      CollectionName("/proj", "test", 3),
+		ChunkingVersion:     1,
+		ChunkingStrategy:    "hybrid",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := ReadIndexMeta(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ChunkingFingerprint != "" {
+		t.Fatalf("expected no stored fingerprint, got %q", stored.ChunkingFingerprint)
+	}
+	legacy := testIdentity("ws1", "", "test", 3)
+	legacy.ChunkingFingerprint = "cccc3333"
+	mismatch, _, err = IndexIdentityMismatch(dir, legacy)
+	if mismatch {
+		t.Fatalf("an index without a fingerprint must not mismatch: %v", err)
+	}
+}
+
 func TestIndexIdentityMismatchChunkingVersionZeroVsConfigOne(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws1",
 		EmbeddingProfile:    "test",
@@ -89,7 +149,7 @@ func TestIndexIdentityMismatchChunkingVersionZeroVsConfigOne(t *testing.T) {
 }
 
 func TestIndexIdentityMismatchChunkingStrategy(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws1",
 		EmbeddingProfile:    "test",
@@ -115,8 +175,8 @@ func TestIndexIdentityMismatchChunkingStrategy(t *testing.T) {
 }
 
 func TestReconcileIndexMismatchWithoutForce(t *testing.T) {
-	dir := t.TempDir()
-	oldRoot := filepath.Join(t.TempDir(), "old")
+	dir := tempDir(t)
+	oldRoot := filepath.Join(tempDir(t), "old")
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws-a",
 		WorkspaceRoot:       oldRoot,
@@ -126,7 +186,7 @@ func TestReconcileIndexMismatchWithoutForce(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	newRoot := filepath.Join(t.TempDir(), "new")
+	newRoot := filepath.Join(tempDir(t), "new")
 	identity := IndexIdentity{
 		WorkspaceID:   "ws-b",
 		WorkspaceRoot: newRoot,
@@ -140,7 +200,7 @@ func TestReconcileIndexMismatchWithoutForce(t *testing.T) {
 }
 
 func TestResetIndexForIdentityChange(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	oldRoot := filepath.Join(dir, "old-root")
 	newRoot := filepath.Join(dir, "new-root")
 	oldCollection := CollectionName(oldRoot, "test", 3)
@@ -226,7 +286,7 @@ func TestResetIndexForIdentityChange(t *testing.T) {
 }
 
 func TestReconcileIndexMismatchWithForce(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	oldRoot := filepath.Join(dir, "old-root")
 	newRoot := filepath.Join(dir, "new-root")
 	oldCollection := CollectionName(oldRoot, "test", 3)
@@ -270,7 +330,7 @@ func TestReconcileIndexMismatchWithForce(t *testing.T) {
 }
 
 func TestResetIndexForIdentityChangeSameCollectionPreservesActive(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	root := filepath.Join(dir, "ws")
 	collection := CollectionName(root, "test", 3)
 	activeDir := filepath.Join(dir, "zvec", collection)
@@ -351,7 +411,7 @@ func TestResetIndexForIdentityChangeSameCollectionPreservesActive(t *testing.T) 
 }
 
 func TestReconcileIndexNoMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	root := filepath.Join(dir, "ws")
 	identity := IndexIdentity{
 		WorkspaceID:   "ws1",
@@ -368,8 +428,8 @@ func TestReconcileIndexNoMeta(t *testing.T) {
 }
 
 func TestReconcileIndexDetectsRootMoveWithPinnedID(t *testing.T) {
-	dir := t.TempDir()
-	oldRoot := filepath.Join(t.TempDir(), "old")
+	dir := tempDir(t)
+	oldRoot := filepath.Join(tempDir(t), "old")
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "pinned-id",
 		WorkspaceRoot:       oldRoot,
@@ -382,7 +442,7 @@ func TestReconcileIndexDetectsRootMoveWithPinnedID(t *testing.T) {
 	// Same workspace_id, but the root moved -> collection name differs.
 	identity := IndexIdentity{
 		WorkspaceID:   "pinned-id",
-		WorkspaceRoot: filepath.Join(t.TempDir(), "new"),
+		WorkspaceRoot: filepath.Join(tempDir(t), "new"),
 		Profile:       "test",
 		Dimensions:    3,
 	}
@@ -393,7 +453,7 @@ func TestReconcileIndexDetectsRootMoveWithPinnedID(t *testing.T) {
 }
 
 func TestReconcileIndexNoMismatch(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	root := filepath.Join(dir, "ws")
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:         "ws1",
@@ -416,7 +476,7 @@ func TestReconcileIndexNoMismatch(t *testing.T) {
 }
 
 func TestResetIndexForIdentityChangeNilOldMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	root := filepath.Join(dir, "ws")
 	identity := IndexIdentity{
 		WorkspaceID:      "ws1",
@@ -439,7 +499,7 @@ func TestResetIndexForIdentityChangeNilOldMeta(t *testing.T) {
 }
 
 func TestIndexIdentityMismatchCorruptMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "index_meta.json"), []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -450,14 +510,14 @@ func TestIndexIdentityMismatchCorruptMeta(t *testing.T) {
 }
 
 func TestRemoveCollectionDirEmptyName(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	if err := RemoveCollectionDir(dir, ""); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestReconcileIndexBackfillsIncompleteMeta(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	root := filepath.Join(dir, "ws")
 	if err := WriteIndexMeta(dir, IndexMeta{
 		WorkspaceID:      "ws1",
@@ -510,13 +570,13 @@ func clearManifestForTest(indexDir string) error {
 }
 
 func TestClearManifestMissingFile(t *testing.T) {
-	if err := clearManifestForTest(t.TempDir()); err != nil {
+	if err := clearManifestForTest(tempDir(t)); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestClearManifestClearsRows(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	manStore, err := manifest.Open(filepath.Join(dir, "manifest.db"))
 	if err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ func testConfig(t *testing.T, indexDir string) Config {
 	t.Helper()
 	return Config{
 		IndexDir:      indexDir,
-		WorkspaceRoot: t.TempDir(),
+		WorkspaceRoot: tempDir(t),
 		ProfileName:   "integration",
 		Dimensions:    testDims,
 	}
@@ -48,7 +48,7 @@ func seedChunks(n int) ([]Chunk, [][]float32) {
 }
 
 func TestIntegrationSpikeChecklist(t *testing.T) {
-	indexDir := t.TempDir()
+	indexDir := tempDir(t)
 	cfg := testConfig(t, indexDir)
 	store := New(cfg).(*CollectionStore)
 
@@ -144,7 +144,7 @@ func TestIntegrationSpikeChecklist(t *testing.T) {
 }
 
 func TestIntegrationOpenReadOnlyThenWrite(t *testing.T) {
-	indexDir := t.TempDir()
+	indexDir := tempDir(t)
 	cfg := testConfig(t, indexDir)
 	store := New(cfg).(*CollectionStore)
 
@@ -202,7 +202,7 @@ func TestIntegrationOpenReadOnlyThenWrite(t *testing.T) {
 }
 
 func TestIntegrationSearchReturnsSymbolFields(t *testing.T) {
-	indexDir := t.TempDir()
+	indexDir := tempDir(t)
 	cfg := testConfig(t, indexDir)
 	store := New(cfg).(*CollectionStore)
 
@@ -242,7 +242,7 @@ func TestIntegrationSearchReturnsSymbolFields(t *testing.T) {
 }
 
 func TestIntegrationPathGlobExpansion(t *testing.T) {
-	indexDir := t.TempDir()
+	indexDir := tempDir(t)
 	cfg := testConfig(t, indexDir)
 	store := New(cfg).(*CollectionStore)
 
@@ -286,5 +286,153 @@ func TestIntegrationPathGlobExpansion(t *testing.T) {
 
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestIntegrationPathGlobExpansionTopKAboveDocCount covers the second broken
+// shape: with limit greater than the collection size the expansion loop never
+// ran a query and returned zero hits, even though the only match was present.
+func TestIntegrationPathGlobExpansionTopKAboveDocCount(t *testing.T) {
+	indexDir := tempDir(t)
+	cfg := testConfig(t, indexDir)
+	store := New(cfg).(*CollectionStore)
+
+	chunks := []Chunk{
+		{
+			DocID:        "other-doc",
+			RelativePath: "other/near.go",
+			StartLine:    1,
+			EndLine:      2,
+			ChunkType:    "code",
+			Snippet:      "other",
+		},
+		{
+			DocID:        "target-doc",
+			RelativePath: "target/match.go",
+			StartLine:    1,
+			EndLine:      2,
+			ChunkType:    "code",
+			Snippet:      "target match",
+		},
+	}
+	// The match has the worst rank, so only a full pass can find it.
+	vectors := [][]float32{unitVector(0, testDims), unitVector(testDims-1, testDims)}
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks: %v", err)
+	}
+
+	hits, err := store.Search(unitVector(0, testDims), 5, "target/*.go")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits=%d want 1", len(hits))
+	}
+	if hits[0].Path != "target/match.go" {
+		t.Fatalf("path=%q want target/match.go", hits[0].Path)
+	}
+
+	// Unfiltered search must be unaffected by the glob schedule fix.
+	all, err := store.Search(unitVector(0, testDims), 5, "")
+	if err != nil {
+		t.Fatalf("Search without glob: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("unfiltered hits=%d want 2", len(all))
+	}
+	if all[0].Path != "other/near.go" {
+		t.Fatalf("unfiltered top path=%q want other/near.go", all[0].Path)
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestIntegrationPathGlobExpansionFullPass covers a non-matching glob on a
+// collection whose size sits between two powers of two: the loop must terminate
+// after a full pass and return no hits instead of looping or truncating.
+func TestIntegrationPathGlobExpansionFullPass(t *testing.T) {
+	indexDir := tempDir(t)
+	cfg := testConfig(t, indexDir)
+	store := New(cfg).(*CollectionStore)
+
+	const docs = 121
+	chunks := make([]Chunk, 0, docs)
+	vectors := make([][]float32, 0, docs)
+	for i := 0; i < docs; i++ {
+		chunks = append(chunks, Chunk{
+			DocID:        fmt.Sprintf("doc-%03d", i),
+			RelativePath: fmt.Sprintf("other/near_%d.go", i),
+			StartLine:    1,
+			EndLine:      2,
+			ChunkType:    "code",
+			Snippet:      fmt.Sprintf("doc %d", i),
+		})
+		vectors = append(vectors, unitVector(0, testDims))
+	}
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks: %v", err)
+	}
+
+	hits, err := store.Search(unitVector(0, testDims), 3, "target/*.go")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("hits=%d want 0", len(hits))
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestIntegrationOpenStagingOnCleanIndex covers the staged force-reindex path:
+// the staging collection must be created writable (read-only Open returns
+// ErrCollectionMissing on a clean index), and promote must work once the handles
+// are released (Windows cannot rename a directory with open files).
+func TestIntegrationOpenStagingOnCleanIndex(t *testing.T) {
+	indexDir := tempDir(t)
+	cfg := testConfig(t, indexDir)
+	stagingCfg := cfg
+	stagingCfg.CollectionSuffix = StagingCollectionSuffix
+
+	if _, err := os.Stat(CollectionPath(stagingCfg)); !os.IsNotExist(err) {
+		t.Fatalf("staging collection must not exist before the build: %v", err)
+	}
+
+	store, err := OpenStaging(stagingCfg)
+	if err != nil {
+		t.Fatalf("OpenStaging: %v", err)
+	}
+	if _, err := os.Stat(CollectionPath(stagingCfg)); err != nil {
+		t.Fatalf("staging collection not created: %v", err)
+	}
+
+	chunks, vectors := seedChunks(3)
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close staging: %v", err)
+	}
+	if err := PromoteStagingCollection(cfg); err != nil {
+		t.Fatalf("PromoteStagingCollection: %v", err)
+	}
+	if _, err := os.Stat(CollectionPath(stagingCfg)); !os.IsNotExist(err) {
+		t.Fatal("staging collection should be gone after promote")
+	}
+
+	active := New(cfg).(*CollectionStore)
+	n, err := active.DocCount()
+	if err != nil {
+		t.Fatalf("DocCount: %v", err)
+	}
+	if n != len(chunks) {
+		t.Fatalf("doc count=%d want %d", n, len(chunks))
+	}
+	if err := active.Close(); err != nil {
+		t.Fatalf("Close active: %v", err)
 	}
 }

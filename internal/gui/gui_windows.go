@@ -64,6 +64,13 @@ type appUI struct {
 	svc      service.Service
 	window   fyne.Window
 
+	// Global install mode: the GUI is a client of the shared daemon and selects
+	// one collection at a time. svc then points at the selected collection.
+	collections    []Collection
+	session        *Session
+	collectionSel  *widget.Select
+	collectionInfo *widget.Label
+
 	versionLabel  *widget.Label
 	statusLabel   *widget.Label
 	messageLabel  *widget.Label
@@ -95,11 +102,12 @@ func formatVersionLabel() string {
 }
 
 // Run starts the Windows desktop GUI.
+//
+// In the global install layout the GUI never opens zvec: it lists the registered
+// collections, connects to the one shared daemon and shows the selected
+// collection through the same HTTP proxy an MCP session uses. The per-project
+// legacy mode (svc != nil, no registry) keeps its previous behaviour.
 func Run(ctx context.Context, settings *config.Settings, svc service.Service) error {
-	if err := lifecycle.PrepareWorkspaceLocks(settings); err != nil {
-		slog.Warn("gui workspace lock prep failed", "err", err)
-	}
-
 	a := app.NewWithID("github.com.1CSerg.mcp-semantic-search-zvec-go")
 	w := a.NewWindow(windowTitle())
 	w.Resize(fyne.NewSize(1100, 760))
@@ -109,6 +117,28 @@ func Run(ctx context.Context, settings *config.Settings, svc service.Service) er
 		svc:      svc,
 		window:   w,
 	}
+	// Try the global layout first: a registered collection means the daemon owns
+	// the index and this process must stay a client.
+	if global, err := ui.initGlobalMode(ctx); err == nil && global {
+		slog.Info("gui started in global collection mode", "collections", len(ui.collections))
+	} else {
+		if err != nil && !errors.Is(err, ErrNoCollections) {
+			slog.Warn("gui global mode unavailable", "err", err)
+		}
+		if err := lifecycle.PrepareWorkspaceLocks(settings); err != nil {
+			slog.Warn("gui workspace lock prep failed", "err", err)
+		}
+	}
+	if err := RequireService(ui.svc, ui.session); err != nil {
+		// No service means neither the global daemon nor a per-project index is
+		// available. Rendering the window would dereference a nil service on the
+		// first status poll, so report the reason instead of crashing.
+		if ui.session != nil {
+			ui.session.Close()
+		}
+		return fmt.Errorf("%w; see %s", err, collectionHelpPath())
+	}
+
 	w.SetContent(ui.build())
 
 	ui.refreshStatus()
@@ -122,7 +152,91 @@ func Run(ctx context.Context, settings *config.Settings, svc service.Service) er
 	}()
 
 	w.ShowAndRun()
+	if ui.session != nil {
+		// Closing the window cancels this GUI's requests only; the shared daemon
+		// keeps running for other IDE sessions.
+		ui.session.Close()
+	}
 	return nil
+}
+
+// collectionHelpPath names where the daemon log lives, for the error shown when
+// no collection can be opened.
+func collectionHelpPath() string {
+	if dir, err := config.GlobalLogsDir(); err == nil {
+		return dir
+	}
+	return "the user-level log directory"
+}
+
+// initGlobalMode wires the collection list and opens the first collection.
+// It reports global=false when the user-level layout is not in use.
+func (ui *appUI) initGlobalMode(ctx context.Context) (bool, error) {
+	userDir, err := config.UserDataDir()
+	if err != nil {
+		return false, err
+	}
+	session := &Session{}
+	list, selected, svc, err := OpenGUI(ctx, userDir, session)
+	if err != nil {
+		session.Close()
+		return false, err
+	}
+	ui.collections = list
+	ui.session = session
+	ui.svc = svc
+	if selected != nil {
+		slog.Info("gui selected collection", "collection_id", selected.ID, "root", selected.Root)
+	}
+	return true, nil
+}
+
+// switchCollection re-points the GUI at another registered collection.
+func (ui *appUI) switchCollection(label string) {
+	if ui.session == nil {
+		return
+	}
+	var target *Collection
+	for i := range ui.collections {
+		if ui.collections[i].Label() == label {
+			target = &ui.collections[i]
+			break
+		}
+	}
+	if target == nil || target.ID == ui.session.Current() {
+		return
+	}
+	svc, err := ui.session.Open(context.Background(), target.ID)
+	if err != nil {
+		ui.showError(err)
+		return
+	}
+	// A collection switch must not carry the previous collection's results or
+	// progress into the new view.
+	ui.svc = svc
+	ui.results = nil
+	ui.resultList.Refresh()
+	ui.snippetText.SetText("")
+	ui.progress.SetValue(0)
+	ui.detailText.SetText("")
+	ui.messageLabel.SetText("")
+	ui.searchStatus.SetText("Коллекция: " + target.Label())
+	ui.updateCollectionInfo()
+	ui.refreshStatus()
+}
+
+func (ui *appUI) updateCollectionInfo() {
+	if ui.collectionInfo == nil || ui.session == nil {
+		return
+	}
+	current := ui.session.Current()
+	for _, c := range ui.collections {
+		if c.ID == current {
+			ui.collectionInfo.SetText(fmt.Sprintf("Коллекция %s | %s", c.ID, c.Root))
+			return
+		}
+	}
+	ui.collectionInfo.SetText("Коллекция не выбрана")
 }
 
 func (ui *appUI) build() fyne.CanvasObject {
@@ -153,6 +267,28 @@ func (ui *appUI) build() fyne.CanvasObject {
 		ui.killButton,
 		ui.reclaimButton,
 	)
+
+	// Collection selector: only in global mode, where the shared daemon owns every
+	// collection and this window chooses which one to show.
+	if ui.session != nil {
+		ui.collectionInfo = widget.NewLabel("")
+		labels := make([]string, 0, len(ui.collections))
+		for _, c := range ui.collections {
+			labels = append(labels, c.Label())
+		}
+		ui.collectionSel = widget.NewSelect(labels, ui.switchCollection)
+		if current := ui.session.Current(); current != "" {
+			for _, c := range ui.collections {
+				if c.ID == current {
+					ui.collectionSel.SetSelected(c.Label())
+					break
+				}
+			}
+		}
+		ui.updateCollectionInfo()
+		top.Add(widget.NewForm(widget.NewFormItem("Коллекция", ui.collectionSel)))
+		top.Add(ui.collectionInfo)
+	}
 
 	details := widget.NewAccordion(widget.NewAccordionItem("Подробный статус индексации", ui.detailText))
 
@@ -235,7 +371,13 @@ func (ui *appUI) refreshStatus() {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// In global mode the request belongs to the selected collection's scope, so
+		// a collection switch cancels it instead of letting a stale status land.
+		base := context.Background()
+		if ui.session != nil {
+			base = ui.session.Context()
+		}
+		ctx, cancel := context.WithTimeout(base, 10*time.Second)
 		defer cancel()
 		raw, err := ui.svc.GetIndexStatus(ctx)
 		fyne.Do(func() {
@@ -284,6 +426,12 @@ func (ui *appUI) applyStatus(status indexStatus, raw []byte) {
 		ui.killButton.Hide()
 	}
 
+	// In global mode a concurrent MCP proxy is normal: it shares the daemon, so the
+	// GUI must never suggest stopping it to "free" the collection.
+	if ui.session != nil {
+		ui.killButton.Hide()
+	}
+
 	if isZvecLockStatus(status) {
 		ui.reclaimButton.Show()
 		lockMsg := zvecLockMessage(status)
@@ -329,6 +477,12 @@ func zvecLockMessage(status indexStatus) string {
 
 func (ui *appUI) maybeAutoResumeIndexing() {
 	if ui.autoResumeAttempted {
+		return
+	}
+	// In global mode the daemon owns indexing and resumes it on open; the GUI must
+	// not start a second job against a shared collection.
+	if ui.session != nil {
+		ui.autoResumeAttempted = true
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -407,10 +561,17 @@ func (ui *appUI) reclaimZvecLock() {
 
 func (ui *appUI) reindex(force bool) {
 	go func() {
-		if err := lifecycle.PrepareWorkspaceLocks(ui.settings); err != nil {
-			slog.Warn("gui reclaim zvec lock failed", "err", err)
+		if ui.session == nil {
+			// Per-project legacy mode owns its index and must reclaim locks first.
+			if err := lifecycle.PrepareWorkspaceLocks(ui.settings); err != nil {
+				slog.Warn("gui reclaim zvec lock failed", "err", err)
+			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		base := context.Background()
+		if ui.session != nil {
+			base = ui.session.Context()
+		}
+		ctx, cancel := context.WithTimeout(base, 10*time.Minute)
 		defer cancel()
 		raw, err := ui.svc.Reindex(ctx, service.ReindexRequest{Force: force})
 		fyne.Do(func() {
@@ -449,7 +610,11 @@ func (ui *appUI) search() {
 	}
 	ui.searchInFlight.Store(true)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		base := context.Background()
+		if ui.session != nil {
+			base = ui.session.Context()
+		}
+		ctx, cancel := context.WithTimeout(base, 2*time.Minute)
 		defer cancel()
 		raw, err := ui.svc.SemanticSearch(ctx, service.SearchRequest{
 			Query:    query,

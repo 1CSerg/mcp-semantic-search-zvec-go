@@ -9,7 +9,117 @@ import (
 	"strings"
 )
 
-const envPathContainment = "MCP_PATH_CONTAINMENT"
+const (
+	envPathContainment = "MCP_PATH_CONTAINMENT"
+	envGlobalDir       = "MCP_GLOBAL_DIR"
+
+	// AppDirName is the user-level directory name for the global install (no dot prefix).
+	AppDirName = "mcp-semantic-search-zvec-go"
+)
+
+// UserDataDir returns the user-level data directory for the global install.
+// MCP_GLOBAL_DIR overrides the platform default (tests, portable installs); it
+// must be an absolute path so derived paths do not depend on the working dir.
+func UserDataDir() (string, error) {
+	if v := strings.TrimSpace(os.Getenv(envGlobalDir)); v != "" {
+		if !filepath.IsAbs(v) {
+			return "", fmt.Errorf("%s must be an absolute path, got %q", envGlobalDir, v)
+		}
+		return filepath.Clean(v), nil
+	}
+	if runtime.GOOS == "windows" {
+		if base := os.Getenv("LOCALAPPDATA"); base != "" {
+			return filepath.Join(base, AppDirName), nil
+		}
+		if base := os.Getenv("USERPROFILE"); base != "" {
+			return filepath.Join(base, ".local", "share", AppDirName), nil
+		}
+		return "", fmt.Errorf("user data dir: neither LOCALAPPDATA nor USERPROFILE is set")
+	}
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, AppDirName), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("user data dir: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", AppDirName), nil
+}
+
+// GlobalConfigPath returns the global config.yaml path.
+func GlobalConfigPath() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.yaml"), nil
+}
+
+// GlobalEnvPath returns the global .env path.
+func GlobalEnvPath() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".env"), nil
+}
+
+// ProjectsDir returns the directory holding per-project registration files.
+func ProjectsDir() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "projects.d"), nil
+}
+
+// CollectionsDir returns the root directory for per-project index collections.
+func CollectionsDir() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "data", "collections"), nil
+}
+
+// CollectionDir returns the index directory for one collection id.
+func CollectionDir(collectionID string) (string, error) {
+	if err := ValidateCollectionID(collectionID); err != nil {
+		return "", err
+	}
+	dir, err := CollectionsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, collectionID), nil
+}
+
+// GlobalLogsDir returns the global log directory.
+func GlobalLogsDir() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "data", "logs"), nil
+}
+
+// GlobalBinDir returns the global binary directory.
+func GlobalBinDir() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bin"), nil
+}
+
+// GlobalModelsDir returns the global embedding models directory.
+func GlobalModelsDir() (string, error) {
+	dir, err := UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "data", "models"), nil
+}
 
 // PathContainmentMode controls validation of resolved paths against workspace roots.
 type PathContainmentMode string

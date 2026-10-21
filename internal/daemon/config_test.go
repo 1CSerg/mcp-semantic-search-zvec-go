@@ -7,6 +7,50 @@ import (
 	"testing"
 )
 
+// TestUserLevelDaemonConfigPathMustStayEmpty is the regression guard for the
+// user-level daemon's config wiring: LoadConfig("") resolves the user-level
+// daemon.yaml *and* merges projects.d, while an explicit path marks a legacy
+// source and skips the registry. Passing DefaultDaemonConfigPath() explicitly
+// started the daemon with the right workspaces and then lost every one of them on
+// the first reload.
+func TestUserLevelDaemonConfigPathMustStayEmpty(t *testing.T) {
+	userDir := t.TempDir()
+	t.Setenv("MCP_GLOBAL_DIR", userDir)
+	projectsDir := filepath.Join(userDir, "projects.d")
+	if err := os.MkdirAll(projectsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeProjectYAML(t, root, "col-a", "")
+	if err := os.WriteFile(filepath.Join(projectsDir, "col-a.yaml"),
+		[]byte("id: col-a\nroot: "+root+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	daemonPath := filepath.Join(userDir, "daemon.yaml")
+	if err := os.WriteFile(daemonPath, []byte("max_open_workspaces: 4\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The empty path (what runDaemon passes in user-level mode) merges projects.d.
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Workspaces) != 1 || cfg.Workspaces[0].ID != "col-a" {
+		t.Fatalf("LoadConfig(\"\") must merge projects.d: %v", cfg.Workspaces)
+	}
+
+	// The same file passed explicitly is a legacy source: no registry merge. This is
+	// why the user-level daemon must not pass the path.
+	cfg, err = LoadConfig(daemonPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Workspaces) != 0 {
+		t.Fatalf("an explicit daemon config path must not merge projects.d: %v", cfg.Workspaces)
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "proj")
