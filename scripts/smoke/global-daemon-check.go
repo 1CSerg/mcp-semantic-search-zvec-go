@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -330,6 +331,7 @@ func run() error {
 	r.check("adding C while A/B run keeps the daemon PID", e.checkAddThirdProject)
 	r.check("closing proxy A keeps the daemon and B working", e.checkProxyClose)
 	r.check("a second proxy for A shares the collection without a second owner", e.checkSecondProxy)
+	r.check("help and the removed --gui flag leave the live daemon and proxies untouched", e.checkHeadlessCLIWithLiveDaemon)
 	r.check("same collection id on another root is refused", e.checkDuplicateIDRefused)
 	r.check("Cyrillic project paths keep zvec inside the global collection dir", e.checkCyrillic)
 	r.check("daemon restart reopens the collections", e.checkDaemonRestart)
@@ -481,6 +483,22 @@ func (e *env) runBinary(args ...string) (string, error) {
 	cmd.Env = append(os.Environ(), "MCP_GLOBAL_DIR="+e.globalDir)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// runBinaryCode runs the binary and reports its exit code. A non-zero exit is a
+// result, not a failure, so the caller can assert the CLI contract.
+func (e *env) runBinaryCode(args ...string) (int, string, error) {
+	cmd := exec.Command(e.bin, args...)
+	cmd.Env = append(os.Environ(), "MCP_GLOBAL_DIR="+e.globalDir)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return 0, string(out), nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), string(out), nil
+	}
+	return 0, string(out), err
 }
 
 // ------------------------------------------------------------------- the checks
@@ -921,8 +939,125 @@ func (e *env) checkSecondProxy() error {
 	return nil
 }
 
+// checkHeadlessCLIWithLiveDaemon proves the headless entrypoint contract while a
+// real daemon and two real MCP proxies are running: no arguments and --help print
+// the help and exit 0, the removed --gui flag exits 2, and none of the three
+// touches the daemon process, the project registrations or the collections.
+func (e *env) checkHeadlessCLIWithLiveDaemon() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	proxyA, err := e.openProxy(ctx, e.projectA)
+	if err != nil {
+		return err
+	}
+	defer proxyA.close()
+	proxyB, err := e.openProxy(ctx, e.projectB)
+	if err != nil {
+		return err
+	}
+	defer proxyB.close()
+
+	pidBefore, err := e.daemonPID()
+	if err != nil {
+		return err
+	}
+	registrationsBefore, err := e.registrationsFingerprint()
+	if err != nil {
+		return err
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{name: "no args", args: nil, want: 0},
+		{name: "--help", args: []string{"--help"}, want: 0},
+		{name: "--gui", args: []string{"--gui"}, want: 2},
+	} {
+		code, out, runErr := e.runBinaryCode(tc.args...)
+		if runErr != nil {
+			return fmt.Errorf("%s: %w (%s)", tc.name, runErr, truncate(out, 300))
+		}
+		if code != tc.want {
+			return fmt.Errorf("%s: exit=%d, want %d (%s)", tc.name, code, tc.want, truncate(out, 300))
+		}
+		if tc.want == 0 {
+			for _, mode := range []string{"--stdio", "--stdio-proxy", "--http", "--daemon"} {
+				if !strings.Contains(out, mode) {
+					return fmt.Errorf("%s: help does not mention %s (%s)", tc.name, mode, truncate(out, 300))
+				}
+			}
+		}
+		if strings.Contains(out, "--gui") && tc.want == 0 {
+			return fmt.Errorf("%s: help still advertises --gui (%s)", tc.name, truncate(out, 300))
+		}
+	}
+
+	// The daemon survived and was not replaced by a second instance.
+	pidAfter, err := e.daemonPID()
+	if err != nil {
+		return err
+	}
+	if pidBefore != pidAfter {
+		return fmt.Errorf("daemon PID changed %d -> %d", pidBefore, pidAfter)
+	}
+	registrationsAfter, err := e.registrationsFingerprint()
+	if err != nil {
+		return err
+	}
+	if registrationsBefore != registrationsAfter {
+		return fmt.Errorf("project registrations changed:\nbefore: %s\nafter:  %s", registrationsBefore, registrationsAfter)
+	}
+
+	// Both live proxies still answer through the daemon.
+	for name, proxy := range map[string]*mcpSession{"A": proxyA, "B": proxyB} {
+		out, err := callTool(ctx, proxy.session, "index_status", map[string]any{})
+		if err != nil {
+			return fmt.Errorf("proxy %s index_status: %w", name, err)
+		}
+		want := e.collection[name]
+		if want == "" {
+			want = map[string]string{"A": e.projectA, "B": e.projectB}[name]
+		}
+		if !strings.Contains(out, want) {
+			return fmt.Errorf("proxy %s index_status is not bound to %s: %s", name, want, truncate(out, 300))
+		}
+	}
+	return nil
+}
+
+// registrationsFingerprint renders the projects.d registrations as one sorted
+// string, so any add/remove/rewrite is visible as a difference.
+func (e *env) registrationsFingerprint() (string, error) {
+	dir := filepath.Join(e.globalDir, "projects.d")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	for _, name := range names {
+		body, readErr := os.ReadFile(filepath.Join(dir, name))
+		if readErr != nil {
+			return "", readErr
+		}
+		fmt.Fprintf(&b, "%s=%x;", name, sha256.Sum256(body))
+	}
+	return b.String(), nil
+}
+
 func (e *env) checkDuplicateIDRefused() error {
-	// A filesystem copy of A carries A's project.yaml: adding it must be refused.
 	copyRoot := filepath.Join(e.work, "project-a-copy")
 	if err := copyTree(e.projectA, copyRoot); err != nil {
 		return err
