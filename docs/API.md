@@ -256,11 +256,10 @@ Set `API_TOKEN` in the daemon environment (`.env` or process env) and pass `Auth
 
 ## CLI flags
 
-Windows no flags → desktop GUI. Linux/macOS no flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
+A run mode is always explicit. Running with no arguments, or with `-h`/`--help`, prints the help text on stdout and exits `0` without reading configuration, creating directories, opening a collection or starting a daemon — on **every** platform (Windows, Linux, macOS). `--version` / `-version` prints the version and exits `0`. Any flag combination without a run mode (for example `--config <path>`) is a usage error: diagnostics plus help on stderr, exit `2`.
 
 | Flag | Mode | Description |
 |------|------|-------------|
-| `--gui` | Desktop GUI | Windows desktop UI for status, reindex, search, and result viewing. In the global layout it lists and switches registered collections and is a client of the shared daemon. |
 | `--stdio` | Per-project | MCP server over stdin/stdout |
 | `--http` | Per-project | HTTP REST API |
 | `--http-addr` | Both | Listen address (default `127.0.0.1:8080` per-project, `:8080` daemon, or `server.http_addr`) |
@@ -282,7 +281,9 @@ Windows no flags → desktop GUI. Linux/macOS no flags → `--stdio` (per-projec
 | `--stop-stdio-for-workspace` | Maintenance | Stop stale `--stdio` MCP instances for workspace and exit |
 | `--index-dir` | Maintenance | Index directory for lock reclaim (optional; with `--stop-stdio-for-workspace`) |
 
-Management commands run instead of a server mode and cannot be combined with `--stdio`/`--stdio-proxy`/`--http`/`--daemon`/`--gui`. Their diagnostics go to stderr and stdout stays reserved for MCP frames; a failure exits non-zero.
+`--gui` was removed: it is no longer a registered flag, so it is rejected as an unknown flag (help on stderr, exit `2`) and is not a hidden alias for `--http`, `--stdio` or `--daemon`.
+
+Management commands run instead of a server mode and cannot be combined with `--stdio`/`--stdio-proxy`/`--http`/`--daemon`. Their diagnostics go to stderr and stdout stays reserved for MCP frames; a failure exits non-zero.
 
 Per-project MCP: `--stdio` and/or `--http` with `WORKSPACE_ROOT` env. Global layout: `--stdio-proxy --project-config <absolute project.yaml>`. Legacy shared daemon: `--daemon --daemon-config …`, clients `--stdio-proxy --workspace-id=<id> --daemon-url=…`.
 

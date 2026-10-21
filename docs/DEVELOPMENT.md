@@ -5,7 +5,6 @@
 - Go 1.26+
 - Git
 - CGO toolchain (for zvec-go): GCC on Linux, MSVC or MinGW on Windows
-- Windows GUI builds use Fyne and may require the desktop CGO toolchain even without zvec tags
 - Optional: golangci-lint, Docker
 
 ## Clone and build
@@ -36,12 +35,12 @@ Path containment (`INDEX_DIR` / `CONFIG_PATH` / `daemon.yaml`): `internal/config
 
 ## Run modes
 
-Windows: no CLI flags → desktop GUI. Linux/macOS: no CLI flags → `--stdio` (per-project MCP). `--version` / `-version` prints version and exits.
+Windows: no CLI flags → help text, exit 0. Linux/macOS: no CLI flags → help text, exit 0. A run mode is always explicit; `--version` / `-version` prints version and exits.
 
 ```bash
-# Windows desktop GUI (default on Windows)
-./bin/mcp-semantic-search-zvec-go.exe
-./bin/mcp-semantic-search-zvec-go.exe --gui
+# Help (same text as a bare invocation, no configuration is read)
+./bin/mcp-semantic-search-zvec-go
+./bin/mcp-semantic-search-zvec-go --help
 
 # MCP stdio (Cursor spawns this explicitly)
 ./bin/mcp-semantic-search-zvec-go --stdio
@@ -66,9 +65,9 @@ Per-project `--http` and Cursor `--stdio` both acquire `stdio.lock` on the same 
 ./bin/mcp-semantic-search-zvec-go --stdio --config /path/to/config.yaml
 ```
 
-GUI mode reuses the per-project service layer but does not start auto-indexing or the file watcher in the GUI process for a **new** empty index. The Windows GUI is localized in Russian. When Cursor already runs `--stdio` for the same workspace, the GUI finds the live MCP process (`FindStdioForWorkspace`, then `LiveHolder`), shows a warning with that PID instead of competing with the MCP process, and offers a button to terminate the competing process; after termination, the GUI starts an incremental reindex automatically. Stale PIDs in `stdio.lock` are not shown after reclaim.
+The per-project service layer (`--stdio`, `--http`) starts auto-indexing and the file watcher. When Cursor already runs `--stdio` for the same workspace, the second process reclaims orphan locks and surfaces the competing instance through `index_status.diagnostics` (`duplicate_stdio_suspected`, live `stdio.lock` holder from `FindStdioForWorkspace`) instead of competing for the index; `--stop-stdio-for-workspace <workspace>` terminates the stale instance.
 
-If indexing was **interrupted** (GUI closed mid-run), the next GUI start reclaims orphan zvec `LOCK` files, migrates `progress.json` from `context canceled` to idle interrupted state, and automatically runs incremental `reindex` to continue (manifest skips already indexed files). Shutdown waits for the background indexer **and in-flight searches** before closing zvec to avoid orphan locks.
+If indexing was **interrupted** (process stopped mid-run), the next start reclaims orphan zvec `LOCK` files, migrates `progress.json` from `context canceled` to idle interrupted state, and automatically runs incremental `reindex` to continue (manifest skips already indexed files). Shutdown waits for the background indexer **and in-flight searches** before closing zvec to avoid orphan locks.
 
 Full flag table: [API.md](API.md#cli-flags).
 
@@ -387,7 +386,7 @@ Hybrid AST chunks populate `symbol_*`, `parent_scope`, and `chunk_strategy` (`as
 
 ## Cross-compile
 
-Default `go build` (no tags): stub semantic backend without zvec/ONNX. Linux/macOS keep this path pure Go; Windows also builds the Fyne GUI and may need the normal Fyne desktop toolchain.
+Default `go build` (no tags): stub semantic backend without zvec/ONNX, pure Go on every OS — no desktop/CGO toolchain is needed for the stub.
 
 With zvec (`-tags zvec`): use native runners per OS; avoid naive cross-compile with CGO.
 
@@ -508,7 +507,7 @@ bash scripts/realworld/run-all.sh --profile onnx --docker   # + Docker D1/D2 smo
 
 Windows: `.\scripts\realworld\run-all.ps1 -Profile onnx` (флаг `-Docker` для контейнерного smoke).
 
-Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model подтягивается `setup-harness`. Ephemeral install tree: `.realworld/` (gitignored). Корпус: `tests/realworld/corpus/`. Wave 2: daemon/proxy, auth, concurrency, incremental lifecycle, search edge cases, CLI flags, Cyrillic paths (Windows), optional Docker. Manual-only: GUI duplicate stdio (T6), no-flags default (CLI5), Docker→LM Studio (D3). Подробнее: [tests/realworld/README.md](../tests/realworld/README.md).
+Prerequisites: `make build-zvec` (CGO, zvec libs, ONNX runtime); ONNX model подтягивается `setup-harness`. Ephemeral install tree: `.realworld/` (gitignored). Корпус: `tests/realworld/corpus/`. Wave 2: daemon/proxy, auth, concurrency, incremental lifecycle, search edge cases, CLI flags, Cyrillic paths (Windows), optional Docker. Manual-only: duplicate stdio diagnostics, headless no-args contract (CLI5 — also covered automatically by `TestCLIHeadlessContract`), Docker→LM Studio (D3). Подробнее: [tests/realworld/README.md](../tests/realworld/README.md).
 
 ## Versions
 

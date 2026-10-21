@@ -447,9 +447,9 @@ func %sHandler() string {
 	mdFile := fmt.Sprintf("# %s project\n\n%s_MARKER_ONLY_IN_%s unique documentation payload.\n", name, marker, strings.ToUpper(name))
 	txtFile := fmt.Sprintf("%s_MARKER_ONLY_IN_%s plain text fixture\n", marker, strings.ToUpper(name))
 	files := map[string]string{
-		name + ".go":         goFile,
-		"README.md":          mdFile,
-		"notes.txt":          txtFile,
+		name + ".go":          goFile,
+		"README.md":           mdFile,
+		"notes.txt":           txtFile,
 		"sub/" + name + ".md": fmt.Sprintf("# %s sub\n\n%s_MARKER_ONLY_IN_%s nested payload.\n", name, marker, strings.ToUpper(name)),
 	}
 	for rel, body := range files {

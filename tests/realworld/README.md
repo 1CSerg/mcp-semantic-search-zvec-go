@@ -57,7 +57,7 @@ Runtime env (set by harness helpers):
 |----|------|-------------|
 | T4 | `TestDaemonMultiWorkspaceLRU` | `--daemon`, 3 workspaces, LRU `max_open_workspaces: 2` |
 | T5 | `TestMCPStdioProxyToDaemon` | `--stdio-proxy` → daemon search |
-| T6 | *(manual)* | GUI + duplicate stdio — see [Manual checklist T6](#manual-checklist-t6-gui) |
+| T6 | `TestCLIHeadlessContract`, `TestDuplicateStdioSuspected` | Headless CLI contract and duplicate-stdio diagnostics — see [Headless CLI contract](#headless-cli-contract) |
 | A1 | `TestDaemonOpenRedactsPaths` | Open daemon redacts paths in status |
 | A2 | `TestDaemonBearerShowsFullPaths` | Bearer token → full paths |
 | A3 | `TestPerProjectHTTPBearerAuth` | Per-project HTTP `API_TOKEN` reject/accept |
@@ -77,7 +77,7 @@ Runtime env (set by harness helpers):
 | D1–D2 | `run-docker.sh` / `--docker` | Docker build + HTTP reindex/search |
 | D3 | *(manual)* | Docker → host LM Studio — see [Manual checklist D3](#manual-checklist-d3-docker-lm-studio) |
 | CLI1–CLI4 | `TestCLI*` | `--version`, `--config`, `--http-addr`, `--stop-stdio-for-workspace` |
-| CLI5 | *(manual)* | No flags → GUI (Windows) / stdio — see [Manual checklist CLI5](#manual-checklist-cli5-no-flags) |
+| CLI5 | `TestCLIHeadlessContract` | No flags / `--help` → help + exit 0, `--gui` → exit 2 — see [Headless CLI contract](#headless-cli-contract) |
 | Config | `TestEnvPathPrecedence`, `TestWorkspaceRootEnvOverride`, … | `ENV_PATH`, env overrides |
 | Cyrillic | `TestCyrillicCorpusPath`, `TestCyrillicIndexDir` | Windows only (`//go:build windows`) |
 
@@ -96,24 +96,19 @@ bash scripts/realworld/run-all.sh --keep-index --run TestChunking
 bash scripts/realworld/run-docker.sh   # D1/D2 only
 ```
 
-## Manual checklist T6 (GUI)
+## Headless CLI contract
 
-Windows only; not automated (Fyne UI).
+Automated: `TestCLIHeadlessContract` in `cmd/mcp-semantic-search-zvec-go/cli_contract_test.go` builds the real command with `CGO_ENABLED=0` and runs it in a per-case temporary environment (`MCP_GLOBAL_DIR`, `WORKSPACE_ROOT`, `CONFIG_PATH`, `ENV_PATH`, `LOCALAPPDATA` all point inside the sandbox).
 
-1. Run `scripts/realworld/setup-harness.ps1 -Profile onnx`.
-2. Start MCP `--stdio` against `.realworld/` env (or let Cursor spawn it).
-3. Launch GUI: `.realworld\bin\mcp-semantic-search-zvec-go.exe` (no flags).
-4. Confirm warning about competing `--stdio` / `duplicate_stdio_suspected` in GUI or `index_status`.
-5. Terminate competing stdio from GUI; verify incremental reindex starts.
+| Invocation | Exit | Stdout | Stderr |
+|------------|------|--------|--------|
+| *(no arguments)* | 0 | help with `--stdio`/`--stdio-proxy`/`--http`/`--daemon` | empty |
+| `-h`, `--help` | 0 | same help | empty |
+| `--gui` | 2 | empty | unknown flag + help |
+| `--config <missing>` | 2 | empty | `no run mode selected` + help |
+| `--version`, `-version` | 0 | version | empty |
 
-## Manual checklist CLI5 (no flags)
-
-| OS | Expected default |
-|----|------------------|
-| Windows | Desktop GUI opens |
-| Linux/macOS | Blocks on `--stdio` (MCP mode) |
-
-Verify manually after install; do not run in CI.
+Each case also asserts that no user-level directory, project metadata or index directory was created, and the no-args/`--help` cases are repeated with an invalid `config.yaml` to prove help never depends on configuration. `scripts/smoke/global-daemon-check.go` repeats the same contract against a live daemon and two MCP proxies ("help and the removed --gui flag leave the live daemon and proxies untouched").
 
 ## Manual checklist D3 (Docker LM Studio)
 

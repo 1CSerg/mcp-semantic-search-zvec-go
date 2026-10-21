@@ -69,7 +69,7 @@ bash scripts/realworld/run-all.sh --profile onnx --docker   # + Docker D1/D2
 bash scripts/realworld/run-docker.sh                        # Docker only
 ```
 
-Prerequisites: same as `make build-zvec` (CGO, zvec libs, ONNX runtime; ONNX model fetched by `setup-harness`). Runtime tree: `.realworld/` (gitignored). Wave 2 adds daemon/proxy, auth, concurrency, lifecycle, Docker smoke. Manual: T6 GUI, CLI5, D3 Docker+LM Studio. See [tests/realworld/README.md](../tests/realworld/README.md).
+Prerequisites: same as `make build-zvec` (CGO, zvec libs, ONNX runtime; ONNX model fetched by `setup-harness`). Runtime tree: `.realworld/` (gitignored). Wave 2 adds daemon/proxy, auth, concurrency, lifecycle, Docker smoke. Manual: D3 Docker+LM Studio; the headless no-args/`--gui` contract is automated by `TestCLIHeadlessContract`. See [tests/realworld/README.md](../tests/realworld/README.md).
 
 ## fetch-tree-sitter-grammars
 

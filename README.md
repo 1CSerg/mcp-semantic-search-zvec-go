@@ -2,11 +2,12 @@
 
 **В процессе разработки**, могут быть ошибки.
 
-Сервис **семантического поиска** по исходному коду и документации. Один Go-бинарник — desktop GUI на Windows и два серверных транспорта:
+Сервис **семантического поиска** по исходному коду и документации. Один headless Go-бинарник с двумя серверными транспортами и управлением проектами:
 
-- **Windows GUI** — окно для статуса индексации, переиндексации, поиска и просмотра результатов
 - **MCP stdio** — для Cursor, Roo Code и других MCP-хостов (агенты)
 - **HTTP REST** — для любого другого ПО
+
+Запуск без аргументов печатает справку и завершается с кодом 0: режим указывается явно (`--stdio`, `--http`, `--daemon`, `--stdio-proxy`). Нативного desktop-интерфейса в приложении нет.
 
 Векторное хранилище: [zvec](https://github.com/alibaba/zvec) in-process. Эмбеддинги: OpenAI-compatible HTTP и локальный ONNX.
 
@@ -19,7 +20,8 @@ git clone https://github.com/1CSerg/mcp-semantic-search-zvec-go
 cd mcp-semantic-search-zvec-go
 go build -o bin/mcp-semantic-search-zvec-go ./cmd/mcp-semantic-search-zvec-go   # stub
 
-# Windows GUI: .\bin\mcp-semantic-search-zvec-go.exe
+# Справка по режимам (то же, что запуск без аргументов)
+./bin/mcp-semantic-search-zvec-go --help
 
 # HTTP API (stub — health/status only)
 ./bin/mcp-semantic-search-zvec-go --http

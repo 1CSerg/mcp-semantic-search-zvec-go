@@ -128,7 +128,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | Global: `auth.token is corrupt` | Работающий daemon держит старое значение: остановите его, удалите `<userdir>/auth.token`, затем `--ensure-daemon` |
 | Global: reload отклонён с 409 (`collection in use`) | Коллекция открыта или индексируется: закройте её MCP-сессию, затем `--projects-reload` |
 | Global: install отказывается заменять бинарник (`still in use`) | Закройте MCP-сессии этого проекта и повторите install; force kill не выполняется |
-| Global: GUI показывает пустой список коллекций | Ни один проект не зарегистрирован: `--project-add <project>` |
+| Global: пустой список коллекций у проекта | Ни один проект не зарегистрирован: `--project-add <project>` |
 | Global: `MCP_GLOBAL_DIR must be an absolute path` | Укажите абсолютный путь или не задавайте переменную |
 
 ## Общий daemon

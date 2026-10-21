@@ -7,7 +7,6 @@ flowchart TB
   subgraph clients [Clients]
     Cursor[Cursor / Roo MCP]
     OtherSW[Other software]
-    GUI[Desktop GUI]
   end
 
   subgraph proxy [Lightweight proxies — one per MCP session]
@@ -29,7 +28,6 @@ flowchart TB
 
   Cursor --> MCPProxy
   MCPProxy -->|"workspace_id = collection_id"| HTTP
-  GUI -->|"HTTPProxy"| HTTP
   OtherSW --> HTTP
   HTTP --> SVC
   SVC --> Idx
@@ -182,7 +180,7 @@ Binds index to one workspace via `WORKSPACE_ID` / `workspace_fingerprint`. Misma
 - Ensures only one native MCP stdio process serves a project index at a time.
 - Before acquire: `stopStaleStdioInstances` kills prior `--stdio` processes matched by workspace path (case-insensitive on Windows) or `bin/workspace-root.txt`; orphaned `stdio.lock` files are reclaimed when the OS lock is released.
 - Lock diagnostics use `LiveHolder` (alive PID + start-time match), not raw `HolderPID` alone.
-- Windows GUI detects a competing MCP via `FindStdioForWorkspace` (process scan for `--stdio` + workspace), then `LiveHolder` as fallback; stale lock payloads are not shown to the user.
+- A competing MCP instance is detected via `FindStdioForWorkspace` (process scan for `--stdio` + workspace), then `LiveHolder` as fallback, and reported through `index_status.diagnostics` (`duplicate_stdio_suspected`); stale lock payloads are not surfaced as a live holder. `--stop-stdio-for-workspace` terminates the stale instance.
 - If acquire fails after retries, process exits with a clear stderr hint (Cursor may show MCP error briefly — preferred over broken search).
 - Released on normal shutdown.
 

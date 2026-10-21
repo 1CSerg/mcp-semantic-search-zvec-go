@@ -223,15 +223,22 @@ Re-run the install command from an updated clone or release. The application bin
 
 `config.yaml` is merged (your `active_profile`, profiles, lists and comments are preserved); `daemon.yaml`, `.env`, `auth.token` and every collection are left alone.
 
-### GUI
+### Управление без GUI
 
-On Windows, the installed EXE without flags opens the GUI. In the global layout the GUI is a **client** of the same daemon:
+Приложение headless: запуск без аргументов печатает справку и завершается с кодом 0. Всё, что раньше делалось в окне, делается командами и MCP tools:
 
-- it lists the registered collections and lets you switch between them;
-- a switch cancels the previous collection's in-flight requests, so results never leak across;
-- it never opens zvec, never builds a `Phase1` and never suggests stopping a concurrent MCP proxy (a proxy shares the daemon rather than competing for the index);
-- with no projects registered it reports that no collection is available and names the `--project-add` instruction instead of inventing a collection;
-- it can start the daemon itself after a reboot or an explicit `--stop-daemon`.
+| Задача | Команда / tool |
+|--------|----------------|
+| Список зарегистрированных коллекций | `--projects-reload` (перечитать `projects.d`) и `index_status` через proxy любого проекта; регистрации лежат в `<userdir>/projects.d/` |
+| Добавить проект в общее приложение | `--project-add <root>` |
+| Снять регистрацию, сохранив данные | `--project-remove <root>` |
+| Статус индексации и прогресс | MCP `index_status` (или `GET /v1/status?workspace_id=<id>`) |
+| Полная переиндексация («force rebuild») | MCP `reindex` с `force: true` (или `POST /v1/reindex` с `{"force": true}`) |
+| Поиск | MCP `semantic_search` (или `POST /v1/search`) |
+| Запустить / остановить daemon после перезагрузки | `--ensure-daemon` / `--stop-daemon` |
+| Проверить обновления | MCP `check_update` |
+
+Глобальный профиль эмбеддингов меняется только при остановленном daemon: `--stop-daemon`, правка `<userdir>/config.yaml`, затем `--ensure-daemon` и `reindex` с `force: true` для каждой коллекции.
 
 ## Legacy per-project layout
 
@@ -290,7 +297,7 @@ your-project/
 
 The whole `.mcp-semantic-search-zvec-go/` directory is gitignored. On first install, `.env` is copied from `templates/env.example` if it does not exist yet.
 
-On Windows, starting `mcp-semantic-search-zvec-go.exe` without flags opens the desktop GUI for status, reindex, search, and result viewing. Cursor MCP wiring still uses `run-mcp-stdio.ps1`, which passes `--stdio` explicitly. If Cursor already has the MCP process running for the same workspace, the GUI scans for a live `--stdio` process (and falls back to a verified `stdio.lock` holder via `LiveHolder`), shows a warning with that PID, and does not start its own auto-index or file watcher. Stale PIDs left in `stdio.lock` after a crashed MCP are ignored once the lock is reclaimed.
+On Windows, starting `mcp-semantic-search-zvec-go.exe` without flags prints the help text and exits `0`; pass an explicit mode (`--stdio` for MCP, `--http` for the REST API). Cursor MCP wiring uses `run-mcp-stdio.ps1`, which passes `--stdio` explicitly. If Cursor already has the MCP process running for the same workspace, `--stdio` reclaims orphan locks, reports the competing process through `index_status` (`diagnostics.duplicate_stdio_suspected` / a live `stdio.lock` holder), and does not compete for the index; stale PIDs in `stdio.lock` are ignored once the lock is reclaimed. To stop a stale instance use `--stop-stdio-for-workspace <workspace>`.
 
 ## Zoo Code / Roo Code
 
@@ -331,7 +338,7 @@ REPLACE_CONFIG=1 TARGET_ROOT="$PWD" bash .../scripts/install/install.sh
 
 If merge dependencies are missing and `config.yaml` already exists, install **preserves** your file and prints a warning.
 
-After moving the project to a new path, call MCP `reindex` with `force: true`, use the Windows GUI force rebuild action, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
+After moving the project to a new path, call MCP `reindex` with `force: true`, or rely on `AUTO_INDEX_ON_START=true` (Native `--stdio` install only) to rebuild the index on the next MCP start. In shared daemon + `--stdio-proxy` mode, auto-index on start does not apply — call `reindex` manually. Install copies runtime libraries (`zvec_c_api.dll` / `libzvec_c_api.so` / `onnxruntime`) next to the binary from `bin/` in the clone or via fetch scripts.
 
 **Hybrid chunking upgrade:** after updating to a server with hybrid chunking config (or upgrading from a legacy binary without `treesitter`), run MCP `reindex` with `force: true` so `symbol_name`, `parent_scope`, `chunk_strategy`, and `chunking_version` in `index_meta.json` match the new pipeline. Shipped install binary (`-tags "zvec,onnx,treesitter"`) indexes `.md`, `.markdown`, `.mdc`, `.txt` via the prose chunker and enabled code extensions via AST cAST; legacy `-tags "zvec,onnx"` builds fall back to `line_window` for code.
 
@@ -413,11 +420,11 @@ Fix:
 4. `index_status` → при `diagnostics.duplicate_stdio_suspected` следовать `diagnostics.hint`.
 5. При необходимости MCP `reindex` с `force: true`.
 
-### Windows GUI: индексация прервана закрытием окна
+### Индексация прервана остановкой процесса
 
-Симптомы (старые версии): `indexing.state: error`, `context canceled`, zvec LOCK после повторного открытия GUI.
+Симптомы (старые версии): `indexing.state: error`, `context canceled`, zvec LOCK после повторного открытия индекса.
 
-Fix (v0.1.8+): при следующем запуске GUI индексация **продолжается автоматически** (incremental reindex). Кнопка «Переиндексировать» остаётся для ручного запуска. Если видна «Освободить LOCK» — нажмите её или завершите лишние процессы `mcp-semantic-search-zvec-go.exe`.
+Fix (v0.1.8+): при следующем старте `--stdio` / `--http` / daemon прерванная индексация **продолжается автоматически** (incremental reindex; `manifest` пропускает уже проиндексированные файлы). Для ручного запуска — MCP `reindex` (полный — с `force: true`). Если в `index_status.diagnostics` есть zvec LOCK или `duplicate_stdio_suspected` — завершите лишние процессы `mcp-semantic-search-zvec-go.exe` (`--stop-stdio-for-workspace <workspace>`) и повторите.
 
 ### Индексация: частичные ошибки файлов
 
@@ -597,5 +604,5 @@ Per-project install (`--stdio`, `-McpMode Native`) remains available and does no
 | `identity_mismatch` after changing the shared profile | Restart the daemon, then `reindex` with `force: true` for each collection. |
 | reload refused with 409 (`collection in use`) | A collection being changed is open or indexing. Close that project's MCP session, then `--projects-reload`. |
 | Install refuses to replace the binary (`still in use`) | Close the IDE MCP sessions for the affected project and re-run install; no force kill is performed. |
-| GUI shows an empty collection list | No project is registered yet: `--project-add <project>`. |
+| No collection is listed for a project | No project is registered yet: `--project-add <project>`. |
 | `MCP_GLOBAL_DIR must be an absolute path` | Use an absolute path (or unset it to use the platform default). |
