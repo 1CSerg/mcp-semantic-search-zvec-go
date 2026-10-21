@@ -246,6 +246,11 @@ func TestCLIHeadlessContract(t *testing.T) {
 		if strings.TrimSpace(res.stderr) == "" {
 			t.Errorf("usage error must explain itself on stderr, stdout: %s", res.stdout)
 		}
+		// A usage error is not help: stdout stays empty so nothing can leak into a
+		// caller that is reading it as data (an MCP frame stream, a script).
+		if strings.TrimSpace(res.stdout) != "" {
+			t.Errorf("usage error must not write to stdout, got: %s", res.stdout)
+		}
 		if strings.Contains(res.stdout+res.stderr, "--gui") {
 			t.Errorf("output must not advertise the removed --gui flag:\nstdout: %s\nstderr: %s", res.stdout, res.stderr)
 		}
@@ -325,6 +330,9 @@ func TestCLIHeadlessContract(t *testing.T) {
 			}
 			if got := strings.TrimSpace(res.stdout); got != version.Version {
 				t.Errorf("%s: stdout=%q, want %q", flag, got, version.Version)
+			}
+			if strings.TrimSpace(res.stderr) != "" {
+				t.Errorf("%s must not write to stderr, got: %s", flag, res.stderr)
 			}
 			sb.assertNoSideEffects(t)
 		}

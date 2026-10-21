@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"strings"
 	"testing"
 	"time"
@@ -115,6 +116,41 @@ func TestPrintUsageDescribesModesWithoutGUI(t *testing.T) {
 	}
 	if strings.Contains(out, "--gui") {
 		t.Errorf("usage text must not advertise the removed --gui flag:\n%s", out)
+	}
+
+	// The help is the only discovery surface now that the GUI is gone, so it must
+	// describe the combinations the CLI really accepts instead of claiming a
+	// single-mode rule that --stdio --http contradicts.
+	if strings.Contains(out, "choose exactly one") {
+		t.Errorf("usage text claims a single mode, but --stdio --http is supported:\n%s", out)
+	}
+	for _, want := range []string{
+		"--stdio and --http",
+		"implies --http",
+		"--project-config",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("usage text does not explain %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestPrintUsageRendersRegisteredFlags pins the Flags section: printUsage renders
+// the FlagSet the CLI registered, so the help text cannot silently lose the flag
+// list (or drift from the parsed flags).
+func TestPrintUsageRendersRegisteredFlags(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	fs.String("probe-flag", "", "probe flag description")
+	prev := usageFlags
+	usageFlags = fs
+	defer func() { usageFlags = prev }()
+
+	var buf bytes.Buffer
+	printUsage(&buf, "mcp-semantic-search-zvec-go")
+	out := buf.String()
+
+	if !strings.Contains(out, "-probe-flag") || !strings.Contains(out, "probe flag description") {
+		t.Fatalf("printUsage did not render the registered flags:\n%s", out)
 	}
 }
 

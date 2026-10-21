@@ -485,12 +485,40 @@ func (e *env) runBinary(args ...string) (string, error) {
 	return string(out), err
 }
 
+// cliContractBudget bounds one headless-CLI invocation. The check exists to prove
+// that help and the removed --gui flag exit promptly, so a run that does not exit
+// must fail the smoke instead of hanging it.
+var cliContractBudget = 30 * time.Second
+
 // runBinaryCode runs the binary and reports its exit code. A non-zero exit is a
-// result, not a failure, so the caller can assert the CLI contract.
+// result, not a failure, so the caller can assert the CLI contract. The child gets
+// its own working directory and a sandboxed workspace/index/config environment, so
+// a regression that falls back to a per-project mode cannot pick up the repository
+// or the developer's index.
 func (e *env) runBinaryCode(args ...string) (int, string, error) {
-	cmd := exec.Command(e.bin, args...)
-	cmd.Env = append(os.Environ(), "MCP_GLOBAL_DIR="+e.globalDir)
+	ctx, cancel := context.WithTimeout(context.Background(), cliContractBudget)
+	defer cancel()
+
+	dir := filepath.Join(e.work, "cli-contract")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return 0, "", err
+	}
+	cmd := exec.CommandContext(ctx, e.bin, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"MCP_GLOBAL_DIR="+e.globalDir,
+		"WORKSPACE_ROOT="+filepath.Join(dir, "workspace"),
+		"INDEX_DIR="+filepath.Join(dir, "index"),
+		"CONFIG_PATH="+filepath.Join(dir, "config", "config.yaml"),
+		"ENV_PATH="+filepath.Join(dir, "config", ".env"),
+	)
+	// WaitDelay guarantees Wait returns even if the child ignores the kill signal
+	// because a grandchild inherited its stdout pipe.
+	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return 0, string(out), fmt.Errorf("%v %v: did not exit within %s", filepath.Base(e.bin), args, cliContractBudget)
+	}
 	if err == nil {
 		return 0, string(out), nil
 	}
