@@ -6,7 +6,7 @@
 # ("cannot open shared object file", Windows "0xc0000139") that look like a
 # broken build. Source this file and call warn_stale_zvec_root_native_libs.
 #
-# Related plan: docs/plans/2026-10-19-post-upgrade-followups.md (problem 2).
+# Related plan: docs/plans/completed/2026-10-19-post-upgrade-followups.md (problem 2).
 
 ZVEC_NATIVE_LIB_NAMES=(zvec_c_api.dll libzvec_c_api.so libzvec_c_api.dylib)
 

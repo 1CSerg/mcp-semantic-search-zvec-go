@@ -6,7 +6,7 @@
 # "cannot open shared object file" errors that look like a broken build.
 # Dot-source this file and call Write-StaleZvecRootNativeLibWarning.
 #
-# Related plan: docs/plans/2026-10-19-post-upgrade-followups.md (problem 2).
+# Related plan: docs/plans/completed/2026-10-19-post-upgrade-followups.md (problem 2).
 
 $script:ZvecNativeLibNames = @(
     "zvec_c_api.dll",
