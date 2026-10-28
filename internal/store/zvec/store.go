@@ -67,6 +67,17 @@ type Store interface {
 	WipeCollection() error
 }
 
+// Compactor is an optional store capability: reclaim the on-disk blocks that every
+// flushed write allocates. It is deliberately separate from Store so existing
+// implementations and test doubles keep compiling; callers must type-assert.
+//
+// Compact is best-effort maintenance, never a durability step: a clean or missing
+// collection is a no-op, and an error means "the index is still correct, it just
+// was not compacted".
+type Compactor interface {
+	Compact() error
+}
+
 // Config identifies a workspace zvec collection.
 type Config struct {
 	IndexDir         string

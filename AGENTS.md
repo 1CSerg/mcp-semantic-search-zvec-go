@@ -3,6 +3,7 @@
 > **Аудитория:** агент в **целевом проекте пользователя**, где MCP уже установлен (install, вызов tools, env, troubleshooting).
 > Разработка самого Go-сервера (сборка, тесты, CGO): [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 > Все планы по разработке сохранять: [docs/plans/](docs/plans/)
+> Реализованные (выполненные и проверенные) планы переносить в [docs/plans/completed/](docs/plans/completed/), отметив в самом плане статус и дату завершения. В `docs/plans/` остаются только активные и ещё не реализованные планы.
 
 Инструкция для агентов при установке и использовании MCP в **целевом проекте пользователя**.
 
@@ -115,6 +116,7 @@ Install также создаёт Cursor rule [`.cursor/rules/semantic-search-zv
 | `--stdio` остался после закрытия Cursor/launcher | Сервер завершится сам, если исчезнет родительская цепочка запуска (`powershell`/`cmd` или Cursor). Если закрыт только workspace, но Cursor держит launcher живым, нужен Restart MCP/IDE или `--stop-stdio-for-workspace`. Для отладки: `MCP_DISABLE_PARENT_WATCH=true` |
 | After MCP binary update (zvec-go bump) | Index resets on first start; in **Native** mode with `AUTO_INDEX_ON_START=true` reindex runs automatically, else call MCP `reindex` |
 | `index_owner_mismatch` | Call MCP `reindex` with `force: true`. In **Native** mode with `AUTO_INDEX_ON_START=true` this runs on next start; keep separate `INDEX_DIR` per project if you share one clone |
+| zvec index dir much larger than the data (many `*.proxima` blocks) | Expected on an index built before compaction support: zvec allocates one ~5 MB block per flush. Recover with `reindex` `force: true` (recomputes embeddings, needs space for staging); an unchanged run does **not** shrink historical bloat. Manual `.proxima` deletion is not supported |
 | Windows file watcher misses saves | Set `file_watcher.backend: polling` in config |
 | Shared daemon: `workspace_id` required | Use `--stdio-proxy --workspace-id=<id>` or HTTP `X-Workspace-ID` |
 | Shared daemon: unknown workspace | Check `daemon.yaml` id matches proxy `--workspace-id` |

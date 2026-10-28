@@ -332,7 +332,22 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 	c.reconcileCleanupJournal(cleanupJournal)
 
 	var zvecTarget = c.Zvec
+	// finalizeTarget is the collection this run wrote; it is maintained once, at the
+	// end, while the run still holds its lifecycle and cross-process locks. A staged
+	// build is maintained inside promoteStaging instead — right before it is closed
+	// and published — so it is deliberately not finalized here.
+	var finalizeTarget zvec.Store = c.Zvec
 	var stagingStore zvec.Store
+	stagingClosed := false
+	// Release an unfinished staging build on every exit path, including the error
+	// returns inside the force block below. promoteStaging closes it itself before the
+	// rename, hence the flag. Registered before stagingStore is assigned: the closure
+	// reads the variable when it runs, not when it is registered.
+	defer func() {
+		if stagingStore != nil && !stagingClosed {
+			_ = stagingStore.Close()
+		}
+	}()
 	useStaging := false
 	if force {
 		stagingCfg := c.ZvecCfg
@@ -362,11 +377,9 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 			manStore = stagingMan
 			manClose = true
 			zvecTarget = stagingStore
-			defer func() {
-				if stagingStore != nil {
-					_ = stagingStore.Close()
-				}
-			}()
+			// The staged build is maintained by promoteStaging; the active collection
+			// this run replaces must not pay for a full rebuild.
+			finalizeTarget = nil
 		} else if !isZvecUnavailable(openErr) {
 			return 0, 0, 0, openErr
 		} else {
@@ -379,21 +392,33 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		}
 	}
 
+	promoted := false
 	promoteStaging := func() error {
 		if !useStaging {
 			return nil
 		}
+		// Maintain the staged build while it is still open and before it is closed and
+		// published: the published index must not be the unmaintained one. This only
+		// runs on the success path, so a failed build never pays for a rebuild of a
+		// result that is about to be discarded.
+		compactStoreBestEffort(ctx, stagingStore)
+		// Windows: a directory rename fails while any handle on its files is open, so
+		// release the staging build before the promote hook or the real rename.
+		if err := stagingStore.Close(); err != nil {
+			// The flag tracks "closed", so it is set even here: a second Close on the
+			// same handle is not what the caller asked for, and the deferred cleanup
+			// must not retry it.
+			stagingClosed = true
+			return err
+		}
+		stagingClosed = true
 		if c.forcePromoteStaging != nil {
 			if err := c.forcePromoteStaging(stagingStore); err != nil {
 				_ = zvec.DiscardStagingManifest(c.Settings.IndexDir)
 				return err
 			}
+			promoted = true
 			return nil
-		}
-		// Windows: a directory rename fails while any handle on its files is open,
-		// so release both the staging build and the active collection first.
-		if err := stagingStore.Close(); err != nil {
-			return err
 		}
 		if err := c.Zvec.Close(); err != nil {
 			return err
@@ -407,8 +432,35 @@ func (c *Coordinator) run(ctx context.Context, force bool) (filesFailed int, fin
 		if err := zvec.PromoteStagingManifest(c.Settings.IndexDir); err != nil {
 			return err
 		}
+		promoted = true
 		return c.Zvec.Open()
 	}
+
+	// Finalize the collection this run wrote on every exit path, including a fatal
+	// error after partial changes: best-effort maintenance must not be skipped just
+	// because the run failed, and it never replaces the run's own error. The store
+	// decides whether anything is dirty, so an unchanged run does no native work.
+	// This runs before run() returns, i.e. before Running=false is published.
+	//
+	// On the force path the run also replays the cleanup journal into the ACTIVE
+	// collection before staging is chosen. A successful promote replaces that
+	// collection, so compacting it would be waste; a failed promote leaves it serving
+	// with those deletes applied, so it still needs the pass.
+	finalized := false
+	finalize := func() {
+		if finalized {
+			return
+		}
+		finalized = true
+		if finalizeTarget != nil {
+			compactStoreBestEffort(ctx, finalizeTarget)
+			return
+		}
+		if useStaging && !promoted {
+			compactStoreBestEffort(ctx, c.Zvec)
+		}
+	}
+	defer finalize()
 
 	scanResult, err := scan.Discover(scan.Options{
 		Root:       c.Settings.WorkspaceRoot,

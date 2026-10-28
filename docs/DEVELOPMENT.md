@@ -361,6 +361,93 @@ Code: `internal/store/zvec/store.go`, tests in `store_integration_test.go` (`Tes
 | Schema incompatible | Indexes require `reindex` with `force: true` |
 | Vendor libs GLIBC mismatch | Fallback: zvec-go source mode (`-tags source`) |
 
+### Index compaction (zvec block growth)
+
+zvec finalizes its memory component and allocates a **fresh on-disk block on every
+`Flush()`**, and this store flushes after every upsert/delete batch. An unmaintained
+index therefore grows one `.proxima` block per batch regardless of how few documents
+that batch held.
+
+Measured on Windows amd64 with the shipped `zvec_c_api.dll` (fixture: 256 batches x 4
+docs, one flush per batch — `TestCompaction*` in `compaction_integration_test.go`):
+
+| State | `.proxima` files | `.proxima` bytes | Whole collection |
+|-------|------------------|------------------|------------------|
+| Unmaintained (256 flushes) | 256 | 1 349 517 312 | 1 350 646 011 |
+| After one native `Optimize()` | 1 | 4 182 016 | 5 274 658 |
+| Store with the compaction policy | 1 | 5 226 496 | 5 952 783 |
+
+Every flush allocated a block of **5 271 552 bytes** for 4 documents, so 1024 documents
+cost 1.35 GB. `scalar.N.parquet` blocks (~2.7 KB each) also accumulate but `Optimize()`
+does not reclaim them; that is ~1.4 MB in the same fixture.
+
+**Policy** (`internal/store/zvec/collection.go`):
+
+- `CollectionStore` keeps `dirty` and `writeOps`. `writeOps` counts **native
+  write/delete operations**, not files, chunks or bytes.
+- A periodic compaction runs after `compactionWriteThreshold = 128` durable operations.
+  `128` is a starting compromise, not a guarantee of bounded size or time on an
+  arbitrary index: smaller multiplies full rebuilds over a growing index, larger leaves
+  the peak footprint high.
+- Only a **durable** outcome (successful `Flush`) may trigger it, so the failed-flush
+  branch never starts a rebuild. Partial and ambiguous outcomes still set `dirty`.
+- `Compactor` (`Compact() error`) is an **optional** interface, deliberately outside
+  `Store`: existing stores, mocks and the `!zvec` stub keep compiling. `StubStore`
+  returns `ErrNotLinked`.
+- `Compact()` on a clean or missing collection is a no-op and never creates a
+  collection, so an **unchanged run performs zero native optimize calls**.
+- A failed pass logs `slog.Warn`, keeps `dirty` and restarts the 128-operation interval,
+  so it is not retried on every following batch.
+- `WipeCollection` resets both counters (the collection they described is gone);
+  `Close` keeps them (they describe the on-disk collection, not the handle).
+
+**Coordinator** (`internal/indexer/coordinator.go`): `compactStoreBestEffort` runs the
+optional pass through a type assertion.
+
+- A normal run finalizes the active collection on every exit path, including a fatal
+  error after partial changes; the maintenance error never replaces the run's own
+  error, and `Running=false` is not published until it finishes.
+- A force reindex maintains the **staging** build inside `promoteStaging`, i.e. before
+  `Close` and before the rename, so the published index is never the unmaintained one.
+  The active collection it replaces is not optimized. A failed staging build is not
+  compacted at all.
+- A cancelled or shutting-down run does not start a new full rebuild.
+
+**Cost of a pass:** it holds the store mutex for the whole native call, so search and
+writes on that collection wait for it. The wait is proportional to the index size, not a
+fixed short pause. In the fixture above (1024 docs) one `Optimize()` took ~80 ms and the
+longest search during it ~97 ms; on a large index both grow. A pass runs every 128
+durable write/delete operations, so the worst case is one rebuild of a growing index per
+128 batches — the periodic schedule is what bounds the footprint at the price of that
+pause. Moving the pass off the write path (mark "needs compaction" and let the indexer
+schedule it) is a separate design decision, not part of this policy.
+
+`Optimize()` also needs temporary free disk space: it rewrites the index while the old
+blocks still exist. Size the index directory with that headroom.
+
+**An error from compaction does not mean the index is wrong.** It means the footprint
+was not reduced; documents, manifest and search are unaffected.
+
+**Recovering an already bloated index:** the first-version answer is the existing
+`reindex` with `force: true` — the new staging collection gets both the periodic and the
+final compaction. It recomputes embeddings and needs disk space for staging, so it is
+never started automatically. Do not delete `.proxima` files by hand and do not open a
+working collection from a second process. Note that an **unchanged** run does not shrink
+an old bloated index: the `dirty` flag only knows about writes made through this
+process, so historical bloat needs the explicit force reindex.
+
+Tests: `compaction_test.go` (policy unit tests, tag `zvec`),
+`compaction_integration_test.go` and `compaction_acceptance_integration_test.go`
+(native, tags `integration,zvec`), `coordinator_compaction_test.go` (coordinator
+ordering and error semantics), `coordinator_delete_test.go` (delete retry semantics).
+
+**Which build proves what:** the unit policy tests call `writeOutcomeLocked` /
+`compactLocked` directly, so they stay green even if a write path stopped calling them.
+The wiring from `UpsertChunks`/`DeleteByIDs` into the policy is proven only by the
+native `integration,zvec` build (`TestCompactionOptimizeFailureDoesNotFailWrite`,
+`TestCompactionAutomaticMaintenance`). Run that build, not just `-tags zvec`, before
+trusting a change to the write path.
+
 ### See also
 
 - [zvec-go examples](https://github.com/zvec-ai/zvec-go/tree/main/examples) — Go API reference

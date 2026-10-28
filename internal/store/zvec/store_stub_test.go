@@ -37,4 +37,20 @@ func TestStubStore(t *testing.T) {
 	if _, err := s.Search(nil, 1, ""); !errors.Is(err, ErrNotLinked) {
 		t.Fatalf("Search: %v", err)
 	}
+	if err := s.Compact(); !errors.Is(err, ErrNotLinked) {
+		t.Fatalf("Compact: %v", err)
+	}
+}
+
+// The optional maintenance capability must be reachable through the stub too, so a
+// caller can type-assert on Compactor without a build-tag split.
+func TestStubStoreImplementsCompactor(t *testing.T) {
+	var store Store = NewStub()
+	compactor, ok := store.(Compactor)
+	if !ok {
+		t.Fatal("StubStore must implement Compactor")
+	}
+	if err := compactor.Compact(); !errors.Is(err, ErrNotLinked) {
+		t.Fatalf("Compact through Compactor: %v", err)
+	}
 }

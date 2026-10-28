@@ -13,6 +13,8 @@ func New(_ Config) Store {
 // NewStub creates a stub store.
 func NewStub() *StubStore { return &StubStore{} }
 
+var _ Compactor = (*StubStore)(nil)
+
 func (s *StubStore) Open() error                             { return ErrNotLinked }
 func (s *StubStore) IsOpen() bool                            { return false }
 func (s *StubStore) Close() error                            { return nil }
@@ -24,3 +26,6 @@ func (s *StubStore) Search([]float32, int, string) ([]SearchHit, error) {
 	return nil, ErrNotLinked
 }
 func (s *StubStore) WipeCollection() error { return ErrNotLinked }
+
+// Compact reports that the stub cannot maintain an index it never opened.
+func (s *StubStore) Compact() error { return ErrNotLinked }

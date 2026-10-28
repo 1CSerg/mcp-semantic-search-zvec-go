@@ -436,3 +436,140 @@ func TestIntegrationOpenStagingOnCleanIndex(t *testing.T) {
 		t.Fatalf("Close active: %v", err)
 	}
 }
+
+// seedDeleteFixture creates a collection with the given ids.
+func seedDeleteFixture(t *testing.T, ids ...string) (*CollectionStore, Config) {
+	t.Helper()
+	cfg := testConfig(t, tempDir(t))
+	store := New(cfg).(*CollectionStore)
+	chunks := make([]Chunk, 0, len(ids))
+	vectors := make([][]float32, 0, len(ids))
+	for i, id := range ids {
+		chunks = append(chunks, Chunk{
+			DocID:        id,
+			RelativePath: "pkg/del.go",
+			StartLine:    1,
+			EndLine:      2,
+			ChunkType:    "code",
+			Snippet:      "snippet " + id,
+		})
+		vectors = append(vectors, unitVector(i%testDims, testDims))
+	}
+	if err := store.UpsertChunks(chunks, vectors); err != nil {
+		t.Fatalf("UpsertChunks seed: %v", err)
+	}
+	return store, cfg
+}
+
+// Deleting an id that never existed must not fail: the delete goal is already met,
+// and zvec reports that case through ErrorCount.
+func TestIntegrationDeleteMissingIDIsNoOp(t *testing.T) {
+	store, _ := seedDeleteFixture(t, "doc-a", "doc-b")
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}()
+
+	if err := store.DeleteByIDs([]string{"never-existed"}); err != nil {
+		t.Fatalf("DeleteByIDs missing id: %v", err)
+	}
+	n, err := store.DocCount()
+	if err != nil {
+		t.Fatalf("DocCount: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("doc count=%d want 2", n)
+	}
+}
+
+// A repeated delete must succeed after the durability flush, so a cleanup journal
+// replay is idempotent.
+func TestIntegrationDeleteIsIdempotent(t *testing.T) {
+	store, cfg := seedDeleteFixture(t, "doc-a", "doc-b")
+	ids := []string{"doc-a", "doc-b"}
+	if err := store.DeleteByIDs(ids); err != nil {
+		t.Fatalf("first DeleteByIDs: %v", err)
+	}
+	if err := store.DeleteByIDs(ids); err != nil {
+		t.Fatalf("repeat DeleteByIDs must be idempotent: %v", err)
+	}
+	if n, err := store.DocCount(); err != nil || n != 0 {
+		t.Fatalf("doc count=%d err=%v want 0", n, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// The repeat delete must also be durable: a reopen still shows an empty index.
+	reopened := New(cfg).(*CollectionStore)
+	defer func() {
+		if err := reopened.Close(); err != nil {
+			t.Fatalf("Close reopened: %v", err)
+		}
+	}()
+	if n, err := reopened.DocCount(); err != nil || n != 0 {
+		t.Fatalf("doc count after reopen=%d err=%v want 0", n, err)
+	}
+}
+
+// A mix of present and absent ids deletes what exists and reports no error.
+func TestIntegrationDeleteMixedPresentAndMissing(t *testing.T) {
+	store, _ := seedDeleteFixture(t, "doc-a", "doc-b")
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}()
+
+	if err := store.DeleteByIDs([]string{"doc-a", "gone", "doc-b", "also-gone"}); err != nil {
+		t.Fatalf("DeleteByIDs mixed: %v", err)
+	}
+	if n, err := store.DocCount(); err != nil || n != 0 {
+		t.Fatalf("doc count=%d err=%v want 0", n, err)
+	}
+}
+
+// Duplicate ids in one request must not be treated as a partial failure.
+func TestIntegrationDeleteDuplicates(t *testing.T) {
+	store, _ := seedDeleteFixture(t, "doc-a", "doc-b")
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}()
+
+	if err := store.DeleteByIDs([]string{"doc-a", "doc-a", "doc-b", "doc-a"}); err != nil {
+		t.Fatalf("DeleteByIDs with duplicates: %v", err)
+	}
+	if n, err := store.DocCount(); err != nil || n != 0 {
+		t.Fatalf("doc count=%d err=%v want 0", n, err)
+	}
+}
+
+// DeleteByIDs must never rewrite the caller's slice: the cleanup journal and the
+// coordinator reuse the ids after the call.
+func TestIntegrationDeleteDoesNotMutateInput(t *testing.T) {
+	store, _ := seedDeleteFixture(t, "doc-a", "doc-b")
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	}()
+
+	ids := make([]string, 4, 8)
+	copy(ids, []string{"doc-a", "gone", "doc-b", "gone"})
+	original := append([]string(nil), ids...)
+
+	if err := store.DeleteByIDs(ids); err != nil {
+		t.Fatalf("DeleteByIDs: %v", err)
+	}
+	if len(ids) != len(original) {
+		t.Fatalf("input length changed: %d want %d", len(ids), len(original))
+	}
+	for i := range original {
+		if ids[i] != original[i] {
+			t.Fatalf("input[%d]=%q want %q (slice was rewritten)", i, ids[i], original[i])
+		}
+	}
+}

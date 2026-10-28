@@ -1,8 +1,10 @@
 package indexer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -40,6 +42,38 @@ func (c *Coordinator) reconcileCleanupJournal(journal *manifest.CleanupJournal) 
 	_ = journal.Clear()
 }
 
+// compactStoreBestEffort runs the store's optional maintenance pass at the end of an
+// indexing run.
+//
+// Compaction is advisory: a store without the optional zvec.Compactor (older
+// implementations, test doubles) is skipped, and any error is logged without
+// touching the run's result. It must run before the run publishes Running=false, so
+// callers that wait for idle observe a settled index directory.
+//
+// A cancelled or shutting-down run does not start a new full rebuild of the index.
+func compactStoreBestEffort(ctx context.Context, store zvec.Store) {
+	if store == nil {
+		return
+	}
+	compactor, ok := store.(zvec.Compactor)
+	if !ok {
+		return
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			slog.Info("skipping index compaction: run interrupted", "err", err)
+			return
+		}
+	}
+	if err := compactor.Compact(); err != nil {
+		if isZvecUnavailable(err) {
+			return
+		}
+		// The index is still correct, only its on-disk footprint stays large.
+		slog.Warn("index compaction failed", "err", err)
+	}
+}
+
 func deleteStaleVectorsFrom(store zvec.Store, ids []string) error {
 	const maxAttempts = 3
 	var lastErr error
@@ -48,8 +82,14 @@ func deleteStaleVectorsFrom(store zvec.Store, ids []string) error {
 		if err == nil || isZvecUnavailable(err) {
 			return nil
 		}
-		if succeeded, partial := zvec.PartialWriteOutcome(err); partial && len(succeeded) > 0 {
-			ids = staleDocIDs(ids, succeeded)
+		// Only a PartialWriteError carries trustworthy per-id information: its
+		// Succeeded list names the ids the store verified as gone. A FlushWriteError
+		// also lists every requested id in Succeeded, but that means "written, not
+		// necessarily durable" — shrinking the retry set from it would report a failed
+		// flush as a completed delete and skip the retry this loop exists for.
+		var partial *zvec.PartialWriteError
+		if errors.As(err, &partial) && len(partial.Succeeded) > 0 {
+			ids = staleDocIDs(ids, partial.Succeeded)
 			if len(ids) == 0 {
 				return nil
 			}
